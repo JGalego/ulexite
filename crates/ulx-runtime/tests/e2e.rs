@@ -196,6 +196,52 @@ fn escalate_decisions_do_not_leak_across_different_runs() {
     }
 }
 
+/// Regression test for a real bug found by running `examples/batch.ulx`:
+/// `results.append(x)` inside a `for` loop appeared to work per-iteration
+/// but silently discarded every accumulated append, because `Env::declare`
+/// always writes into the *current* (innermost) frame — the `for` loop and
+/// its body each push their own frame per iteration, so the "mutation"
+/// landed in a frame that was popped before the next iteration, and
+/// `results` outside the loop was still empty. Fixed by `Env::set`, which
+/// walks outward to the frame where `results` was actually declared.
+#[test]
+fn list_append_across_loop_iterations_accumulates() {
+    let tmp = tempfile::tempdir().unwrap();
+    let src = r#"
+        dataset Items: [{body: text}] {
+          from "items.jsonl"
+        }
+
+        conversation Echo(body: text) -> text {
+          body
+        }
+
+        conversation Collect() -> list<text> {
+          results = list<text>()
+          for item in Items {
+            results.append(Echo(item.body))
+          }
+          results
+        }
+    "#;
+    std::fs::write(
+        tmp.path().join("items.jsonl"),
+        "{\"body\": \"one\"}\n{\"body\": \"two\"}\n{\"body\": \"three\"}\n",
+    )
+    .unwrap();
+    let program = setup(src, &tmp);
+    let ctx = make_ctx(&program, &tmp, "run_collect");
+    let result = ulx_runtime::run_conversation(&ctx, "Collect", BTreeMap::new()).unwrap();
+    match result {
+        Value::List(items) => assert_eq!(
+            items.len(),
+            3,
+            "expected all 3 iterations accumulated, got: {items:?}"
+        ),
+        other => panic!("expected a list, got {other:?}"),
+    }
+}
+
 #[test]
 fn with_block_runs_members_concurrently_and_binds_both() {
     let tmp = tempfile::tempdir().unwrap();

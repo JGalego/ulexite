@@ -1,0 +1,3 @@
+{"source": "Good morning, how are you?", "target_lang": "fr", "golden": "Bonjour, comment allez-vous ?"}
+{"source": "The meeting has been moved to 3 PM.", "target_lang": "de", "golden": "Das Meeting wurde auf 15 Uhr verschoben."}
+{"source": "Thank you for your patience.", "target_lang": "es", "golden": "Gracias por su paciencia."}

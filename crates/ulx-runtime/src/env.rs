@@ -30,6 +30,24 @@ impl Env {
         }
     }
 
+    /// Mutates an *existing* binding in place, in whichever frame it was
+    /// originally declared (walking innermost-to-outermost) — unlike
+    /// `declare`, which always writes into the current (innermost) frame
+    /// and would therefore lose the update once a nested block's frame is
+    /// popped (e.g. a `for` loop body mutating a variable declared in the
+    /// enclosing conversation scope, as `results.append(...)` does). Falls
+    /// back to `declare` in the current frame if `name` isn't bound
+    /// anywhere yet.
+    pub fn set(&mut self, name: &str, value: Value) {
+        for frame in self.frames.iter_mut().rev() {
+            if frame.contains_key(name) {
+                frame.insert(name.to_string(), value);
+                return;
+            }
+        }
+        self.declare(name.to_string(), value);
+    }
+
     pub fn get(&self, name: &str) -> Option<&Value> {
         self.frames.iter().rev().find_map(|f| f.get(name))
     }

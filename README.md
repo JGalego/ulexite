@@ -67,7 +67,7 @@ Start at [docs/spec/00-index.md](docs/spec/00-index.md) for the full table of co
 
 ## Example programs
 
-The `.ulx` programs referenced by the spec live in [`examples/`](examples/). All of them parse, type-check with zero diagnostics, and lower to IR (`cargo test` covers this end to end). Most run to completion against the mock provider (`translate.ulx`, `summarize.ulx`, `pdf_qa.ulx`, `batch.ulx`, `multi_agent.ulx`); `approval.ulx` deliberately suspends on `escalate`, demonstrating the human-approval flow; `rag.ulx` references an illustrative dataset file (`kb/chunks.jsonl`) that doesn't exist in this repo, so it fails cleanly with an I/O error rather than silently; `eval_translate.ulx` is a `benchmark` declaration, which the CLI doesn't execute yet (§16, see Limitations).
+The `.ulx` programs referenced by the spec live in [`examples/`](examples/), each with any fixture data it needs (`examples/tickets/`, `examples/kb/`, `examples/fixtures/`). All of them parse, type-check with zero diagnostics, and lower to IR (`cargo test` covers this end to end), and every conversation in every file runs to completion against the mock provider — `approval.ulx` deliberately suspends on `escalate` instead, demonstrating the human-approval flow (see [Try it](#try-it) above). `eval_translate.ulx` is the one exception: it's a `benchmark` declaration, which the CLI doesn't execute yet (§16, see Limitations).
 
 ## Contributing / CI
 

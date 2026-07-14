@@ -1,0 +1,3 @@
+{"ticket_id": "T-1001", "body": "Our production API keys stopped working after last night's deploy and every request now returns 401."}
+{"ticket_id": "T-1002", "body": "The dashboard's date picker shows the wrong month when the browser locale is set to French."}
+{"ticket_id": "T-1003", "body": "Could you add a dark mode toggle to the settings page? Not urgent, just a nice-to-have."}

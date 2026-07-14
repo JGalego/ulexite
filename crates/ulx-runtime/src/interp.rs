@@ -440,19 +440,55 @@ fn eval_opaque_call(
         }
     }
     if let IrExpr::FieldAccess { base, field } = callee {
-        if let IrExpr::Var(module) = base.as_ref() {
+        if let IrExpr::Var(name) = base.as_ref() {
+            // A local variable bound to a list takes precedence over
+            // stdlib-module dispatch: `results.append(x)` (§21.6) mutates
+            // the variable `results` in place, it isn't a call into some
+            // `results` module.
+            if matches!(env.get(name), Some(Value::List(_))) {
+                return eval_list_method(ctx, name, field, args, env);
+            }
             let evaluated = eval_args_named(ctx, args, env)?;
-            if let Some(v) = stdlib::call(ctx, module, field, &evaluated)? {
+            if let Some(v) = stdlib::call(ctx, name, field, &evaluated)? {
                 return Ok(v);
             }
-            return Err(RuntimeError::NotImplemented(format!(
-                "{module}.{field}(...)"
-            )));
+            return Err(RuntimeError::NotImplemented(format!("{name}.{field}(...)")));
         }
     }
     Err(RuntimeError::NotImplemented(
         "calls to a computed/unknown callee".to_string(),
     ))
+}
+
+/// The small set of list-mutation methods `for`-loop bodies actually need
+/// (§21.6's `results.append(...)` pattern) — not a general collections
+/// library, just enough to make batch-accumulation examples real.
+fn eval_list_method(
+    ctx: &RunContext,
+    var_name: &str,
+    method: &str,
+    args: &[IrArg],
+    env: &mut Env,
+) -> Result<Value, RuntimeError> {
+    let arg_val = match args.first() {
+        Some(a) => Some(eval_expr(ctx, &a.value, env)?),
+        None => None,
+    };
+    let Some(Value::List(mut items)) = env.get(var_name).cloned() else {
+        return Err(RuntimeError::TypeError(format!(
+            "`{var_name}` is not a list"
+        )));
+    };
+    match method {
+        "append" | "push" => {
+            items.push(arg_val.unwrap_or(Value::Unit));
+            env.set(var_name, Value::List(items));
+            Ok(Value::Unit)
+        }
+        other => Err(RuntimeError::NotImplemented(format!(
+            "list method `.{other}(...)` (only `.append`/`.push` are implemented)"
+        ))),
+    }
 }
 
 fn eval_effect(ctx: &RunContext, effect: &IrEffect, env: &mut Env) -> Result<Value, RuntimeError> {
