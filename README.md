@@ -1,7 +1,7 @@
 <div align="center">
 <img src="assets/logo.svg" alt="Ulexite logo" width="140" height="140">
 <h1>Ulexite</h1>
-<p><strong>The conversation is the program.</strong></p>
+<p><strong>Stop scripting prompts. Start writing conversations.</strong></p>
 <p>
 <a href="https://github.com/JGalego/ulexite/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/JGalego/ulexite/actions/workflows/ci.yml/badge.svg"></a>
 <a href="LICENSE"><img alt="License: Apache-2.0" src="https://img.shields.io/badge/license-Apache--2.0-blue.svg"></a>
