@@ -223,7 +223,9 @@ fn merge_workspace_program(ws: &ulx_sema::Workspace) -> Program {
     modules.sort_by(|a, b| {
         let a_is_entry = a.path == ws.entry;
         let b_is_entry = b.path == ws.entry;
-        b_is_entry.cmp(&a_is_entry).then_with(|| a.path.cmp(&b.path))
+        b_is_entry
+            .cmp(&a_is_entry)
+            .then_with(|| a.path.cmp(&b.path))
     });
 
     let mut seen: HashSet<String> = HashSet::new();

@@ -86,12 +86,79 @@ pub fn resolve_providers(
     selected: &[String],
     force_mock: bool,
 ) -> Result<ProviderRegistry, String> {
-    let base_dir = crate::manifest::base_dir_of(file);
-    load_dotenv(&base_dir)?;
-
     if force_mock {
+        load_dotenv(&crate::manifest::base_dir_of(file))?;
         return Ok(ProviderRegistry::with_mock());
     }
+    let merged = merge_provider_configs(file, provider_decls, selected)?;
+    build_registry(&merged)
+}
+
+/// A provider's vendor plus its per-capability model, exposed alongside a
+/// built `ProviderRegistry` for callers (`ulx plan`, §10.5) that need to
+/// show *which model* a resolved provider will use — something
+/// `Provider::id()` alone doesn't expose, since real adapters only know
+/// their own configured model internally, not a name a caller can query.
+/// Keyed by the same registry entry name `ProviderRegistry::resolve`'s
+/// `Ambiguous { candidates, .. }` reports, so a resolved call's provider
+/// name looks up directly into this map.
+#[derive(Debug, Clone)]
+pub struct ProviderInfo {
+    pub vendor: String,
+    /// capability -> configured model name, or a `"(vendor default)"`
+    /// placeholder when the manifest/decl left it unset and the real
+    /// vendor-specific default (baked into `ulx-runtime`'s
+    /// `provider::factory`) applies instead.
+    pub models: BTreeMap<String, String>,
+}
+
+/// Like `resolve_providers`, but for callers that never execute a real call
+/// (`ulx plan`) and so never want the `--mock` escape hatch — only ever
+/// resolves from configured `ulexite.toml`/`.ulx provider` decls, and also
+/// returns each registered provider's vendor + per-capability model.
+pub fn resolve_providers_with_info(
+    file: &Path,
+    provider_decls: &[ProviderDecl],
+    selected: &[String],
+) -> Result<(ProviderRegistry, BTreeMap<String, ProviderInfo>), String> {
+    let merged = merge_provider_configs(file, provider_decls, selected)?;
+    let registry = build_registry(&merged)?;
+    let infos = merged
+        .iter()
+        .map(|(name, resolved)| {
+            let models = resolved
+                .capabilities
+                .keys()
+                .map(|capability| {
+                    let model = resolved.capabilities[capability]
+                        .model
+                        .clone()
+                        .unwrap_or_else(|| "(vendor default)".to_string());
+                    (capability.clone(), model)
+                })
+                .collect();
+            (
+                name.clone(),
+                ProviderInfo {
+                    vendor: resolved.vendor.clone(),
+                    models,
+                },
+            )
+        })
+        .collect();
+    Ok((registry, infos))
+}
+
+/// Loads `.env`, discovers `ulexite.toml`, and merges it with every `.ulx`
+/// `provider` decl into one namespace — the shared first half of both
+/// `resolve_providers` (non-`--mock` path) and `resolve_providers_with_info`.
+fn merge_provider_configs(
+    file: &Path,
+    provider_decls: &[ProviderDecl],
+    selected: &[String],
+) -> Result<BTreeMap<String, ResolvedProvider>, String> {
+    let base_dir = crate::manifest::base_dir_of(file);
+    load_dotenv(&base_dir)?;
 
     let manifest = project_manifest::discover(&base_dir).map_err(|e| e.to_string())?;
     let manifest_exists = manifest.is_some();
@@ -143,9 +210,13 @@ pub fn resolve_providers(
         ));
     }
 
+    Ok(merged)
+}
+
+fn build_registry(merged: &BTreeMap<String, ResolvedProvider>) -> Result<ProviderRegistry, String> {
     let artifact_root = crate::manifest::artifacts_dir();
     let mut registry = ProviderRegistry::new();
-    for (name, resolved) in &merged {
+    for (name, resolved) in merged {
         for (capability, cap) in &resolved.capabilities {
             let spec = to_provider_spec(resolved, capability, cap);
             let provider = build_provider(&spec, &artifact_root).map_err(|e| {
