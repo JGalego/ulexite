@@ -21,7 +21,11 @@
         "id": "ulexite",
         "aliases": ["Ulexite", "ulx"],
         "extensions": [".ulx"],
-        "configuration": "./language-configuration.json"
+        "configuration": "./language-configuration.json",
+        "icon": {
+          "light": "./icons/ulx-icon.svg",
+          "dark": "./icons/ulx-icon.svg"
+        }
       }
     ],
     "grammars": [
