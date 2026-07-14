@@ -5,14 +5,20 @@
 //! see `ulx-runtime`'s docs for how that actually works), `replay` (§18.3),
 //! `trace` (§20.6, text-only — no viewer webview yet).
 //!
+//! Also implemented: `plan` (§10.5 — a static, execution-free capability ->
+//! provider resolution plus a rough token/cost estimate off a small
+//! illustrative pricing table; see `plan.rs`'s module docs for exactly how
+//! approximate that estimate is).
+//!
 //! Not implemented: `test`/`benchmark` execution (§16 — needs dataset-driven
-//! parametrization the interpreter doesn't wire up to the CLI yet), `plan`
-//! (§10.5 — needs real provider cost metadata), `fmt`/`doc`/`repl`/language
-//! server (§20). See `docs/spec/25-future-directions.md`.
+//! parametrization the interpreter doesn't wire up to the CLI yet),
+//! `fmt`/`doc`/`repl`/language server (§20). See
+//! `docs/spec/25-future-directions.md`.
 
 mod diagnostics;
 mod manifest;
 mod pipeline;
+mod plan;
 mod project_manifest;
 mod providers;
 
@@ -57,6 +63,24 @@ enum Command {
         /// configured real providers entirely.
         #[arg(long, conflicts_with = "providers")]
         mock: bool,
+    },
+    /// Statically estimate which providers/models a conversation will call
+    /// and a rough token/cost range, without executing anything (§10.5).
+    Plan {
+        file: PathBuf,
+        conversation: String,
+        /// Repeatable `name=value` argument — only used to sharpen the
+        /// token-length estimate for a parameter a `--arg` explicitly
+        /// pins, never to actually run anything.
+        #[arg(long = "arg", value_name = "NAME=VALUE")]
+        args: Vec<String>,
+        /// Select a specific configured provider by name, same as `ulx
+        /// run --provider` — repeatable. There is deliberately no `--mock`
+        /// here: `plan` never calls a provider for real, so forcing the
+        /// mock provider would only hide what a real `ulx run` will
+        /// actually resolve to.
+        #[arg(long = "provider", value_name = "NAME")]
+        providers: Vec<String>,
     },
     /// Record a human decision for a suspended run and resume it.
     Approve {
@@ -110,6 +134,12 @@ fn main() {
             providers,
             mock,
         } => cmd_run(&file, &conversation, &args, run_id, &providers, mock),
+        Command::Plan {
+            file,
+            conversation,
+            args,
+            providers,
+        } => cmd_plan(&file, &conversation, &args, &providers),
         Command::Approve {
             run_id,
             value,
@@ -261,6 +291,46 @@ fn cmd_run(
     let value_args: BTreeMap<String, Value> =
         args.into_iter().map(|(k, v)| (k, Value::Text(v))).collect();
     execute(&ctx, conversation, value_args, &run_id)
+}
+
+/// Statically walks `conversation`'s compiled IR and reports every
+/// capability/judge call it will make, the provider each resolves to under
+/// current policy, and a rough token/cost estimate (§10.5) — never invokes
+/// a provider, only `ProviderRegistry::resolve`/`resolve_named` (see
+/// `plan.rs`'s module docs for exactly how approximate the estimate is).
+fn cmd_plan(file: &Path, conversation: &str, raw_args: &[String], selected_providers: &[String]) -> bool {
+    let Some(loaded) = pipeline::load(file) else {
+        return false;
+    };
+    let known_vars = match parse_args(raw_args) {
+        Ok(a) => a,
+        Err(e) => {
+            eprintln!("error: {e}");
+            return false;
+        }
+    };
+
+    let (registry, infos) = match providers::resolve_providers_with_info(
+        file,
+        &loaded.provider_decls,
+        selected_providers,
+    ) {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("error: {e}");
+            return false;
+        }
+    };
+
+    let rows = match plan::build_plan(&loaded.ir, conversation, &registry, &infos, &known_vars) {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("error: {e}");
+            return false;
+        }
+    };
+
+    plan::print_plan(conversation, &rows)
 }
 
 fn execute(
