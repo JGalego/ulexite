@@ -143,11 +143,12 @@ pub fn resolve_providers(
         ));
     }
 
+    let artifact_root = crate::manifest::artifacts_dir();
     let mut registry = ProviderRegistry::new();
     for (name, resolved) in &merged {
         for (capability, cap) in &resolved.capabilities {
             let spec = to_provider_spec(resolved, capability, cap);
-            let provider = build_provider(&spec).map_err(|e| {
+            let provider = build_provider(&spec, &artifact_root).map_err(|e| {
                 format!(
                     "provider `{name}` capability `{capability}` (vendor `{}`): {e}",
                     resolved.vendor

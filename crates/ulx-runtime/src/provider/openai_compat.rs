@@ -4,17 +4,19 @@
 //! text-generation-webui, and vLLM's OpenAI-compatible server mode — a
 //! different `base_url`/`api_key_env` preset (`factory.rs`) is the only
 //! thing that distinguishes them. Also covers `/audio/transcriptions`
-//! (multipart upload), `/audio/speech` (binary response, written to a temp
-//! file), and `/images/generations` (base64 response, written to a temp
-//! file) — real endpoints on OpenAI and (for transcription) Groq; another
-//! OpenAI-compatible server that doesn't implement these just surfaces a
-//! normal HTTP error when called.
+//! (multipart upload), `/audio/speech` (binary response, written into the
+//! content-addressed artifact store), and `/images/generations` (base64
+//! response, same store) — real endpoints on OpenAI and (for
+//! transcription) Groq; another OpenAI-compatible server that doesn't
+//! implement these just surfaces a normal HTTP error when called.
 
 use std::collections::BTreeMap;
+use std::path::PathBuf;
 
 use base64::Engine;
 use serde_json::json;
 
+use crate::cache::ArtifactStore;
 use crate::value::Value;
 
 use super::artifact::{self, ImageSource};
@@ -32,6 +34,11 @@ pub struct OpenAiCompatibleProvider {
     model: String,
     default_params: BTreeMap<String, Value>,
     transport: Box<dyn Transport>,
+    /// Root of the content-addressed artifact store `speak`/`generate_image`
+    /// write into (§11.2) — an `ArtifactStore` is opened on-demand from this
+    /// path rather than eagerly at construction, since building one is
+    /// fallible I/O (`create_dir_all`) and most invocations never need it.
+    artifact_root: PathBuf,
 }
 
 impl OpenAiCompatibleProvider {
@@ -44,6 +51,7 @@ impl OpenAiCompatibleProvider {
         model: impl Into<String>,
         default_params: BTreeMap<String, Value>,
         transport: Box<dyn Transport>,
+        artifact_root: impl Into<PathBuf>,
     ) -> Self {
         OpenAiCompatibleProvider {
             id: id.into(),
@@ -53,7 +61,14 @@ impl OpenAiCompatibleProvider {
             model: model.into(),
             default_params,
             transport,
+            artifact_root: artifact_root.into(),
         }
+    }
+
+    fn artifact_store(&self) -> Result<ArtifactStore, ProviderError> {
+        ArtifactStore::new(&self.artifact_root).map_err(|e| {
+            ProviderError::Failed(format!("could not create artifact directory: {e}"))
+        })
     }
 
     fn json_headers(&self) -> Vec<(String, String)> {
@@ -162,8 +177,8 @@ impl OpenAiCompatibleProvider {
     }
 
     /// `/audio/speech` (TTS): JSON request, raw audio bytes back — written
-    /// to a content-addressed temp file (no real artifact/blob store yet,
-    /// §12.7, §24 Limitations), with the path returned as the result.
+    /// into the content-addressed artifact store (§11.2), with the path
+    /// returned as the result.
     fn speak(&self, request: &Invocation) -> Result<Value, ProviderError> {
         let text = request
             .messages
@@ -186,11 +201,12 @@ impl OpenAiCompatibleProvider {
             &self.json_headers(),
             &body,
         )?;
-        artifact::write_artifact(&bytes, "mp3")
+        artifact::write_artifact(&self.artifact_store()?, &bytes, "mp3")
     }
 
     /// `/images/generations` (DALL-E-compatible): JSON in, base64 image
-    /// out — written to a temp file, path returned (same caveat as `speak`).
+    /// out — written into the artifact store, path returned (same as
+    /// `speak`).
     fn generate_image(&self, request: &Invocation) -> Result<Value, ProviderError> {
         let prompt = request
             .messages
@@ -214,7 +230,7 @@ impl OpenAiCompatibleProvider {
         let bytes = base64::engine::general_purpose::STANDARD
             .decode(b64)
             .map_err(|e| ProviderError::Failed(format!("invalid base64 image data: {e}")))?;
-        artifact::write_artifact(&bytes, "png")
+        artifact::write_artifact(&self.artifact_store()?, &bytes, "png")
     }
 }
 
@@ -245,6 +261,16 @@ mod tests {
     use super::super::transport::ScriptedTransport;
     use super::*;
 
+    /// A scratch artifact root, shared across this file's tests — fine
+    /// since the store is content-addressed and every test writes distinct
+    /// bytes, so there's never a hash collision between them.
+    fn test_artifact_root() -> std::path::PathBuf {
+        std::env::temp_dir().join(format!(
+            "ulexite-openai-compat-test-artifacts-{}",
+            std::process::id()
+        ))
+    }
+
     fn provider(transport: ScriptedTransport) -> OpenAiCompatibleProvider {
         OpenAiCompatibleProvider::with_transport(
             "openai",
@@ -254,6 +280,7 @@ mod tests {
             "gpt-4o-mini",
             BTreeMap::new(),
             Box::new(transport),
+            test_artifact_root(),
         )
     }
 
@@ -404,8 +431,50 @@ mod tests {
             other => panic!("expected a Value::Text path, got {other:?}"),
         };
         assert!(path.ends_with(".mp3"));
+        assert!(
+            std::path::Path::new(&path).starts_with(test_artifact_root()),
+            "artifact must land under the provider's configured artifact_root, not a hardcoded default: {path}"
+        );
         assert_eq!(std::fs::read(&path).unwrap(), vec![0xff, 0xfb, 0x90, 0x00]);
         std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn speak_is_idempotent_by_hash() {
+        let bytes = vec![0xff, 0xfb, 0x90, 0x01];
+        let invocation = Invocation {
+            messages: vec![super::super::Message {
+                role: "user".to_string(),
+                text: "hello again".to_string(),
+            }],
+            args: BTreeMap::new(),
+        };
+
+        let transport1 = ScriptedTransport::new(vec![ScriptedTransport::ok_bytes(
+            200,
+            bytes.clone(),
+        )]);
+        let path1 = match provider(transport1).invoke("speak", &invocation).unwrap() {
+            Value::Text(p) => p,
+            other => panic!("expected a Value::Text path, got {other:?}"),
+        };
+        let mtime1 = std::fs::metadata(&path1).unwrap().modified().unwrap();
+
+        std::thread::sleep(std::time::Duration::from_millis(20));
+
+        let transport2 = ScriptedTransport::new(vec![ScriptedTransport::ok_bytes(200, bytes)]);
+        let path2 = match provider(transport2).invoke("speak", &invocation).unwrap() {
+            Value::Text(p) => p,
+            other => panic!("expected a Value::Text path, got {other:?}"),
+        };
+        let mtime2 = std::fs::metadata(&path2).unwrap().modified().unwrap();
+
+        assert_eq!(path1, path2, "identical bytes must resolve to the same path");
+        assert_eq!(
+            mtime1, mtime2,
+            "second write of identical bytes must be a no-op, not a real rewrite"
+        );
+        std::fs::remove_file(&path1).ok();
     }
 
     #[test]
@@ -430,6 +499,10 @@ mod tests {
             other => panic!("expected a Value::Text path, got {other:?}"),
         };
         assert!(path.ends_with(".png"));
+        assert!(
+            std::path::Path::new(&path).starts_with(test_artifact_root()),
+            "artifact must land under the provider's configured artifact_root, not a hardcoded default: {path}"
+        );
         assert_eq!(std::fs::read(&path).unwrap(), png_bytes);
         std::fs::remove_file(&path).ok();
     }

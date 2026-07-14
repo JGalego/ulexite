@@ -7,6 +7,7 @@
 //! `vendor = "openai_compatible"` with a custom `base_url`.
 
 use std::collections::BTreeMap;
+use std::path::Path;
 
 use crate::value::Value;
 
@@ -61,7 +62,16 @@ impl std::fmt::Display for ProviderBuildError {
     }
 }
 
-pub fn build_provider(spec: &ProviderSpec) -> Result<Box<dyn Provider>, ProviderBuildError> {
+/// `artifact_root` is where a real vendor's binary output (`speak`'s audio,
+/// `generate_image`'s image — currently only the OpenAI-family adapters)
+/// gets written, content-addressed (`crate::cache::ArtifactStore`) — the
+/// same project-local root `ulx-cli`'s `manifest::artifacts_dir()` computes
+/// alongside `manifest::cache_dir()`. Vendors that don't produce binary
+/// artifacts simply ignore it.
+pub fn build_provider(
+    spec: &ProviderSpec,
+    artifact_root: &Path,
+) -> Result<Box<dyn Provider>, ProviderBuildError> {
     match spec.vendor.as_str() {
         "mock" => Ok(Box::new(MockProvider::new())),
         "openai" => build_openai_family(
@@ -70,6 +80,7 @@ pub fn build_provider(spec: &ProviderSpec) -> Result<Box<dyn Provider>, Provider
             "https://api.openai.com/v1",
             Some("OPENAI_API_KEY"),
             "gpt-4o-mini",
+            artifact_root,
         ),
         "groq" => build_openai_family(
             spec,
@@ -77,6 +88,7 @@ pub fn build_provider(spec: &ProviderSpec) -> Result<Box<dyn Provider>, Provider
             "https://api.groq.com/openai/v1",
             Some("GROQ_API_KEY"),
             "llama-3.3-70b-versatile",
+            artifact_root,
         ),
         "openai_compatible" => {
             let base_url = spec.base_url.clone().ok_or_else(|| {
@@ -84,7 +96,7 @@ pub fn build_provider(spec: &ProviderSpec) -> Result<Box<dyn Provider>, Provider
                     "vendor `openai_compatible` requires `base_url`".to_string(),
                 )
             })?;
-            build_openai_family(spec, "openai_compatible", &base_url, None, "")
+            build_openai_family(spec, "openai_compatible", &base_url, None, "", artifact_root)
         }
         "azure_openai" => {
             let base_url = spec.base_url.clone().ok_or_else(|| {
@@ -195,6 +207,7 @@ fn build_openai_family(
     default_base_url: &str,
     default_env: Option<&str>,
     default_model: &str,
+    artifact_root: &Path,
 ) -> Result<Box<dyn Provider>, ProviderBuildError> {
     let base_url = spec
         .base_url
@@ -222,6 +235,7 @@ fn build_openai_family(
         model,
         spec.params.clone(),
         transport::real_transport(),
+        artifact_root.to_path_buf(),
     )))
 }
 
@@ -237,13 +251,20 @@ fn require_api_key(spec: &ProviderSpec, default_env: &str) -> Result<String, Pro
 mod tests {
     use super::*;
 
+    /// Tests never actually write artifacts, so any scratch path will do —
+    /// this just needs to be a valid `&Path` to satisfy `build_provider`'s
+    /// signature.
+    fn test_artifact_root() -> std::path::PathBuf {
+        std::env::temp_dir().join("ulexite-factory-test-artifacts")
+    }
+
     #[test]
     fn mock_vendor_builds_without_any_env() {
         let spec = ProviderSpec {
             vendor: "mock".to_string(),
             ..Default::default()
         };
-        assert!(build_provider(&spec).is_ok());
+        assert!(build_provider(&spec, &test_artifact_root()).is_ok());
     }
 
     #[test]
@@ -253,7 +274,7 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(
-            build_provider(&spec).err().unwrap(),
+            build_provider(&spec, &test_artifact_root()).err().unwrap(),
             ProviderBuildError::UnknownVendor("not-a-real-vendor".to_string())
         );
     }
@@ -265,7 +286,7 @@ mod tests {
             ..Default::default()
         };
         assert!(matches!(
-            build_provider(&spec).err().unwrap(),
+            build_provider(&spec, &test_artifact_root()).err().unwrap(),
             ProviderBuildError::InvalidConfig(_)
         ));
     }
@@ -277,7 +298,7 @@ mod tests {
             base_url: Some("http://localhost:8000/v1".to_string()),
             ..Default::default()
         };
-        assert!(build_provider(&spec).is_ok());
+        assert!(build_provider(&spec, &test_artifact_root()).is_ok());
     }
 
     #[test]
@@ -290,7 +311,7 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(
-            build_provider(&spec).err().unwrap(),
+            build_provider(&spec, &test_artifact_root()).err().unwrap(),
             ProviderBuildError::MissingApiKey(env_name.to_string())
         );
     }
@@ -301,7 +322,7 @@ mod tests {
             vendor: "ollama".to_string(),
             ..Default::default()
         };
-        assert!(build_provider(&spec).is_ok());
+        assert!(build_provider(&spec, &test_artifact_root()).is_ok());
     }
 
     #[test]
@@ -313,7 +334,7 @@ mod tests {
             ..Default::default()
         };
         assert!(matches!(
-            build_provider(&spec).err().unwrap(),
+            build_provider(&spec, &test_artifact_root()).err().unwrap(),
             ProviderBuildError::InvalidConfig(_)
         ));
     }
@@ -327,7 +348,7 @@ mod tests {
             ..Default::default()
         };
         assert!(matches!(
-            build_provider(&spec).err().unwrap(),
+            build_provider(&spec, &test_artifact_root()).err().unwrap(),
             ProviderBuildError::InvalidConfig(_)
         ));
     }
@@ -344,7 +365,7 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(
-            build_provider(&spec).err().unwrap(),
+            build_provider(&spec, &test_artifact_root()).err().unwrap(),
             ProviderBuildError::MissingApiKey(env_name.to_string())
         );
     }
@@ -360,7 +381,7 @@ mod tests {
             api_key_env: Some(env_name.to_string()),
             ..Default::default()
         };
-        assert!(build_provider(&spec).is_ok());
+        assert!(build_provider(&spec, &test_artifact_root()).is_ok());
         std::env::remove_var(env_name);
     }
 
@@ -382,8 +403,8 @@ mod tests {
             base_url: Some("http://localhost:8000/v1".to_string()),
             ..Default::default()
         };
-        let chat_provider = build_provider(&chat_spec).unwrap();
-        let transcribe_provider = build_provider(&transcribe_spec).unwrap();
+        let chat_provider = build_provider(&chat_spec, &test_artifact_root()).unwrap();
+        let transcribe_provider = build_provider(&transcribe_spec, &test_artifact_root()).unwrap();
 
         assert!(chat_provider.supports("chat"));
         assert!(!chat_provider.supports("transcribe"));
