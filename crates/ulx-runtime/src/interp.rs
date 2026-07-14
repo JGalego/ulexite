@@ -303,9 +303,7 @@ pub fn run_benchmark(ctx: &RunContext, name: &str) -> Result<BenchmarkReport, Ru
             _ => None,
         })
         .ok_or_else(|| {
-            RuntimeError::TypeError(format!(
-                "benchmark `{name}` has no `dataset:` statement"
-            ))
+            RuntimeError::TypeError(format!("benchmark `{name}` has no `dataset:` statement"))
         })?;
 
     let dataset = ctx
@@ -415,7 +413,9 @@ fn evaluate_expect_verdict(verdict: &Value, threshold: Option<f64>) -> (bool, Op
             } else {
                 Some(format!(
                     "score {s} did not meet threshold {}",
-                    threshold.map(|t| t.to_string()).unwrap_or_else(|| "(none)".to_string())
+                    threshold
+                        .map(|t| t.to_string())
+                        .unwrap_or_else(|| "(none)".to_string())
                 ))
             };
             (passed, message)

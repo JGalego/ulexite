@@ -387,9 +387,6 @@ impl ArtifactType {
     /// distinct identifiers here since `embedding`/`vector` are listed once
     /// each per §8's `artifact_type` production).
     pub fn from_keyword(s: &str) -> Option<Self> {
-        Self::ALL
-            .iter()
-            .find(|(kw, _)| *kw == s)
-            .map(|(_, ty)| *ty)
+        Self::ALL.iter().find(|(kw, _)| *kw == s).map(|(_, ty)| *ty)
     }
 }

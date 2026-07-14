@@ -164,6 +164,9 @@ mod tests {
         let index = LineIndex::new(src);
         let (program, diags) = analyze_buffer(&index);
         assert!(program.is_some());
-        assert!(!diags.is_empty(), "expected a diagnostic for an unknown capability");
+        assert!(
+            !diags.is_empty(),
+            "expected a diagnostic for an unknown capability"
+        );
     }
 }

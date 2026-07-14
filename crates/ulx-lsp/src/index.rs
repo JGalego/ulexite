@@ -19,8 +19,8 @@ use std::collections::HashMap;
 
 use ulx_ast::{
     ArtifactType, BenchmarkStmt, Block, ConversationDecl, DatasetSource, Expr, GenericArg, Import,
-    MatchArmBody, Param, Program, ProviderDecl, RubricDecl, Span, Spanned, Stmt, TextPart,
-    TopDecl, TypeExpr,
+    MatchArmBody, Param, Program, ProviderDecl, RubricDecl, Span, Spanned, Stmt, TextPart, TopDecl,
+    TypeExpr,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -274,7 +274,11 @@ fn walk_type_expr(t: &Spanned<TypeExpr>, refs: &mut Vec<(Span, RefTarget)>) {
     }
 }
 
-fn walk_decl(decl: &TopDecl, decls: &HashMap<String, DeclEntry>, refs: &mut Vec<(Span, RefTarget)>) {
+fn walk_decl(
+    decl: &TopDecl,
+    decls: &HashMap<String, DeclEntry>,
+    refs: &mut Vec<(Span, RefTarget)>,
+) {
     match decl {
         TopDecl::Conversation(c) => {
             for p in &c.params {
@@ -341,7 +345,11 @@ fn walk_benchmark_stmt(
     }
 }
 
-fn walk_block(block: &Block, decls: &HashMap<String, DeclEntry>, refs: &mut Vec<(Span, RefTarget)>) {
+fn walk_block(
+    block: &Block,
+    decls: &HashMap<String, DeclEntry>,
+    refs: &mut Vec<(Span, RefTarget)>,
+) {
     for (stmt, span) in &block.stmts {
         walk_stmt(stmt, span.clone(), decls, refs);
     }
@@ -411,7 +419,11 @@ fn walk_stmt(
     }
 }
 
-fn walk_expr(expr: &Spanned<Expr>, decls: &HashMap<String, DeclEntry>, refs: &mut Vec<(Span, RefTarget)>) {
+fn walk_expr(
+    expr: &Spanned<Expr>,
+    decls: &HashMap<String, DeclEntry>,
+    refs: &mut Vec<(Span, RefTarget)>,
+) {
     let (e, span) = expr;
     match e {
         Expr::Ident(name) => {
@@ -446,7 +458,9 @@ fn walk_expr(expr: &Spanned<Expr>, decls: &HashMap<String, DeclEntry>, refs: &mu
                 walk_expr(&a.value, decls, refs);
             }
         }
-        Expr::Retry { body, else_expr, .. } => {
+        Expr::Retry {
+            body, else_expr, ..
+        } => {
             walk_block(body, decls, refs);
             if let Some(e) = else_expr {
                 walk_expr(e, decls, refs);
@@ -562,7 +576,8 @@ mod tests {
 
     #[test]
     fn import_records_source_path() {
-        let src = "import judge Fluency from \"translate.ulx\"\nconversation C() -> text { \"x\" }\n";
+        let src =
+            "import judge Fluency from \"translate.ulx\"\nconversation C() -> text { \"x\" }\n";
         let index = Index::build(&parse(src));
         assert_eq!(
             index.import_sources.get("Fluency").map(String::as_str),

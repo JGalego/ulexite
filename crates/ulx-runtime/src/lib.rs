@@ -25,7 +25,9 @@ pub mod value;
 
 pub use cache::Cache;
 pub use error::RuntimeError;
-pub use interp::{run_benchmark, run_conversation, BenchmarkReport, BenchmarkRowResult, CheckResult};
+pub use interp::{
+    run_benchmark, run_conversation, BenchmarkReport, BenchmarkRowResult, CheckResult,
+};
 pub use provider::{
     build_provider, MockProvider, Provider, ProviderBuildError, ProviderRegistry, ProviderSpec,
     ResolveError,

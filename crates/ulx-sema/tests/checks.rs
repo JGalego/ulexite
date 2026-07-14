@@ -417,10 +417,8 @@ fn real_examples_have_no_diagnostics_at_all() {
 /// `[dependencies]` table actually does something for cross-file imports.
 #[test]
 fn path_dependency_import_resolves_into_dependency_directory() {
-    let base = std::env::temp_dir().join(format!(
-        "ulexite-sema-path-dep-test-{}",
-        std::process::id()
-    ));
+    let base =
+        std::env::temp_dir().join(format!("ulexite-sema-path-dep-test-{}", std::process::id()));
     let main_dir = base.join("main-pkg");
     let other_dir = base.join("other-pkg");
     std::fs::create_dir_all(&main_dir).unwrap();
@@ -546,11 +544,10 @@ fn import_referencing_unlisted_package_name_fails_like_before() {
     let mut deps = ulx_sema::DependencyPaths::default();
     deps.path_deps
         .insert("unrelated".to_string(), base.join("unrelated-pkg"));
-    let with_unrelated_deps_err =
-        match ulx_sema::analyze_file_with_deps(&main_file, None, &deps) {
-            Ok(_) => panic!("expected resolving a nonexistent relative import to fail"),
-            Err(e) => e,
-        };
+    let with_unrelated_deps_err = match ulx_sema::analyze_file_with_deps(&main_file, None, &deps) {
+        Ok(_) => panic!("expected resolving a nonexistent relative import to fail"),
+        Err(e) => e,
+    };
     assert_eq!(no_deps_err, with_unrelated_deps_err);
 
     std::fs::remove_dir_all(&base).ok();

@@ -88,8 +88,9 @@ fn fmt_round_trips_every_example_semantically() {
     );
     for path in &files {
         let src = std::fs::read_to_string(path).unwrap();
-        let original = ulx_syntax::parse_source(&src)
-            .unwrap_or_else(|e| panic!("{}: original file failed to parse: {e:#?}", path.display()));
+        let original = ulx_syntax::parse_source(&src).unwrap_or_else(|e| {
+            panic!("{}: original file failed to parse: {e:#?}", path.display())
+        });
 
         let formatted = ulx_syntax::format_program(&original);
 

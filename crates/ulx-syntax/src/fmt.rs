@@ -88,7 +88,11 @@ fn kind_str(k: ImportKind) -> &'static str {
 fn fmt_import(i: &Import) -> String {
     match i {
         Import::Named { kind, name, from } => {
-            format!("import {} {name} from {}", kind_str(*kind), fmt_str_lit(from))
+            format!(
+                "import {} {name} from {}",
+                kind_str(*kind),
+                fmt_str_lit(from)
+            )
         }
         Import::Module { path, alias } => {
             format!("import {} as {alias}", fmt_str_lit(path))
@@ -583,7 +587,11 @@ fn fmt_expr(e: &Expr, indent: usize) -> String {
             fmt_block(else_block, indent),
         ),
         Expr::GenericCall { name, ty_arg, args } => {
-            format!("{name}<{}>({})", fmt_type(&ty_arg.0), fmt_args(args, indent))
+            format!(
+                "{name}<{}>({})",
+                fmt_type(&ty_arg.0),
+                fmt_args(args, indent)
+            )
         }
         Expr::Retry {
             count,
@@ -627,7 +635,11 @@ fn fmt_expr(e: &Expr, indent: usize) -> String {
             format!("{}.{field}", fmt_operand(base, 7, indent))
         }
         Expr::Call { callee, args } => {
-            format!("{}({})", fmt_operand(callee, 7, indent), fmt_args(args, indent))
+            format!(
+                "{}({})",
+                fmt_operand(callee, 7, indent),
+                fmt_args(args, indent)
+            )
         }
         Expr::Index { base, index } => format!(
             "{}[{}]",

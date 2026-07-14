@@ -133,9 +133,6 @@ mod tests {
     fn out_of_bounds_clamps() {
         let idx = LineIndex::new("short");
         assert_eq!(idx.offset_to_position(1000), Position::new(0, 5));
-        assert_eq!(
-            idx.position_to_offset(Position::new(50, 50)),
-            "short".len()
-        );
+        assert_eq!(idx.position_to_offset(Position::new(50, 50)), "short".len());
     }
 }

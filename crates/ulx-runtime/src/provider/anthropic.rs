@@ -316,10 +316,7 @@ mod tests {
     #[test]
     fn vision_with_local_pdf_builds_a_document_content_block() {
         let dir = std::env::temp_dir();
-        let path = dir.join(format!(
-            "ulexite-anthropic-test-{}.pdf",
-            std::process::id()
-        ));
+        let path = dir.join(format!("ulexite-anthropic-test-{}.pdf", std::process::id()));
         std::fs::write(&path, b"%PDF-1.4 fake").unwrap();
 
         let (p, transport) = provider_with_shared_transport(ScriptedTransport::new(vec![
@@ -338,7 +335,11 @@ mod tests {
         assert_eq!(sent.len(), 1);
         let content = &sent[0]["messages"][0]["content"];
         let blocks = content.as_array().expect("content should be an array");
-        assert_eq!(blocks.len(), 2, "expected a text block and a document block");
+        assert_eq!(
+            blocks.len(),
+            2,
+            "expected a text block and a document block"
+        );
         let doc_block = &blocks[1];
         assert_eq!(doc_block["type"], json!("document"));
         assert_eq!(doc_block["source"]["type"], json!("base64"));
@@ -351,12 +352,11 @@ mod tests {
 
     #[test]
     fn vision_with_url_pdf_builds_a_document_content_block_with_a_url_source() {
-        let (p, transport) = provider_with_shared_transport(ScriptedTransport::new(vec![
-            ScriptedTransport::ok(
+        let (p, transport) =
+            provider_with_shared_transport(ScriptedTransport::new(vec![ScriptedTransport::ok(
                 200,
                 json!({"content": [{"type": "text", "text": "ok"}], "stop_reason": "end_turn"}),
-            ),
-        ]));
+            )]));
         let invocation = vision_invocation("https://example.com/report.pdf");
         p.invoke("vision", &invocation).unwrap();
 
@@ -373,18 +373,14 @@ mod tests {
     #[test]
     fn vision_with_local_jpg_still_builds_an_image_content_block() {
         let dir = std::env::temp_dir();
-        let path = dir.join(format!(
-            "ulexite-anthropic-test-{}.jpg",
-            std::process::id()
-        ));
+        let path = dir.join(format!("ulexite-anthropic-test-{}.jpg", std::process::id()));
         std::fs::write(&path, [0xff, 0xd8, 0xff, 0xe0]).unwrap();
 
-        let (p, transport) = provider_with_shared_transport(ScriptedTransport::new(vec![
-            ScriptedTransport::ok(
+        let (p, transport) =
+            provider_with_shared_transport(ScriptedTransport::new(vec![ScriptedTransport::ok(
                 200,
                 json!({"content": [{"type": "text", "text": "a cat"}], "stop_reason": "end_turn"}),
-            ),
-        ]));
+            )]));
         let invocation = vision_invocation(path.to_str().unwrap());
         let result = p.invoke("vision", &invocation).unwrap();
         std::fs::remove_file(&path).ok();
@@ -404,12 +400,11 @@ mod tests {
 
     #[test]
     fn vision_with_url_png_still_builds_an_image_content_block() {
-        let (p, transport) = provider_with_shared_transport(ScriptedTransport::new(vec![
-            ScriptedTransport::ok(
+        let (p, transport) =
+            provider_with_shared_transport(ScriptedTransport::new(vec![ScriptedTransport::ok(
                 200,
                 json!({"content": [{"type": "text", "text": "a cat"}], "stop_reason": "end_turn"}),
-            ),
-        ]));
+            )]));
         let invocation = vision_invocation("https://example.com/cat.png");
         p.invoke("vision", &invocation).unwrap();
 

@@ -66,9 +66,8 @@ impl OpenAiCompatibleProvider {
     }
 
     fn artifact_store(&self) -> Result<ArtifactStore, ProviderError> {
-        ArtifactStore::new(&self.artifact_root).map_err(|e| {
-            ProviderError::Failed(format!("could not create artifact directory: {e}"))
-        })
+        ArtifactStore::new(&self.artifact_root)
+            .map_err(|e| ProviderError::Failed(format!("could not create artifact directory: {e}")))
     }
 
     fn json_headers(&self) -> Vec<(String, String)> {
@@ -450,10 +449,8 @@ mod tests {
             args: BTreeMap::new(),
         };
 
-        let transport1 = ScriptedTransport::new(vec![ScriptedTransport::ok_bytes(
-            200,
-            bytes.clone(),
-        )]);
+        let transport1 =
+            ScriptedTransport::new(vec![ScriptedTransport::ok_bytes(200, bytes.clone())]);
         let path1 = match provider(transport1).invoke("speak", &invocation).unwrap() {
             Value::Text(p) => p,
             other => panic!("expected a Value::Text path, got {other:?}"),
@@ -469,7 +466,10 @@ mod tests {
         };
         let mtime2 = std::fs::metadata(&path2).unwrap().modified().unwrap();
 
-        assert_eq!(path1, path2, "identical bytes must resolve to the same path");
+        assert_eq!(
+            path1, path2,
+            "identical bytes must resolve to the same path"
+        );
         assert_eq!(
             mtime1, mtime2,
             "second write of identical bytes must be a no-op, not a real rewrite"

@@ -96,7 +96,14 @@ pub fn build_provider(
                     "vendor `openai_compatible` requires `base_url`".to_string(),
                 )
             })?;
-            build_openai_family(spec, "openai_compatible", &base_url, None, "", artifact_root)
+            build_openai_family(
+                spec,
+                "openai_compatible",
+                &base_url,
+                None,
+                "",
+                artifact_root,
+            )
         }
         "azure_openai" => {
             let base_url = spec.base_url.clone().ok_or_else(|| {

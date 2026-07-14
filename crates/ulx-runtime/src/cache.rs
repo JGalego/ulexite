@@ -144,7 +144,10 @@ mod tests {
         let path2 = store.put(&hash[..16], "bin", bytes).unwrap();
         let mtime2 = std::fs::metadata(&path2).unwrap().modified().unwrap();
 
-        assert_eq!(path1, path2, "identical bytes must resolve to the same path");
+        assert_eq!(
+            path1, path2,
+            "identical bytes must resolve to the same path"
+        );
         assert_eq!(
             mtime1, mtime2,
             "second put of identical bytes must be a no-op, not a second write"
@@ -163,7 +166,10 @@ mod tests {
 
         let path = store.put(&hash[..16], "png", bytes).unwrap();
 
-        assert!(path.starts_with(&root), "artifact must live under the store's own root");
+        assert!(
+            path.starts_with(&root),
+            "artifact must live under the store's own root"
+        );
         // Sharded like `Cache::path_for`: a 2-char prefix directory, then
         // the rest of the hash as the filename.
         assert!(path.starts_with(root.join(&hash[..2])));

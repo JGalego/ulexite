@@ -78,7 +78,9 @@ async fn hover_on_a_judge_reference_shows_its_signature() {
     let path = examples_dir().join("translate.ulx");
     let text = std::fs::read_to_string(&path).expect("fixture exists");
     let uri = file_url(&path);
-    backend.did_open(open_params(uri.clone(), text.clone())).await;
+    backend
+        .did_open(open_params(uri.clone(), text.clone()))
+        .await;
 
     // `match judge Fluency(draft)` — not the declaration site.
     let position = position_of(&text, "Fluency(draft)");
@@ -109,7 +111,9 @@ async fn goto_definition_on_a_judge_reference_finds_its_declaration() {
     let path = examples_dir().join("translate.ulx");
     let text = std::fs::read_to_string(&path).expect("fixture exists");
     let uri = file_url(&path);
-    backend.did_open(open_params(uri.clone(), text.clone())).await;
+    backend
+        .did_open(open_params(uri.clone(), text.clone()))
+        .await;
 
     let position = position_of(&text, "Fluency(draft)");
     let response = backend
@@ -169,7 +173,9 @@ async fn completion_includes_decls_capabilities_and_keywords() {
     let path = examples_dir().join("translate.ulx");
     let text = std::fs::read_to_string(&path).expect("fixture exists");
     let uri = file_url(&path);
-    backend.did_open(open_params(uri.clone(), text.clone())).await;
+    backend
+        .did_open(open_params(uri.clone(), text.clone()))
+        .await;
 
     let response = backend
         .completion(CompletionParams {
