@@ -624,6 +624,7 @@ fn import_p() -> impl Parser<Token, Spanned<Import>, Error = Err> + Clone {
         kw("validator").to(ImportKind::Validator),
         kw("dataset").to(ImportKind::Dataset),
         kw("type").to(ImportKind::Type),
+        kw("provider").to(ImportKind::Provider),
     ));
     let str_lit = filter_map(|span, t: Token| match t {
         Token::Str(s) => Ok(s),
@@ -772,6 +773,24 @@ pub fn program_p() -> impl Parser<Token, Program, Error = Err> + Clone {
             })
         });
 
+    let provider_decl = kw("provider")
+        .ignore_then(ident_p())
+        .then(kw("from").ignore_then(str_lit).or_not())
+        .then(
+            field_assign
+                .clone()
+                .repeated()
+                .delimited_by(just(Token::LBrace), just(Token::RBrace)),
+        )
+        .map(|((name, from), fields)| {
+            TopDecl::Provider(ProviderDecl {
+                doc: None,
+                name,
+                from,
+                fields,
+            })
+        });
+
     let conversation_decl = kw("conversation")
         .ignore_then(ident_p())
         .then(param_list_p(type_expr.clone()))
@@ -794,6 +813,7 @@ pub fn program_p() -> impl Parser<Token, Program, Error = Err> + Clone {
         dataset_decl,
         type_decl,
         benchmark_decl,
+        provider_decl,
     )));
 
     let import_or_decl = import_p().map(Item::Import).or(top_decl.map(Item::Decl));

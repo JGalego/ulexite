@@ -68,6 +68,7 @@ pub fn decl_name(decl: &TopDecl) -> &str {
         TopDecl::Dataset(d) => &d.name,
         TopDecl::Type(t) => &t.name,
         TopDecl::Benchmark(b) => &b.name,
+        TopDecl::Provider(p) => &p.name,
     }
 }
 
@@ -79,6 +80,7 @@ fn decl_kind(decl: &TopDecl) -> ImportKind {
         TopDecl::Dataset(_) => ImportKind::Dataset,
         TopDecl::Type(_) => ImportKind::Type,
         TopDecl::Benchmark(_) => ImportKind::Conversation, // benchmarks aren't importable by kind
+        TopDecl::Provider(_) => ImportKind::Provider,
     }
 }
 
@@ -102,8 +104,16 @@ pub fn check_duplicate_top_level_names(program: &Program, diags: &mut Vec<Diagno
 /// Parse `entry` and every file it (transitively) imports via `import kind
 /// Name from "path"`, then run semantic analysis over each module with a
 /// full picture of its available global names (own declarations + imported
-/// names + stdlib module aliases).
-pub fn load_and_analyze(entry: &Path) -> Result<Workspace, String> {
+/// names + stdlib module aliases). `known_manifest_providers` is the set of
+/// `[providers.*]` entry names in `ulexite.toml` next to `entry`, if the
+/// caller found one (`ulx-cli`'s `pipeline::check` — `ulx-sema` itself never
+/// reads the manifest); `None` means no manifest was found, so a `provider`
+/// decl's `from "name"` clause can't be validated here and is deferred
+/// entirely to `ulx run`.
+pub fn load_and_analyze(
+    entry: &Path,
+    known_manifest_providers: Option<&HashSet<String>>,
+) -> Result<Workspace, String> {
     let entry = entry
         .canonicalize()
         .map_err(|e| format!("could not read {}: {e}", entry.display()))?;
@@ -121,10 +131,14 @@ pub fn load_and_analyze(entry: &Path) -> Result<Workspace, String> {
 
         let mut globals: HashSet<String> = HashSet::new();
         let mut judges_and_validators: HashSet<String> = HashSet::new();
+        let mut providers: HashSet<String> = HashSet::new();
         for (decl, _) in &program.decls {
             globals.insert(decl_name(decl).to_string());
             if matches!(decl, TopDecl::Judge(_) | TopDecl::Validator(_)) {
                 judges_and_validators.insert(decl_name(decl).to_string());
+            }
+            if matches!(decl, TopDecl::Provider(_)) {
+                providers.insert(decl_name(decl).to_string());
             }
         }
         for (import, span) in &program.imports {
@@ -133,6 +147,9 @@ pub fn load_and_analyze(entry: &Path) -> Result<Workspace, String> {
                     globals.insert(name.clone());
                     if matches!(kind, ImportKind::Judge | ImportKind::Validator) {
                         judges_and_validators.insert(name.clone());
+                    }
+                    if matches!(kind, ImportKind::Provider) {
+                        providers.insert(name.clone());
                     }
                     let target_path = resolve_import_path(path, from);
                     match modules.get(&target_path) {
@@ -174,6 +191,8 @@ pub fn load_and_analyze(entry: &Path) -> Result<Workspace, String> {
                 caps: &caps,
                 globals: Some(&globals),
                 judges_and_validators: Some(&judges_and_validators),
+                providers: Some(&providers),
+                known_manifest_providers,
                 diags: &mut diags,
             };
             check_decl_with(decl, &mut ctx);

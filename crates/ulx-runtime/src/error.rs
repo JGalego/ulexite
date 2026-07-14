@@ -1,9 +1,13 @@
-use crate::provider::ProviderError;
+use crate::provider::{ProviderError, ResolveError};
 
 #[derive(Debug, Clone)]
 pub enum RuntimeError {
     UndefinedName(String),
-    UnknownCapability(String),
+    /// Resolving a capability (optionally by name) against the provider
+    /// registry failed — no provider at all, an ambiguous multi-match with
+    /// no `provider:`/`--provider` disambiguation, or a named provider that
+    /// doesn't exist or doesn't serve this capability.
+    ProviderResolution(ResolveError),
     UnknownJudgeOrValidator(String),
     UnknownConversation(String),
     UnknownDataset(String),
@@ -28,9 +32,7 @@ impl std::fmt::Display for RuntimeError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             RuntimeError::UndefinedName(n) => write!(f, "undefined name `{n}`"),
-            RuntimeError::UnknownCapability(c) => {
-                write!(f, "no provider registered for capability `{c}`")
-            }
+            RuntimeError::ProviderResolution(e) => write!(f, "{e}"),
             RuntimeError::UnknownJudgeOrValidator(n) => {
                 write!(f, "no `judge`/`validator` named `{n}`")
             }

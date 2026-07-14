@@ -33,6 +33,7 @@ pub enum ImportKind {
     Validator,
     Dataset,
     Type,
+    Provider,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -43,6 +44,7 @@ pub enum TopDecl {
     Dataset(DatasetDecl),
     Type(TypeDecl),
     Benchmark(BenchmarkDecl),
+    Provider(ProviderDecl),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -96,6 +98,20 @@ pub struct BenchmarkDecl {
     pub doc: Option<String>,
     pub name: String,
     pub stmts: Vec<Spanned<BenchmarkStmt>>,
+}
+
+/// `provider Name [from "manifest-entry"] { field: expr ... }` — a
+/// provider config declared directly in `.ulx` source, standalone or
+/// layered on top of a `ulexite.toml` `[providers.<from>]` entry. Fields
+/// are plain config (vendor/api_key_env/base_url/api_version, plus one
+/// entry per capability), never executable code — same category as
+/// `DatasetDecl`, not a runtime statement.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ProviderDecl {
+    pub doc: Option<String>,
+    pub name: String,
+    pub from: Option<String>,
+    pub fields: Vec<(String, Spanned<Expr>)>,
 }
 
 #[derive(Debug, Clone, PartialEq)]

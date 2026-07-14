@@ -1,6 +1,6 @@
 # 8. Grammar
 
-Formal grammar for the syntax fixed in §7, in EBNF. This is the grammar a parser-combinator or LR/PEG generator (§13.2) implements; it is deliberately independent of any runtime or provider concept — nothing below names a vendor, a model, or an SDK.
+Formal grammar for the syntax fixed in §7, in EBNF. This is the grammar a parser-combinator or LR/PEG generator (§13.2) implements; it is deliberately independent of any runtime or provider concept for every *ordinary* construct — an `ask_expr` names a capability, never a vendor. `provider_decl` is the one deliberate, opt-in exception (§12.4): it lets `.ulx` source declare a vendor/model config directly, standalone or inheriting from `ulexite.toml`, for the cases where a project wants that config to travel with the source rather than live in a separate manifest file. Ordinary `ask` call sites still only ever reference a capability (optionally qualified by a provider *name* via the `provider` arg — still no vendor kind in sight there).
 
 ```ebnf
 (* ---------- Lexical ---------- *)
@@ -20,14 +20,15 @@ program       = { import_decl | top_decl } ;
 
 import_decl   = "import" , kind , ident , "from" , string_lit    (* e.g. import judge Fluency from "translate.ulx" *)
               | "import" , string_lit , "as" , ident ;            (* stdlib module import, §15, e.g. import "vector" as vector *)
-kind          = "conversation" | "judge" | "validator" | "dataset" | "type" ;
+kind          = "conversation" | "judge" | "validator" | "dataset" | "type" | "provider" ;
 
 top_decl      = conversation_decl
               | judge_decl
               | validator_decl
               | dataset_decl
               | type_decl
-              | benchmark_decl ;
+              | benchmark_decl
+              | provider_decl ;
 
 (* ---------- Conversation ---------- *)
 conversation_decl
@@ -98,6 +99,16 @@ dataset_decl  = { doc_comment } , "dataset" , ident , ":" , type_expr ,
 dataset_rows  = "[" , [ record_lit , { "," , record_lit } ] , "]" ;
 
 type_decl     = "type" , ident , "=" , type_expr ;
+
+(* provider config declared in .ulx source (§12.4) — standalone (vendor
+   required) or "from"-inheriting a ulexite.toml [providers.<name>] entry
+   (vendor then comes from there; declaring both is rejected). Every field
+   besides the four scalar ones (vendor/api_key_env/base_url/api_version)
+   is a capability name, whose value is either a bare model_name string or
+   a record_lit for per-capability overrides — same field_assign shape
+   judge/validator/dataset already use, not a new expression form. *)
+provider_decl = { doc_comment } , "provider" , ident , [ "from" , string_lit ] ,
+                "{" , { field_assign } , "}" ;
 
 (* ---------- Types, §9 ---------- *)
 type_expr     = artifact_type

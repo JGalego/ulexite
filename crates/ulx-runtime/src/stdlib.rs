@@ -48,10 +48,16 @@ pub fn call(
                 .and_then(Value::as_text)
                 .unwrap_or("")
                 .to_string();
-            let provider = ctx
-                .providers
-                .resolve("embed")
-                .ok_or_else(|| RuntimeError::UnknownCapability("embed".to_string()))?;
+            let provider = match get(args, "provider", usize::MAX).and_then(Value::as_text) {
+                Some(name) => ctx
+                    .providers
+                    .resolve_named("embed", name)
+                    .map_err(RuntimeError::ProviderResolution)?,
+                None => ctx
+                    .providers
+                    .resolve("embed")
+                    .map_err(RuntimeError::ProviderResolution)?,
+            };
             let invocation = Invocation {
                 messages: vec![Message {
                     role: "user".to_string(),

@@ -46,17 +46,19 @@ cargo install --git https://github.com/JGalego/ulexite ulx-cli --locked
 # scaffold a new package (writes ulexite.toml + main.ulx into the given directory)
 ulx init my-first-package /tmp/my-first-package
 ulx check /tmp/my-first-package/main.ulx
-ulx run /tmp/my-first-package/main.ulx Hello --arg name=world
+ulx run /tmp/my-first-package/main.ulx Hello --arg name=world --mock
 ```
 
 Or drive one of the shipped examples directly, including a human-approval suspend/resume round trip:
 
 ```sh
-ulx run examples/translate.ulx Translate --arg source=hello --arg target_lang=fr
-ulx run examples/translate.ulx Translate --arg source="MOCK_JUDGE_ESCALATE please" --arg target_lang=fr --run-id demo
-ulx approve demo --value "human said: ship it"
+ulx run examples/translate.ulx Translate --arg source=hello --arg target_lang=fr --mock
+ulx run examples/translate.ulx Translate --arg source="MOCK_JUDGE_ESCALATE please" --arg target_lang=fr --run-id demo --mock
+ulx approve demo --value "human said: ship it" --mock
 ulx trace demo
 ```
+
+`--mock` is required here on purpose: `ulx run`/`approve`/`deny` now error if no provider is configured at all, rather than silently defaulting to mock — see "Configuring providers" below.
 
 ## What's implemented
 
@@ -74,7 +76,9 @@ Not implemented: PDF/video input to `vision` and a real content-addressed artifa
 
 ## Configuring providers
 
-Zero-config `ulx run` always uses the deterministic mock provider — no API key, fully offline. To use a real vendor, add a `[providers.<name>]` table to `ulexite.toml` next to your `.ulx` file — one table per vendor account/deployment, `vendor` mandatory (never inferred from the table name, so two entries for the same vendor are unambiguous), and every other key a capability name mapped to a model:
+`ulx run`/`approve`/`deny` require a configured provider and error otherwise — pass `--mock` to run against the deterministic, fully-offline mock provider explicitly, or configure a real vendor. This is deliberate: a silently-defaulted-to-mock run that you *thought* was hitting a real API is a worse failure mode than an upfront error.
+
+To use a real vendor, add a `[providers.<name>]` table to `ulexite.toml` next to your `.ulx` file — one table per vendor account/deployment, `vendor` mandatory (never inferred from the table name, so two entries for the same vendor are unambiguous), and every other key a capability name mapped to a model:
 
 ```toml
 [providers.anthropic]
@@ -110,7 +114,30 @@ chat = "my-gpt4o-deployment"                   # this is your *deployment name*,
 
 `vendor = "ollama"` needs no API key and defaults to `http://localhost:11434`. `chat` is implemented for every vendor; `embed` for `openai_compatible`/`gemini`/`cohere`/`ollama`/`azure_openai`; `vision` for `openai_compatible`/`anthropic`/`gemini`/`ollama`/`azure_openai` (image files only — jpg/png/gif/webp, read straight off disk or passed through as an `http(s)://` URL where the vendor supports it; PDF/video are mock-only); `transcribe`/`speak`/`generate_image` for `openai_compatible` (covers OpenAI directly, and Groq for `transcribe`; not yet implemented for `azure_openai`, which does offer Whisper/TTS/DALL-E deployments of its own). Every real HTTP call goes through one retry-with-backoff policy plus a per-provider circuit breaker (`crates/ulx-runtime/src/provider/transport.rs`) — a handful of consecutive failures trips it open for a cooldown instead of hammering a downed vendor. A rate limit, timeout, or safety refusal surfaces as an unsettled `Draft<T>` (§9.3), not a crash. Adding a provider that isn't listed above needs no compiler/grammar/IR change (§12.4) — see `crates/ulx-runtime/src/provider/`.
 
-Provider config lives entirely in `ulexite.toml`, never in `.ulx` source — a `.ulx` program only ever names a capability (`ask chat(...)`, `ask vision(...)`), never a vendor, by design (§12.4's provider-independence principle).
+If more than one registered provider serves the same capability (two `[providers.*]` entries both declaring `chat`, say) and nothing disambiguates it, `ask` fails with a clear `Ambiguous` error naming every candidate — it never silently picks one. Disambiguate either per call, with the reserved `provider:` arg (`ask chat(provider: "anthropic") { ... }`), or for the whole run, with `--provider name` on the CLI (repeatable; only the named provider(s) get registered at all).
+
+### Declaring a provider in `.ulx` source
+
+A `provider` block can also be declared directly in `.ulx` source — standalone (no `ulexite.toml` needed at all) or layered on top of a manifest entry:
+
+```
+provider MyAnthropic from "anthropic" {   // inherits vendor/api_key_env/etc. from [providers.anthropic]
+  vision: "claude-3-5-sonnet-20241022"    // adds a capability the manifest entry didn't have
+}
+
+provider Local {                          // fully standalone — no ulexite.toml needed
+  vendor: "openai_compatible"
+  base_url: "http://localhost:8000/v1"
+  chat: "meta-llama/Llama-3-8b"
+}
+
+conversation Greet(name: text) -> text {
+  ask chat(provider: "Local") { user: """Say hello to {name}.""" } -> greeting: text
+  greeting
+}
+```
+
+See [`examples/custom_provider.ulx`](examples/custom_provider.ulx) for a runnable, fully-offline version (§21.12). `provider` decls can be imported across files too, the same way `judge`/`conversation`/`dataset` already are (`import provider Prod from "providers.ulx"`). This is the one place `.ulx` source can name an actual vendor — every `ask` call site still only ever names a capability (plus, optionally, a provider *name*, never a vendor kind directly); §12.4's provider-independence principle still holds for ordinary `ask` calls, this is an explicit, opt-in escape hatch layered on top of it, not a replacement for it.
 
 **API keys via `.env`**: `ulx run` also loads a `.env` file next to the `.ulx` file being run, if one exists, before resolving providers — so `OPENAI_API_KEY=sk-...` can live in a local, gitignored `.env` instead of being `export`ed by hand every session. A real shell-exported variable always wins over the `.env` file's value. See [`examples/.env.example`](examples/.env.example).
 

@@ -224,3 +224,22 @@ conversation GenerateAndDescribe(prompt: text) -> text {
 ```
 
 The interesting part isn't either capability alone — it's that `picture`, `generate_image`'s output, feeds straight back into `vision` as an ordinary `image`-typed value: against a real `openai_compatible` vendor, `generate_image` writes the decoded image to a local temp file (no artifact/blob store yet, §12.7/§24 Limitations) and `vision` reads that same path right back off disk (`provider::artifact`), with no special-casing anywhere in this program for the fact that the image was just synthesized rather than supplied by the caller.
+
+## 21.12 Declaring a provider directly in `.ulx` source
+
+```
+// examples/custom_provider.ulx
+provider LocalAssistant {
+  vendor: "mock"
+  chat: "unused-by-mock"
+}
+
+conversation Greet(name: text) -> text {
+  ask chat(provider: "LocalAssistant") {
+    user: """Say hello to {name}."""
+  } -> greeting: text
+  greeting
+}
+```
+
+No `ulexite.toml` needed at all — `provider Name { ... }` (§12.4, §8's `provider_decl`) declares a fully self-contained provider directly in source, and `ask chat(provider: "LocalAssistant")`'s reserved `provider` arg (an ordinary named arg, not new grammar) selects it by name. `vendor: "mock"` keeps this specific example runnable fully offline like every other one in this directory; swapping it for `vendor: "openai_compatible"` + `base_url` (or any other real vendor) is the only change needed to point `LocalAssistant` at something real. A `provider` decl can also write `from "<name>"` instead of (not alongside — the two are mutually exclusive, §12.4) a `vendor` field, to inherit and override a `ulexite.toml` `[providers.<name>]` entry rather than standing alone; see README.md's "Configuring providers" for that form. `ulx run`/`approve`/`deny` now error when nothing is configured at all — pass `--mock` to opt into the deterministic mock explicitly (this example doesn't need it, since it declares its own mock-backed provider).

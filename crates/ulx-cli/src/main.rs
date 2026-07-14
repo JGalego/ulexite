@@ -20,7 +20,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use clap::{Parser, Subcommand};
-use ulx_runtime::{Cache, RunContext, RuntimeError, TraceWriter, Value};
+use ulx_runtime::{Cache, ProviderRegistry, RunContext, RuntimeError, TraceWriter, Value};
 
 #[derive(Parser)]
 #[command(name = "ulx", about = "Ulexite language CLI")]
@@ -35,7 +35,9 @@ enum Command {
     Parse { file: PathBuf },
     /// Parse + run semantic analysis (§9, §13.3) across the file and its imports.
     Check { file: PathBuf },
-    /// Run a conversation to completion (or suspension), against the mock provider.
+    /// Run a conversation to completion (or suspension). Errors if no
+    /// provider is configured — pass --mock to run against the
+    /// deterministic mock provider instead.
     Run {
         file: PathBuf,
         conversation: String,
@@ -45,6 +47,16 @@ enum Command {
         /// Reuse a specific run id (default: derived from file+conversation+args).
         #[arg(long)]
         run_id: Option<String>,
+        /// Select a specific configured provider by name (a `.ulx`
+        /// `provider` decl or a `ulexite.toml` entry) — repeatable; only
+        /// the named provider(s) are registered, so an otherwise-ambiguous
+        /// capability resolves unambiguously.
+        #[arg(long = "provider", value_name = "NAME")]
+        providers: Vec<String>,
+        /// Force the deterministic offline mock provider, ignoring any
+        /// configured real providers entirely.
+        #[arg(long, conflicts_with = "providers")]
+        mock: bool,
     },
     /// Record a human decision for a suspended run and resume it.
     Approve {
@@ -52,12 +64,20 @@ enum Command {
         /// The value to resolve the `escalate(...)` expression to.
         #[arg(long, default_value = "approved")]
         value: String,
+        #[arg(long = "provider", value_name = "NAME")]
+        providers: Vec<String>,
+        #[arg(long, conflicts_with = "providers")]
+        mock: bool,
     },
     /// Record a denial for a suspended run (does not resume execution).
     Deny {
         run_id: String,
         #[arg(long)]
         note: Option<String>,
+        #[arg(long = "provider", value_name = "NAME")]
+        providers: Vec<String>,
+        #[arg(long, conflicts_with = "providers")]
+        mock: bool,
     },
     /// Strictly replay a completed run from its trace log (§18.3) — a cache
     /// miss is an error, never a live provider call.
@@ -87,9 +107,21 @@ fn main() {
             conversation,
             args,
             run_id,
-        } => cmd_run(&file, &conversation, &args, run_id),
-        Command::Approve { run_id, value } => cmd_approve(&run_id, &value),
-        Command::Deny { run_id, note } => cmd_deny(&run_id, note.as_deref()),
+            providers,
+            mock,
+        } => cmd_run(&file, &conversation, &args, run_id, &providers, mock),
+        Command::Approve {
+            run_id,
+            value,
+            providers,
+            mock,
+        } => cmd_approve(&run_id, &value, &providers, mock),
+        Command::Deny {
+            run_id,
+            note,
+            providers,
+            mock,
+        } => cmd_deny(&run_id, note.as_deref(), &providers, mock),
         Command::Replay { run_id } => cmd_replay(&run_id),
         Command::Trace { run_id } => cmd_trace(&run_id),
         Command::Init { name, dir } => cmd_init(&name, &dir),
@@ -153,14 +185,18 @@ fn default_run_id(
     ulx_runtime::value::hash_bytes(input.as_bytes())[..16].to_string()
 }
 
+/// Builds a `RunContext` from an already-resolved `ProviderRegistry` — the
+/// registry resolution itself (`providers::resolve_providers`, needing the
+/// CLI's `--provider`/`--mock` flags and the loaded `provider_decls`) is the
+/// caller's job, so `cmd_replay` can special-case its own fallback path.
 fn build_context<'a>(
     ir: &'a ulx_ir::IrProgram,
+    providers: ProviderRegistry,
     file: &std::path::Path,
     run_id: &str,
 ) -> std::io::Result<RunContext<'a>> {
     let cache = Cache::new(manifest::cache_dir())?;
     let trace = TraceWriter::create(manifest::traces_dir(), run_id)?;
-    let providers = providers::resolve_providers(file).map_err(std::io::Error::other)?;
     Ok(RunContext::new(
         ir,
         providers,
@@ -171,7 +207,14 @@ fn build_context<'a>(
     ))
 }
 
-fn cmd_run(file: &Path, conversation: &str, raw_args: &[String], run_id: Option<String>) -> bool {
+fn cmd_run(
+    file: &Path,
+    conversation: &str,
+    raw_args: &[String],
+    run_id: Option<String>,
+    selected_providers: &[String],
+    force_mock: bool,
+) -> bool {
     let Some(loaded) = pipeline::load(file) else {
         return false;
     };
@@ -195,7 +238,19 @@ fn cmd_run(file: &Path, conversation: &str, raw_args: &[String], run_id: Option<
         eprintln!("warning: could not persist run manifest: {e}");
     }
 
-    let ctx = match build_context(&loaded.ir, file, &run_id) {
+    let providers = match providers::resolve_providers(
+        file,
+        &loaded.provider_decls,
+        selected_providers,
+        force_mock,
+    ) {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("error: {e}");
+            return false;
+        }
+    };
+    let ctx = match build_context(&loaded.ir, providers, file, &run_id) {
         Ok(c) => c,
         Err(e) => {
             eprintln!("error: could not set up run context: {e}");
@@ -232,7 +287,7 @@ fn execute(
     }
 }
 
-fn resume(run_id: &str, decision: Value) -> bool {
+fn resume(run_id: &str, decision: Value, selected_providers: &[String], force_mock: bool) -> bool {
     let manifest = match manifest::load(run_id) {
         Ok(m) => m,
         Err(e) => {
@@ -253,12 +308,25 @@ fn resume(run_id: &str, decision: Value) -> bool {
     // cache key, then record the decision under it and run again in a
     // *fresh* `RunContext` — this is the resume mechanism `ulx-runtime`'s
     // docs describe. The two `run_conversation` calls deliberately use
-    // separate contexts: escalate cache keys mix in a per-context sequence
-    // counter to disambiguate multiple escalate call sites (see
-    // `interp.rs`), so reusing one context across both calls would advance
-    // that counter and compute a *different* key on the second call,
-    // missing the very decision just recorded.
-    let probe_ctx = match build_context(&loaded.ir, &manifest.file, run_id) {
+    // separate contexts (each needs its own freshly-resolved
+    // `ProviderRegistry`, since it isn't `Clone`): escalate cache keys mix
+    // in a per-context sequence counter to disambiguate multiple escalate
+    // call sites (see `interp.rs`), so reusing one context across both
+    // calls would advance that counter and compute a *different* key on
+    // the second call, missing the very decision just recorded.
+    let probe_providers = match providers::resolve_providers(
+        &manifest.file,
+        &loaded.provider_decls,
+        selected_providers,
+        force_mock,
+    ) {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("error: {e}");
+            return false;
+        }
+    };
+    let probe_ctx = match build_context(&loaded.ir, probe_providers, &manifest.file, run_id) {
         Ok(c) => c,
         Err(e) => {
             eprintln!("error: could not set up run context: {e}");
@@ -282,7 +350,19 @@ fn resume(run_id: &str, decision: Value) -> bool {
         }
     }
 
-    let ctx = match build_context(&loaded.ir, &manifest.file, run_id) {
+    let providers = match providers::resolve_providers(
+        &manifest.file,
+        &loaded.provider_decls,
+        selected_providers,
+        force_mock,
+    ) {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("error: {e}");
+            return false;
+        }
+    };
+    let ctx = match build_context(&loaded.ir, providers, &manifest.file, run_id) {
         Ok(c) => c,
         Err(e) => {
             eprintln!("error: could not set up run context: {e}");
@@ -292,11 +372,21 @@ fn resume(run_id: &str, decision: Value) -> bool {
     execute(&ctx, &manifest.conversation, args, run_id)
 }
 
-fn cmd_approve(run_id: &str, value: &str) -> bool {
-    resume(run_id, Value::Text(value.to_string()))
+fn cmd_approve(run_id: &str, value: &str, selected_providers: &[String], force_mock: bool) -> bool {
+    resume(
+        run_id,
+        Value::Text(value.to_string()),
+        selected_providers,
+        force_mock,
+    )
 }
 
-fn cmd_deny(run_id: &str, note: Option<&str>) -> bool {
+fn cmd_deny(
+    run_id: &str,
+    note: Option<&str>,
+    selected_providers: &[String],
+    force_mock: bool,
+) -> bool {
     let reason = note.unwrap_or("denied by human reviewer").to_string();
     println!("run `{run_id}` denied: {reason}");
     println!("note: v0.1 does not distinguish deny-and-abort from deny-with-value at the type level (§24) —");
@@ -304,6 +394,8 @@ fn cmd_deny(run_id: &str, note: Option<&str>) -> bool {
     resume(
         run_id,
         Value::Verdict(ulx_runtime::value::Verdict::Fail(reason)),
+        selected_providers,
+        force_mock,
     )
 }
 
@@ -318,7 +410,22 @@ fn cmd_replay(run_id: &str) -> bool {
     let Some(loaded) = pipeline::load(&manifest.file) else {
         return false;
     };
-    let ctx = match build_context(&loaded.ir, &manifest.file, run_id) {
+    // Replay never invokes a provider for real (`invoke_cached`'s
+    // `replay_only` branch short-circuits on every cache hit before any
+    // `provider.invoke` call) — but cache keys are derived partly from
+    // `provider.id()` (interp.rs), so replay still needs the *same*
+    // provider ids the original run used to find matching cache entries.
+    // Resolve normally first; only if that fails because nothing is
+    // configured at all (meaning the original run could only have
+    // succeeded via `--mock` too, since without it an unconfigured run
+    // fails identically) fall back to the mock registry, whose `id()`s
+    // match what that original run must have used.
+    let providers =
+        match providers::resolve_providers(&manifest.file, &loaded.provider_decls, &[], false) {
+            Ok(p) => p,
+            Err(_) => ProviderRegistry::with_mock(),
+        };
+    let ctx = match build_context(&loaded.ir, providers, &manifest.file, run_id) {
         Ok(c) => c.replaying(),
         Err(e) => {
             eprintln!("error: could not set up run context: {e}");
@@ -476,7 +583,7 @@ cache_backend = "local"
     println!("created {}", manifest_path.display());
     println!("created {}", main_path.display());
     println!(
-        "try: ulx run {} Hello --arg name=world",
+        "try: ulx run {} Hello --arg name=world --mock   (or configure a real provider — see README's \"Configuring providers\")",
         main_path.display()
     );
     true

@@ -45,6 +45,14 @@ pub fn lower_program(program: &Program) -> Result<IrProgram, LowerError> {
             TopDecl::Validator(r) => out.validators.push(lower_rubric(r, &known_conversations)?),
             TopDecl::Dataset(d) => out.datasets.push(lower_dataset(d, &known_conversations)?),
             TopDecl::Type(_) => {}
+            // Provider decls are pure config, never executable — same
+            // category as `Type`. They're also never routed through IR at
+            // all: `pipeline::load` only lowers the entry file's own
+            // `Program`, so an imported `provider` block would silently
+            // never reach here anyway. `ulx-cli` reads `TopDecl::Provider`
+            // straight off the parsed `Workspace` instead (see
+            // `pipeline::load`'s `provider_decls`).
+            TopDecl::Provider(_) => {}
             TopDecl::Benchmark(b) => out
                 .benchmarks
                 .push(lower_benchmark(b, &known_conversations)?),

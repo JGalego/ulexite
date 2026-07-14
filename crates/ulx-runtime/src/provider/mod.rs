@@ -85,11 +85,59 @@ pub trait Provider: Send + Sync {
     fn invoke(&self, capability: &str, request: &Invocation) -> Result<Value, ProviderError>;
 }
 
+/// Failure modes for resolving a capability (optionally by name) against
+/// the registry — distinct from `ProviderError`, which is what a *found*
+/// provider returns once actually invoked.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ResolveError {
+    /// No registered provider supports this capability at all.
+    UnknownCapability(String),
+    /// 2+ registered providers support this capability and nothing
+    /// disambiguated it (§12.4 — no more silent first-match).
+    Ambiguous {
+        capability: String,
+        candidates: Vec<String>,
+    },
+    /// `provider: "name"` (or `--provider name`) named something that
+    /// isn't registered at all.
+    UnknownProvider(String),
+    /// `provider: "name"` named a real, registered provider that just
+    /// doesn't support this capability.
+    ProviderDoesNotSupportCapability { name: String, capability: String },
+}
+
+impl std::fmt::Display for ResolveError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ResolveError::UnknownCapability(c) => {
+                write!(f, "no provider registered supports capability `{c}`")
+            }
+            ResolveError::Ambiguous {
+                capability,
+                candidates,
+            } => write!(
+                f,
+                "capability `{capability}` is served by multiple providers {candidates:?} — add \
+                 `provider: \"name\"` to this call, or pass --provider name on the CLI"
+            ),
+            ResolveError::UnknownProvider(name) => {
+                write!(f, "no provider named `{name}` is registered")
+            }
+            ResolveError::ProviderDoesNotSupportCapability { name, capability } => write!(
+                f,
+                "provider `{name}` does not support capability `{capability}`"
+            ),
+        }
+    }
+}
+
 /// Resolves an unqualified `ask <capability>(...)` to a concrete provider
-/// (§12.4, §5.5) — v0.1's "policy" is simply "first registered provider
-/// that supports it."
+/// (§12.4, §5.5) — every registered provider is tracked by name so a
+/// `provider: "name"` arg (or `--provider name` on the CLI) can pick a
+/// specific one; with no name given, 2+ providers supporting the same
+/// capability is an explicit `Ambiguous` error, not a silent first-match.
 pub struct ProviderRegistry {
-    providers: Vec<Box<dyn Provider>>,
+    providers: Vec<(String, Box<dyn Provider>)>,
 }
 
 impl ProviderRegistry {
@@ -101,19 +149,45 @@ impl ProviderRegistry {
 
     pub fn with_mock() -> Self {
         let mut r = Self::new();
-        r.register(Box::new(MockProvider::new()));
+        r.register("mock", Box::new(MockProvider::new()));
         r
     }
 
-    pub fn register(&mut self, provider: Box<dyn Provider>) {
-        self.providers.push(provider);
+    pub fn register(&mut self, name: impl Into<String>, provider: Box<dyn Provider>) {
+        self.providers.push((name.into(), provider));
     }
 
-    pub fn resolve(&self, capability: &str) -> Option<&dyn Provider> {
-        self.providers
+    pub fn resolve(&self, capability: &str) -> Result<&dyn Provider, ResolveError> {
+        let matching: Vec<&(String, Box<dyn Provider>)> = self
+            .providers
             .iter()
-            .find(|p| p.supports(capability))
-            .map(|p| p.as_ref())
+            .filter(|(_, p)| p.supports(capability))
+            .collect();
+        match matching.as_slice() {
+            [] => Err(ResolveError::UnknownCapability(capability.to_string())),
+            [(_, provider)] => Ok(provider.as_ref()),
+            multiple => Err(ResolveError::Ambiguous {
+                capability: capability.to_string(),
+                candidates: multiple.iter().map(|(name, _)| name.clone()).collect(),
+            }),
+        }
+    }
+
+    pub fn resolve_named(
+        &self,
+        capability: &str,
+        name: &str,
+    ) -> Result<&dyn Provider, ResolveError> {
+        let Some((_, provider)) = self.providers.iter().find(|(n, _)| n == name) else {
+            return Err(ResolveError::UnknownProvider(name.to_string()));
+        };
+        if !provider.supports(capability) {
+            return Err(ResolveError::ProviderDoesNotSupportCapability {
+                name: name.to_string(),
+                capability: capability.to_string(),
+            });
+        }
+        Ok(provider.as_ref())
     }
 }
 
@@ -164,5 +238,73 @@ pub(crate) fn resolve_i64(
         Some(Value::Int(i)) => Some(*i),
         Some(Value::Float(f)) => Some(*f as i64),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn no_registered_provider_is_unknown_capability() {
+        let registry = ProviderRegistry::new();
+        let err = registry.resolve("chat").err().unwrap();
+        assert_eq!(err, ResolveError::UnknownCapability("chat".to_string()));
+    }
+
+    #[test]
+    fn single_match_resolves_directly() {
+        let mut registry = ProviderRegistry::new();
+        registry.register("only", Box::new(MockProvider::new()));
+        assert!(registry.resolve("chat").is_ok());
+    }
+
+    #[test]
+    fn two_matches_is_ambiguous_by_name_not_silent_first_match() {
+        let mut registry = ProviderRegistry::new();
+        registry.register("a", Box::new(MockProvider::new()));
+        registry.register("b", Box::new(MockProvider::new()));
+        let err = registry.resolve("chat").err().unwrap();
+        assert_eq!(
+            err,
+            ResolveError::Ambiguous {
+                capability: "chat".to_string(),
+                candidates: vec!["a".to_string(), "b".to_string()],
+            }
+        );
+    }
+
+    #[test]
+    fn resolve_named_finds_the_exact_provider_even_when_ambiguous() {
+        let mut registry = ProviderRegistry::new();
+        registry.register("a", Box::new(MockProvider::new()));
+        registry.register("b", Box::new(MockProvider::new()));
+        assert!(registry.resolve_named("chat", "b").is_ok());
+    }
+
+    #[test]
+    fn resolve_named_unknown_name_is_an_error() {
+        let registry = ProviderRegistry::with_mock();
+        let err = registry.resolve_named("chat", "nonexistent").err().unwrap();
+        assert_eq!(
+            err,
+            ResolveError::UnknownProvider("nonexistent".to_string())
+        );
+    }
+
+    #[test]
+    fn resolve_named_provider_not_supporting_capability_is_an_error() {
+        let registry = ProviderRegistry::with_mock();
+        let err = registry
+            .resolve_named("not-a-real-capability", "mock")
+            .err()
+            .unwrap();
+        assert_eq!(
+            err,
+            ResolveError::ProviderDoesNotSupportCapability {
+                name: "mock".to_string(),
+                capability: "not-a-real-capability".to_string(),
+            }
+        );
     }
 }

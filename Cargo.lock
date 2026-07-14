@@ -948,6 +948,7 @@ dependencies = [
  "serde",
  "serde_json",
  "toml",
+ "ulx-ast",
  "ulx-ir",
  "ulx-runtime",
  "ulx-sema",

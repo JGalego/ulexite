@@ -18,6 +18,15 @@ pub struct Ctx<'a> {
     /// reference something that actually exists. Same `None` convention as
     /// `globals`.
     pub judges_and_validators: Option<&'a HashSet<String>>,
+    /// Names declared as a `provider` (own file + imports), for checking
+    /// `ask cap(provider: "X")`'s reserved arg references something real.
+    /// Same `None` convention as `globals`.
+    pub providers: Option<&'a HashSet<String>>,
+    /// `ulexite.toml` `[providers.*]` entry names next to the file being
+    /// checked, if `ulx-cli` found a manifest — `None` if it didn't (in
+    /// which case `from`/`provider:` references naming a raw manifest entry
+    /// can't be validated here at all, only at `ulx run`).
+    pub known_manifest_providers: Option<&'a HashSet<String>>,
     pub diags: &'a mut Vec<Diagnostic>,
 }
 
@@ -26,6 +35,8 @@ pub fn check_decl(decl: &TopDecl, caps: &[CapabilitySpec], diags: &mut Vec<Diagn
         caps,
         globals: None,
         judges_and_validators: None,
+        providers: None,
+        known_manifest_providers: None,
         diags,
     };
     check_decl_with(decl, &mut ctx);
@@ -38,6 +49,7 @@ pub fn check_decl_with(decl: &TopDecl, ctx: &mut Ctx) {
         TopDecl::Dataset(_) => {}
         TopDecl::Type(_) => {}
         TopDecl::Benchmark(b) => check_benchmark(b, ctx),
+        TopDecl::Provider(p) => check_provider(p, ctx),
     }
 }
 
@@ -78,6 +90,111 @@ fn check_benchmark(b: &BenchmarkDecl, ctx: &mut Ctx) {
                 check_expr(expr, &mut scope, ctx);
                 check_expr(key, &mut scope, ctx);
             }
+        }
+    }
+}
+
+const PROVIDER_SCALAR_FIELDS: [&str; 4] = ["vendor", "api_key_env", "base_url", "api_version"];
+
+/// Validates a `provider Name [from "entry"] { field: expr ... }` decl
+/// (§12.4's "declare a provider from `.ulx` source" extension). Fields are
+/// plain config, never executable code, so this checks *shape* (known
+/// scalar fields are strings, capability fields are a bare model string or
+/// a `{ model: ..., ... }` record of plain literals), not scope/type
+/// inference the way `check_conversation`/`check_rubric` do.
+fn check_provider(p: &ProviderDecl, ctx: &mut Ctx) {
+    let mut seen_fields: HashSet<&str> = HashSet::new();
+    let mut has_vendor = false;
+    for (name, value) in &p.fields {
+        if !seen_fields.insert(name.as_str()) {
+            ctx.diags.push(Diagnostic::error(
+                format!("provider `{}` has more than one `{name}` field", p.name),
+                value.1.clone(),
+            ));
+            continue;
+        }
+        if PROVIDER_SCALAR_FIELDS.contains(&name.as_str()) {
+            if name == "vendor" {
+                has_vendor = true;
+            }
+            if !matches!(value.0, Expr::Str(_)) {
+                ctx.diags.push(Diagnostic::error(
+                    format!("provider `{}` field `{name}` must be a string", p.name),
+                    value.1.clone(),
+                ));
+            }
+        } else {
+            check_provider_capability_value(&p.name, name, value, ctx);
+        }
+    }
+
+    if let Some(from) = &p.from {
+        if has_vendor {
+            ctx.diags.push(Diagnostic::error(
+                format!(
+                    "provider `{}` declares both `from` and `vendor` — `vendor` is inherited from \
+                     the `from` entry; remove one",
+                    p.name
+                ),
+                // Field-less span fallback: the decl has no single "from"
+                // span tracked yet, so anchor on the first field if any,
+                // else this is still useful without one.
+                p.fields.first().map(|(_, v)| v.1.clone()).unwrap_or(0..0),
+            ));
+        }
+        if let Some(known) = ctx.known_manifest_providers {
+            if !known.contains(from) {
+                ctx.diags.push(Diagnostic::error(
+                    format!(
+                        "provider `{}` has `from \"{from}\"`, but ulexite.toml has no `[providers.{from}]` entry",
+                        p.name
+                    ),
+                    p.fields.first().map(|(_, v)| v.1.clone()).unwrap_or(0..0),
+                ));
+            }
+        }
+    } else if !has_vendor {
+        ctx.diags.push(Diagnostic::error(
+            format!(
+                "provider `{}` has no `from` and no `vendor` — a standalone provider block must \
+                 declare one",
+                p.name
+            ),
+            p.fields.first().map(|(_, v)| v.1.clone()).unwrap_or(0..0),
+        ));
+    }
+}
+
+fn check_provider_capability_value(
+    provider_name: &str,
+    field: &str,
+    value: &Spanned<Expr>,
+    ctx: &mut Ctx,
+) {
+    match &value.0 {
+        Expr::Str(_) => {}
+        Expr::RecordLit(inner_fields) => {
+            for (inner_name, inner_value) in inner_fields {
+                if !matches!(inner_value.0, Expr::Str(_) | Expr::Int(_) | Expr::Float(_)) {
+                    ctx.diags.push(Diagnostic::error(
+                        format!(
+                            "provider `{provider_name}` capability `{field}` field `{inner_name}` \
+                             must be a plain string, int, or float — provider config isn't \
+                             executable code"
+                        ),
+                        inner_value.1.clone(),
+                    ));
+                }
+            }
+        }
+        _ => {
+            ctx.diags.push(Diagnostic::error(
+                format!(
+                    "provider `{provider_name}` capability `{field}` must be a bare model-name \
+                     string or a `{{ model: \"...\", ... }}` record"
+                ),
+                value.1.clone(),
+            ));
         }
     }
 }
@@ -312,6 +429,7 @@ fn check_ask_call(capability: &str, args: &[Arg], span: &Span, scope: &mut Scope
     for a in args {
         check_expr(&a.value, scope, ctx);
     }
+    check_provider_arg_reference(args, ctx);
     let Some(spec) = ctx.caps.iter().find(|c| c.name == capability) else {
         ctx.diags.push(Diagnostic::warning(
             format!("`{capability}` is not a known stdlib capability (§15.1); skipping artifact-type checks for this call"),
@@ -331,6 +449,43 @@ fn check_ask_call(capability: &str, args: &[Arg], span: &Span, scope: &mut Scope
                 ));
             }
         }
+    }
+}
+
+/// Checks `ask cap(provider: "X", ...)`'s reserved `provider` arg (§12.4 —
+/// no new grammar, just a string-valued named arg the interpreter treats
+/// specially) references a name that's either an in-scope `provider` decl
+/// or a raw `ulexite.toml` entry. Silent whenever neither set is fully
+/// known (mirrors `check_rubric_reference`'s "don't hard-error over a name
+/// this pass genuinely can't see" convention) — hard error only when both
+/// sets are available and the name is in neither.
+fn check_provider_arg_reference(args: &[Arg], ctx: &mut Ctx) {
+    let Some(arg) = args.iter().find(|a| a.name.as_deref() == Some("provider")) else {
+        return;
+    };
+    let Expr::Str(name) = &arg.value.0 else {
+        ctx.diags.push(Diagnostic::error(
+            "`provider` must be a string naming a declared provider or ulexite.toml entry"
+                .to_string(),
+            arg.value.1.clone(),
+        ));
+        return;
+    };
+    if ctx.providers.is_none() && ctx.known_manifest_providers.is_none() {
+        return;
+    }
+    let found = ctx.providers.is_some_and(|s| s.contains(name))
+        || ctx
+            .known_manifest_providers
+            .is_some_and(|s| s.contains(name));
+    if !found {
+        ctx.diags.push(Diagnostic::error(
+            format!(
+                "`{name}` is not declared as a `provider` in this file or its imports, and no \
+                 `ulexite.toml` entry named `{name}` exists"
+            ),
+            arg.value.1.clone(),
+        ));
     }
 }
 

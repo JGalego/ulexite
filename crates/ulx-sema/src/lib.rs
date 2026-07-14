@@ -20,6 +20,7 @@ pub use capability::{stdlib_capabilities, CapabilitySpec};
 pub use diagnostic::{Diagnostic, Severity};
 pub use resolve::{load_and_analyze, AnalyzedModule, Workspace};
 
+use std::collections::HashSet;
 use std::path::Path;
 use ulx_ast::Program;
 
@@ -37,7 +38,13 @@ pub fn analyze(program: &Program) -> Vec<Diagnostic> {
 }
 
 /// Parse `entry` and every file it (transitively) imports, then run
-/// semantic analysis across the whole workspace.
-pub fn analyze_file(entry: &Path) -> Result<Workspace, String> {
-    load_and_analyze(entry)
+/// semantic analysis across the whole workspace. `known_manifest_providers`
+/// is the set of `ulexite.toml` `[providers.*]` entry names next to `entry`,
+/// if the caller (`ulx-cli`) found one — `None` if there's no manifest, in
+/// which case a `provider` decl's `from "name"` can't be validated here.
+pub fn analyze_file(
+    entry: &Path,
+    known_manifest_providers: Option<&HashSet<String>>,
+) -> Result<Workspace, String> {
+    load_and_analyze(entry, known_manifest_providers)
 }

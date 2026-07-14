@@ -9,6 +9,7 @@ name = "ulx"
 path = "src/main.rs"
 
 [dependencies]
+ulx-ast = { workspace = true }
 ulx-syntax = { workspace = true }
 ulx-sema = { workspace = true }
 ulx-ir = { workspace = true }

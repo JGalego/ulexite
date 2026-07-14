@@ -28,6 +28,7 @@ pub use error::RuntimeError;
 pub use interp::run_conversation;
 pub use provider::{
     build_provider, MockProvider, Provider, ProviderBuildError, ProviderRegistry, ProviderSpec,
+    ResolveError,
 };
 pub use trace::{read_trace, TraceRecord, TraceWriter};
 pub use value::Value;

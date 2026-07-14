@@ -12,6 +12,142 @@ fn has_error_containing(diags: &[ulx_sema::Diagnostic], needle: &str) -> bool {
 }
 
 #[test]
+fn standalone_provider_without_vendor_is_rejected() {
+    let src = r#"
+        provider Broken {
+          chat: "some-model"
+        }
+    "#;
+    let d = diags(src);
+    assert!(
+        has_error_containing(&d, "no `from` and no `vendor`"),
+        "expected a missing-vendor error, got: {d:?}"
+    );
+}
+
+#[test]
+fn standalone_provider_with_vendor_is_accepted() {
+    let src = r#"
+        provider Fine {
+          vendor: "anthropic"
+          chat: "claude-3-5-sonnet-20241022"
+        }
+    "#;
+    let d = diags(src);
+    assert!(d.is_empty(), "expected no diagnostics, got: {d:?}");
+}
+
+#[test]
+fn provider_with_both_from_and_vendor_is_rejected() {
+    let src = r#"
+        provider Conflicted from "anthropic" {
+          vendor: "openai"
+          chat: "some-model"
+        }
+    "#;
+    let d = diags(src);
+    assert!(
+        has_error_containing(&d, "declares both `from` and `vendor`"),
+        "expected a from/vendor conflict error, got: {d:?}"
+    );
+}
+
+#[test]
+fn provider_with_duplicate_field_is_rejected() {
+    let src = r#"
+        provider Dup {
+          vendor: "anthropic"
+          chat: "claude-3-5-sonnet-20241022"
+          chat: "claude-3-opus-20240229"
+        }
+    "#;
+    let d = diags(src);
+    assert!(
+        has_error_containing(&d, "more than one `chat` field"),
+        "expected a duplicate-field error, got: {d:?}"
+    );
+}
+
+#[test]
+fn provider_capability_record_with_non_literal_field_is_rejected() {
+    let src = r#"
+        conversation UsesIt() -> text {
+          "unused"
+        }
+
+        provider Bad {
+          vendor: "anthropic"
+          chat: { model: "claude-3-5-sonnet-20241022", weird: UsesIt() }
+        }
+    "#;
+    let d = diags(src);
+    assert!(
+        has_error_containing(&d, "must be a plain string, int, or float"),
+        "expected a non-literal capability field error, got: {d:?}"
+    );
+}
+
+#[test]
+fn provider_capability_bad_shape_is_rejected() {
+    let src = r#"
+        provider Bad {
+          vendor: "anthropic"
+          chat: 42
+        }
+    "#;
+    let d = diags(src);
+    assert!(
+        has_error_containing(&d, "must be a bare model-name string"),
+        "expected a bad capability shape error, got: {d:?}"
+    );
+}
+
+#[test]
+fn from_reference_is_validated_against_known_manifest_providers_when_given() {
+    let dir = std::env::temp_dir().join(format!("ulexite-sema-from-test-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("main.ulx");
+    std::fs::write(
+        &file,
+        r#"
+        provider MyAnthropic from "anthropic" {
+          chat: "claude-3-5-sonnet-20241022"
+        }
+        "#,
+    )
+    .unwrap();
+
+    let mut known = std::collections::HashSet::new();
+    known.insert("anthropic".to_string());
+    let ws = ulx_sema::analyze_file(&file, Some(&known)).expect("must load");
+    let ok_diags: Vec<_> = ws
+        .modules
+        .values()
+        .flat_map(|m| m.diagnostics.iter())
+        .collect();
+    assert!(
+        ok_diags.is_empty(),
+        "expected no diagnostics when `anthropic` is a known manifest entry, got: {ok_diags:?}"
+    );
+
+    let empty = std::collections::HashSet::new();
+    let ws = ulx_sema::analyze_file(&file, Some(&empty)).expect("must load");
+    let bad_diags: Vec<_> = ws
+        .modules
+        .values()
+        .flat_map(|m| m.diagnostics.iter())
+        .collect();
+    assert!(
+        bad_diags
+            .iter()
+            .any(|d| d.message.contains("no `[providers.anthropic]` entry")),
+        "expected a missing-manifest-entry error when `anthropic` isn't known, got: {bad_diags:?}"
+    );
+
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
 fn video_into_chat_is_rejected() {
     // §11.5's worked example: chat() only accepts text/markdown/json/image.
     let src = r#"
@@ -148,7 +284,7 @@ fn duplicate_top_level_name_is_rejected() {
 #[test]
 fn nested_blocks_see_enclosing_scope_bindings() {
     let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/translate.ulx");
-    let ws = ulx_sema::analyze_file(&dir).expect("must load");
+    let ws = ulx_sema::analyze_file(&dir, None).expect("must load");
     for m in ws.modules.values() {
         assert!(
             m.diagnostics.is_empty(),
@@ -176,7 +312,7 @@ fn undeclared_judge_reference_is_flagged() {
         "#,
     )
     .unwrap();
-    let ws = ulx_sema::analyze_file(&file).expect("must load");
+    let ws = ulx_sema::analyze_file(&file, None).expect("must load");
     let all_diags: Vec<_> = ws
         .modules
         .values()
@@ -204,7 +340,7 @@ fn capability_hint_argument_is_not_flagged_as_undefined() {
         "#,
     )
     .unwrap();
-    let ws = ulx_sema::analyze_file(&file).expect("must load");
+    let ws = ulx_sema::analyze_file(&file, None).expect("must load");
     let all_diags: Vec<_> = ws
         .modules
         .values()
@@ -225,7 +361,7 @@ fn real_examples_have_no_errors() {
         if path.extension().and_then(|e| e.to_str()) != Some("ulx") {
             continue;
         }
-        match ulx_sema::analyze_file(&path) {
+        match ulx_sema::analyze_file(&path, None) {
             Ok(ws) => {
                 for m in ws.modules.values() {
                     let errors: Vec<_> = m
@@ -260,8 +396,8 @@ fn real_examples_have_no_diagnostics_at_all() {
         if path.extension().and_then(|e| e.to_str()) != Some("ulx") {
             continue;
         }
-        let ws =
-            ulx_sema::analyze_file(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+        let ws = ulx_sema::analyze_file(&path, None)
+            .unwrap_or_else(|e| panic!("{}: {e}", path.display()));
         for m in ws.modules.values() {
             assert!(
                 m.diagnostics.is_empty(),

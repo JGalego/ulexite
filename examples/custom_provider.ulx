@@ -1,0 +1,24 @@
+// examples/custom_provider.ulx
+// See docs/spec/21-examples.md §21.12
+//
+// Declares a provider directly in .ulx source — no ulexite.toml needed at
+// all. `vendor: "mock"` keeps this example runnable fully offline like
+// every other one in this directory; swap it for a real vendor (e.g.
+// "openai_compatible" + base_url, or "anthropic" + api_key_env) to point
+// LocalAssistant at something real. `provider: "LocalAssistant"` at the
+// `ask` call site is what actually selects this specific declared
+// provider — omitting it would still work here (only one provider is
+// registered, so there's nothing to disambiguate), but is the mechanism
+// you'd need the moment more than one provider serves the same capability.
+
+provider LocalAssistant {
+  vendor: "mock"
+  chat: "unused-by-mock"
+}
+
+conversation Greet(name: text) -> text {
+  ask chat(provider: "LocalAssistant") {
+    user: """Say hello to {name}."""
+  } -> greeting: text
+  greeting
+}

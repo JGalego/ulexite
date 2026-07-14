@@ -153,6 +153,18 @@ pub fn load(path: &Path) -> Result<Manifest, ManifestError> {
     parse(&text)
 }
 
+/// Looks for `ulexite.toml` in `dir` (the convention every provider-config
+/// consumer shares: `ulx run`'s `providers::resolve_providers`, and now
+/// `ulx check`'s manifest-aware `provider` validation) — `Ok(None)` if it's
+/// simply not there, `Err` only if it exists but fails to parse.
+pub fn discover(dir: &Path) -> Result<Option<Manifest>, ManifestError> {
+    let path = dir.join("ulexite.toml");
+    if !path.exists() {
+        return Ok(None);
+    }
+    load(&path).map(Some)
+}
+
 pub fn parse(text: &str) -> Result<Manifest, ManifestError> {
     let manifest: Manifest =
         toml::from_str(text).map_err(|e| ManifestError::Parse(e.to_string()))?;

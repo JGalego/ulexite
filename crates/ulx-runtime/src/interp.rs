@@ -532,10 +532,16 @@ fn eval_ask(
         args: invocation_args,
     };
 
-    let provider = ctx
-        .providers
-        .resolve(capability)
-        .ok_or_else(|| RuntimeError::UnknownCapability(capability.to_string()))?;
+    let provider = match invocation.args.get("provider").and_then(Value::as_text) {
+        Some(name) => ctx
+            .providers
+            .resolve_named(capability, name)
+            .map_err(RuntimeError::ProviderResolution)?,
+        None => ctx
+            .providers
+            .resolve(capability)
+            .map_err(RuntimeError::ProviderResolution)?,
+    };
 
     let hash_inputs: Vec<Value> = invocation
         .messages
@@ -598,10 +604,15 @@ fn eval_rubric_call(
                 })?;
             let rubric_text = eval_expr(ctx, rubric_field, &mut call_env)?;
 
+            // Judge/validator calls have no args bag to carry a `provider:`
+            // selector the way `ask` does (their args are consumed
+            // entirely into rubric parameters) — an ambiguous `"judge"`
+            // capability can only be disambiguated globally, via
+            // `--provider` on the CLI, not per call.
             let provider = ctx
                 .providers
                 .resolve("judge")
-                .ok_or_else(|| RuntimeError::UnknownCapability("judge".to_string()))?;
+                .map_err(RuntimeError::ProviderResolution)?;
             let invocation = Invocation {
                 messages: vec![],
                 args: BTreeMap::from([
