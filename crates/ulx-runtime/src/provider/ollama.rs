@@ -10,12 +10,14 @@ use serde_json::json;
 
 use crate::value::Value;
 
+use super::artifact::{self, ImageSource};
 use super::transport::{send_json_with_retry, Transport};
 use super::{resolve_f64, resolve_i64, resolve_model, Invocation, Provider, ProviderError};
 
 pub const DEFAULT_BASE_URL: &str = "http://localhost:11434";
 
 pub struct OllamaProvider {
+    capability: String,
     base_url: String,
     model: String,
     default_params: BTreeMap<String, Value>,
@@ -24,12 +26,14 @@ pub struct OllamaProvider {
 
 impl OllamaProvider {
     pub fn with_transport(
+        capability: impl Into<String>,
         base_url: impl Into<String>,
         model: impl Into<String>,
         default_params: BTreeMap<String, Value>,
         transport: Box<dyn Transport>,
     ) -> Self {
         OllamaProvider {
+            capability: capability.into(),
             base_url: base_url.into().trim_end_matches('/').to_string(),
             model: model.into(),
             default_params,
@@ -38,12 +42,47 @@ impl OllamaProvider {
     }
 
     fn chat(&self, request: &Invocation) -> Result<Value, ProviderError> {
+        self.chat_or_vision(request, None)
+    }
+
+    /// Ollama's `/api/chat` takes an `images` array of raw base64 strings
+    /// on a message (for a multimodal-capable model like `llava`) — no
+    /// URL fetching, so only a local file resolves here.
+    fn vision(&self, request: &Invocation) -> Result<Value, ProviderError> {
+        let image_ref = artifact::first_artifact_arg(&request.args).ok_or_else(|| {
+            ProviderError::Failed(
+                "vision call has no image argument (expected e.g. `ask vision(doc)`)".to_string(),
+            )
+        })?;
+        let data_b64 = match artifact::resolve_image(image_ref)? {
+            ImageSource::Inline { data_b64, .. } => data_b64,
+            ImageSource::Url(_) => {
+                return Err(ProviderError::Failed(
+                    "ollama vision only supports local image files today, not URLs".to_string(),
+                ))
+            }
+        };
+        self.chat_or_vision(request, Some(data_b64))
+    }
+
+    fn chat_or_vision(
+        &self,
+        request: &Invocation,
+        image_b64: Option<String>,
+    ) -> Result<Value, ProviderError> {
         let model = resolve_model(&request.args, &self.model);
-        let messages: Vec<_> = request
+        let mut messages: Vec<serde_json::Value> = request
             .messages
             .iter()
             .map(|m| json!({"role": ollama_role(&m.role), "content": m.text}))
             .collect();
+        if let Some(data_b64) = image_b64 {
+            if let Some(last) = messages.last_mut() {
+                last["images"] = json!([data_b64]);
+            } else {
+                messages.push(json!({"role": "user", "content": "", "images": [data_b64]}));
+            }
+        }
         let mut body = json!({"model": model, "messages": messages, "stream": false});
         let mut options = serde_json::Map::new();
         if let Some(t) = resolve_f64(&request.args, &self.default_params, "temperature") {
@@ -98,12 +137,13 @@ impl Provider for OllamaProvider {
     }
 
     fn supports(&self, capability: &str) -> bool {
-        matches!(capability, "chat" | "embed")
+        capability == self.capability
     }
 
     fn invoke(&self, capability: &str, request: &Invocation) -> Result<Value, ProviderError> {
         match capability {
             "chat" => self.chat(request),
+            "vision" => self.vision(request),
             "embed" => self.embed(request),
             other => Err(ProviderError::UnsupportedCapability(other.to_string())),
         }
@@ -126,6 +166,7 @@ mod tests {
 
     fn provider(transport: ScriptedTransport) -> OllamaProvider {
         OllamaProvider::with_transport(
+            "chat",
             DEFAULT_BASE_URL,
             "llama3",
             BTreeMap::new(),
@@ -166,5 +207,31 @@ mod tests {
             result,
             Value::List(vec![Value::Float(0.4), Value::Float(0.6)])
         );
+    }
+
+    #[test]
+    fn vision_with_local_file_returns_text() {
+        let dir = std::env::temp_dir();
+        let path = dir.join(format!("ulexite-ollama-test-{}.png", std::process::id()));
+        std::fs::write(&path, [0x89, 0x50, 0x4e, 0x47]).unwrap();
+
+        let transport = ScriptedTransport::new(vec![ScriptedTransport::ok(
+            200,
+            json!({"message": {"role": "assistant", "content": "a cat"}, "done": true}),
+        )]);
+        let p = provider(transport);
+        let invocation = Invocation {
+            messages: vec![Message {
+                role: "user".to_string(),
+                text: "describe this".to_string(),
+            }],
+            args: BTreeMap::from([(
+                "_".to_string(),
+                Value::Text(path.to_string_lossy().to_string()),
+            )]),
+        };
+        let result = p.invoke("vision", &invocation).unwrap();
+        std::fs::remove_file(&path).ok();
+        assert_eq!(result, Value::Text("a cat".to_string()));
     }
 }

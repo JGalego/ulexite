@@ -160,8 +160,7 @@ fn build_context<'a>(
 ) -> std::io::Result<RunContext<'a>> {
     let cache = Cache::new(manifest::cache_dir())?;
     let trace = TraceWriter::create(manifest::traces_dir(), run_id)?;
-    let providers = providers::resolve_providers(file)
-        .map_err(std::io::Error::other)?;
+    let providers = providers::resolve_providers(file).map_err(std::io::Error::other)?;
     Ok(RunContext::new(
         ir,
         providers,

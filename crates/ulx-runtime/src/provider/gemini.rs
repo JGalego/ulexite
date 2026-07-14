@@ -9,12 +9,14 @@ use serde_json::json;
 
 use crate::value::Value;
 
+use super::artifact::{self, ImageSource};
 use super::transport::{send_json_with_retry, Transport};
 use super::{resolve_f64, resolve_i64, resolve_model, Invocation, Provider, ProviderError};
 
 pub(crate) const DEFAULT_BASE_URL: &str = "https://generativelanguage.googleapis.com/v1beta";
 
 pub struct GeminiProvider {
+    capability: String,
     base_url: String,
     api_key: String,
     model: String,
@@ -24,6 +26,7 @@ pub struct GeminiProvider {
 
 impl GeminiProvider {
     pub fn with_transport(
+        capability: impl Into<String>,
         base_url: impl Into<String>,
         api_key: impl Into<String>,
         model: impl Into<String>,
@@ -31,6 +34,7 @@ impl GeminiProvider {
         transport: Box<dyn Transport>,
     ) -> Self {
         GeminiProvider {
+            capability: capability.into(),
             base_url: base_url.into().trim_end_matches('/').to_string(),
             api_key: api_key.into(),
             model: model.into(),
@@ -40,6 +44,38 @@ impl GeminiProvider {
     }
 
     fn chat(&self, request: &Invocation) -> Result<Value, ProviderError> {
+        self.chat_or_vision(request, None)
+    }
+
+    /// Gemini's `inline_data` image part only takes raw base64 bytes, not
+    /// an arbitrary URL — fetching a remote image would need the separate
+    /// File API (upload, then reference by `file_uri`), which is out of
+    /// scope here (§24 Limitations); a local file is the supported path.
+    fn vision(&self, request: &Invocation) -> Result<Value, ProviderError> {
+        let image_ref = artifact::first_artifact_arg(&request.args).ok_or_else(|| {
+            ProviderError::Failed(
+                "vision call has no image argument (expected e.g. `ask vision(doc)`)".to_string(),
+            )
+        })?;
+        let image_part = match artifact::resolve_image(image_ref)? {
+            ImageSource::Inline { mime, data_b64 } => {
+                json!({"inline_data": {"mime_type": mime, "data": data_b64}})
+            }
+            ImageSource::Url(_) => {
+                return Err(ProviderError::Failed(
+                    "gemini vision only supports local image files today, not URLs (no File API upload support yet)"
+                        .to_string(),
+                ))
+            }
+        };
+        self.chat_or_vision(request, Some(image_part))
+    }
+
+    fn chat_or_vision(
+        &self,
+        request: &Invocation,
+        image_part: Option<serde_json::Value>,
+    ) -> Result<Value, ProviderError> {
         let model = resolve_model(&request.args, &self.model);
         let system: Vec<&str> = request
             .messages
@@ -47,7 +83,7 @@ impl GeminiProvider {
             .filter(|m| m.role == "system")
             .map(|m| m.text.as_str())
             .collect();
-        let contents: Vec<_> = request
+        let mut contents: Vec<serde_json::Value> = request
             .messages
             .iter()
             .filter(|m| m.role != "system")
@@ -60,6 +96,17 @@ impl GeminiProvider {
                 json!({"role": role, "parts": [{"text": m.text}]})
             })
             .collect();
+
+        if let Some(image_part) = image_part {
+            if let Some(last) = contents.last_mut() {
+                last["parts"]
+                    .as_array_mut()
+                    .expect("contents entries always have a `parts` array")
+                    .push(image_part);
+            } else {
+                contents.push(json!({"role": "user", "parts": [image_part]}));
+            }
+        }
 
         let mut body = json!({"contents": contents});
         if !system.is_empty() {
@@ -143,12 +190,13 @@ impl Provider for GeminiProvider {
     }
 
     fn supports(&self, capability: &str) -> bool {
-        matches!(capability, "chat" | "embed")
+        capability == self.capability
     }
 
     fn invoke(&self, capability: &str, request: &Invocation) -> Result<Value, ProviderError> {
         match capability {
             "chat" => self.chat(request),
+            "vision" => self.vision(request),
             "embed" => self.embed(request),
             other => Err(ProviderError::UnsupportedCapability(other.to_string())),
         }
@@ -163,6 +211,7 @@ mod tests {
 
     fn provider(transport: ScriptedTransport) -> GeminiProvider {
         GeminiProvider::with_transport(
+            "chat",
             DEFAULT_BASE_URL,
             "test-key",
             "gemini-1.5-flash",
@@ -215,5 +264,49 @@ mod tests {
             result,
             Value::List(vec![Value::Float(0.5), Value::Float(-0.5)])
         );
+    }
+
+    #[test]
+    fn vision_with_local_file_returns_text() {
+        let dir = std::env::temp_dir();
+        let path = dir.join(format!("ulexite-gemini-test-{}.png", std::process::id()));
+        std::fs::write(&path, [0x89, 0x50, 0x4e, 0x47]).unwrap();
+
+        let transport = ScriptedTransport::new(vec![ScriptedTransport::ok(
+            200,
+            json!({"candidates": [{"content": {"parts": [{"text": "a cat"}]}, "finishReason": "STOP"}]}),
+        )]);
+        let p = provider(transport);
+        let invocation = Invocation {
+            messages: vec![Message {
+                role: "user".to_string(),
+                text: "describe this".to_string(),
+            }],
+            args: BTreeMap::from([(
+                "_".to_string(),
+                Value::Text(path.to_string_lossy().to_string()),
+            )]),
+        };
+        let result = p.invoke("vision", &invocation).unwrap();
+        std::fs::remove_file(&path).ok();
+        assert_eq!(result, Value::Text("a cat".to_string()));
+    }
+
+    #[test]
+    fn vision_with_url_is_a_clear_error() {
+        let transport = ScriptedTransport::new(vec![]);
+        let p = provider(transport);
+        let invocation = Invocation {
+            messages: vec![Message {
+                role: "user".to_string(),
+                text: "describe this".to_string(),
+            }],
+            args: BTreeMap::from([(
+                "_".to_string(),
+                Value::Text("https://example.com/cat.png".to_string()),
+            )]),
+        };
+        let err = p.invoke("vision", &invocation).unwrap_err();
+        assert!(matches!(err, ProviderError::Failed(_)));
     }
 }

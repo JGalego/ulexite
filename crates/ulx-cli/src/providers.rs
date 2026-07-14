@@ -37,6 +37,7 @@ pub fn resolve_providers(file: &Path) -> Result<ProviderRegistry, String> {
 fn to_provider_spec(policy: &ProviderPolicy) -> ProviderSpec {
     ProviderSpec {
         vendor: policy.vendor.clone().unwrap_or_else(|| "mock".to_string()),
+        capability: policy.capability.clone(),
         model: policy.model.clone(),
         base_url: policy.base_url.clone(),
         api_key_env: policy.api_key_env.clone(),

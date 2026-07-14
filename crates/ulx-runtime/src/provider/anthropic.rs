@@ -9,6 +9,7 @@ use serde_json::json;
 
 use crate::value::Value;
 
+use super::artifact::{self, ImageSource};
 use super::transport::{send_json_with_retry, Transport};
 use super::{resolve_f64, resolve_i64, resolve_model, Invocation, Provider, ProviderError};
 
@@ -16,6 +17,7 @@ const ANTHROPIC_VERSION: &str = "2023-06-01";
 const DEFAULT_MAX_TOKENS: i64 = 1024;
 
 pub struct AnthropicProvider {
+    capability: String,
     base_url: String,
     api_key: String,
     model: String,
@@ -25,6 +27,7 @@ pub struct AnthropicProvider {
 
 impl AnthropicProvider {
     pub fn with_transport(
+        capability: impl Into<String>,
         base_url: impl Into<String>,
         api_key: impl Into<String>,
         model: impl Into<String>,
@@ -32,6 +35,7 @@ impl AnthropicProvider {
         transport: Box<dyn Transport>,
     ) -> Self {
         AnthropicProvider {
+            capability: capability.into(),
             base_url: base_url.into().trim_end_matches('/').to_string(),
             api_key: api_key.into(),
             model: model.into(),
@@ -52,6 +56,29 @@ impl AnthropicProvider {
     }
 
     fn chat(&self, request: &Invocation) -> Result<Value, ProviderError> {
+        self.chat_or_vision(request, None)
+    }
+
+    fn vision(&self, request: &Invocation) -> Result<Value, ProviderError> {
+        let image_ref = artifact::first_artifact_arg(&request.args).ok_or_else(|| {
+            ProviderError::Failed(
+                "vision call has no image argument (expected e.g. `ask vision(doc)`)".to_string(),
+            )
+        })?;
+        let image = artifact::resolve_image(image_ref)?;
+        self.chat_or_vision(request, Some(image))
+    }
+
+    /// Anthropic's Messages API has one endpoint for both text-only and
+    /// multimodal chat — an image is just another content block on the
+    /// last message, native support since Claude 3 (no separate `vision`
+    /// endpoint the way `transcribe`/`speak`/`generate_image` are separate
+    /// REST resources on other vendors).
+    fn chat_or_vision(
+        &self,
+        request: &Invocation,
+        image: Option<ImageSource>,
+    ) -> Result<Value, ProviderError> {
         let model = resolve_model(&request.args, &self.model);
         let system: Vec<&str> = request
             .messages
@@ -59,7 +86,7 @@ impl AnthropicProvider {
             .filter(|m| m.role == "system")
             .map(|m| m.text.as_str())
             .collect();
-        let messages: Vec<_> = request
+        let mut messages: Vec<serde_json::Value> = request
             .messages
             .iter()
             .filter(|m| m.role != "system")
@@ -70,6 +97,27 @@ impl AnthropicProvider {
                 })
             })
             .collect();
+
+        if let Some(image) = image {
+            let image_block = match image {
+                ImageSource::Inline { mime, data_b64 } => json!({
+                    "type": "image",
+                    "source": {"type": "base64", "media_type": mime, "data": data_b64},
+                }),
+                ImageSource::Url(url) => json!({
+                    "type": "image",
+                    "source": {"type": "url", "url": url},
+                }),
+            };
+            if let Some(last) = messages.last_mut() {
+                let role = last.get("role").cloned().unwrap_or_else(|| json!("user"));
+                let text = last.get("content").cloned().unwrap_or_else(|| json!(""));
+                *last =
+                    json!({"role": role, "content": [{"type": "text", "text": text}, image_block]});
+            } else {
+                messages.push(json!({"role": "user", "content": [image_block]}));
+            }
+        }
 
         let max_tokens = resolve_i64(&request.args, &self.default_params, "max_tokens")
             .unwrap_or(DEFAULT_MAX_TOKENS);
@@ -105,12 +153,13 @@ impl Provider for AnthropicProvider {
     }
 
     fn supports(&self, capability: &str) -> bool {
-        capability == "chat"
+        capability == self.capability
     }
 
     fn invoke(&self, capability: &str, request: &Invocation) -> Result<Value, ProviderError> {
         match capability {
             "chat" => self.chat(request),
+            "vision" => self.vision(request),
             other => Err(ProviderError::UnsupportedCapability(other.to_string())),
         }
     }
@@ -124,6 +173,7 @@ mod tests {
 
     fn provider(transport: ScriptedTransport) -> AnthropicProvider {
         AnthropicProvider::with_transport(
+            "chat",
             "https://api.anthropic.com/v1",
             "sk-ant-test",
             "claude-3-5-sonnet-20241022",
@@ -182,5 +232,43 @@ mod tests {
             err,
             ProviderError::UnsupportedCapability("embed".to_string())
         );
+    }
+
+    #[test]
+    fn vision_with_url_image_returns_text() {
+        let transport = ScriptedTransport::new(vec![ScriptedTransport::ok(
+            200,
+            json!({"content": [{"type": "text", "text": "a cat"}], "stop_reason": "end_turn"}),
+        )]);
+        let p = provider(transport);
+        let invocation = Invocation {
+            messages: vec![Message {
+                role: "user".to_string(),
+                text: "describe this".to_string(),
+            }],
+            args: BTreeMap::from([(
+                "_".to_string(),
+                Value::Text("https://example.com/cat.png".to_string()),
+            )]),
+        };
+        let result = p.invoke("vision", &invocation).unwrap();
+        assert_eq!(result, Value::Text("a cat".to_string()));
+    }
+
+    #[test]
+    fn vision_without_image_argument_is_a_clear_error() {
+        let transport = ScriptedTransport::new(vec![]);
+        let p = provider(transport);
+        let err = p.invoke("vision", &invocation_with_system()).unwrap_err();
+        assert!(matches!(err, ProviderError::Failed(_)));
+    }
+
+    #[test]
+    fn supports_only_its_declared_capability() {
+        let transport = ScriptedTransport::new(vec![]);
+        let p = provider(transport);
+        assert!(p.supports("chat"));
+        assert!(!p.supports("vision"));
+        assert!(!p.supports("embed"));
     }
 }

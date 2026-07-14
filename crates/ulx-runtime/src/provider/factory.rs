@@ -16,12 +16,19 @@ use super::gemini::{self, GeminiProvider};
 use super::mock::MockProvider;
 use super::ollama::{self, OllamaProvider};
 use super::openai_compat::OpenAiCompatibleProvider;
-use super::transport::UreqTransport;
+use super::transport;
 use super::Provider;
 
 #[derive(Debug, Clone, Default)]
 pub struct ProviderSpec {
     pub vendor: String,
+    /// The single capability this entry is registered for (`ulexite.toml`'s
+    /// `[providers.*].capability`, required there). A real adapter only
+    /// `supports()` this one capability, even though its Rust code may
+    /// know how to handle several — otherwise, two entries for the same
+    /// vendor (one meant for `chat`, one for `transcribe`) would make
+    /// `ProviderRegistry::resolve` pick ambiguously between them.
+    pub capability: String,
     pub model: Option<String>,
     pub base_url: Option<String>,
     pub api_key_env: Option<String>,
@@ -84,11 +91,12 @@ pub fn build_provider(spec: &ProviderSpec) -> Result<Box<dyn Provider>, Provider
                 .clone()
                 .unwrap_or_else(|| "claude-3-5-sonnet-20241022".to_string());
             Ok(Box::new(AnthropicProvider::with_transport(
+                spec.capability.clone(),
                 base_url,
                 api_key,
                 model,
                 spec.params.clone(),
-                Box::new(UreqTransport::default()),
+                transport::real_transport(),
             )))
         }
         "gemini" => {
@@ -102,11 +110,12 @@ pub fn build_provider(spec: &ProviderSpec) -> Result<Box<dyn Provider>, Provider
                 .clone()
                 .unwrap_or_else(|| "gemini-1.5-flash".to_string());
             Ok(Box::new(GeminiProvider::with_transport(
+                spec.capability.clone(),
                 base_url,
                 api_key,
                 model,
                 spec.params.clone(),
-                Box::new(UreqTransport::default()),
+                transport::real_transport(),
             )))
         }
         "cohere" => {
@@ -120,11 +129,12 @@ pub fn build_provider(spec: &ProviderSpec) -> Result<Box<dyn Provider>, Provider
                 .clone()
                 .unwrap_or_else(|| "command-r".to_string());
             Ok(Box::new(CohereProvider::with_transport(
+                spec.capability.clone(),
                 base_url,
                 api_key,
                 model,
                 spec.params.clone(),
-                Box::new(UreqTransport::default()),
+                transport::real_transport(),
             )))
         }
         "ollama" => {
@@ -134,10 +144,11 @@ pub fn build_provider(spec: &ProviderSpec) -> Result<Box<dyn Provider>, Provider
                 .unwrap_or_else(|| ollama::DEFAULT_BASE_URL.to_string());
             let model = spec.model.clone().unwrap_or_else(|| "llama3".to_string());
             Ok(Box::new(OllamaProvider::with_transport(
+                spec.capability.clone(),
                 base_url,
                 model,
                 spec.params.clone(),
-                Box::new(UreqTransport::default()),
+                transport::real_transport(),
             )))
         }
         other => Err(ProviderBuildError::UnknownVendor(other.to_string())),
@@ -171,11 +182,12 @@ fn build_openai_family(
         .unwrap_or_else(|| default_model.to_string());
     Ok(Box::new(OpenAiCompatibleProvider::with_transport(
         id.to_string(),
+        spec.capability.clone(),
         base_url,
         api_key,
         model,
         spec.params.clone(),
-        Box::new(UreqTransport::default()),
+        transport::real_transport(),
     )))
 }
 
@@ -256,5 +268,32 @@ mod tests {
             ..Default::default()
         };
         assert!(build_provider(&spec).is_ok());
+    }
+
+    #[test]
+    fn adapter_only_supports_its_declared_capability() {
+        // Two `openai_compatible` entries for the same vendor but
+        // different capabilities must not be ambiguous to
+        // `ProviderRegistry::resolve` — each instance should only claim
+        // the one capability it was configured for.
+        let chat_spec = ProviderSpec {
+            vendor: "openai_compatible".to_string(),
+            capability: "chat".to_string(),
+            base_url: Some("http://localhost:8000/v1".to_string()),
+            ..Default::default()
+        };
+        let transcribe_spec = ProviderSpec {
+            vendor: "openai_compatible".to_string(),
+            capability: "transcribe".to_string(),
+            base_url: Some("http://localhost:8000/v1".to_string()),
+            ..Default::default()
+        };
+        let chat_provider = build_provider(&chat_spec).unwrap();
+        let transcribe_provider = build_provider(&transcribe_spec).unwrap();
+
+        assert!(chat_provider.supports("chat"));
+        assert!(!chat_provider.supports("transcribe"));
+        assert!(transcribe_provider.supports("transcribe"));
+        assert!(!transcribe_provider.supports("chat"));
     }
 }

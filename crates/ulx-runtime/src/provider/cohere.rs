@@ -15,6 +15,7 @@ use super::{resolve_f64, resolve_i64, resolve_model, Invocation, Provider, Provi
 pub(crate) const DEFAULT_BASE_URL: &str = "https://api.cohere.com";
 
 pub struct CohereProvider {
+    capability: String,
     base_url: String,
     api_key: String,
     model: String,
@@ -24,6 +25,7 @@ pub struct CohereProvider {
 
 impl CohereProvider {
     pub fn with_transport(
+        capability: impl Into<String>,
         base_url: impl Into<String>,
         api_key: impl Into<String>,
         model: impl Into<String>,
@@ -31,6 +33,7 @@ impl CohereProvider {
         transport: Box<dyn Transport>,
     ) -> Self {
         CohereProvider {
+            capability: capability.into(),
             base_url: base_url.into().trim_end_matches('/').to_string(),
             api_key: api_key.into(),
             model: model.into(),
@@ -114,7 +117,7 @@ impl Provider for CohereProvider {
     }
 
     fn supports(&self, capability: &str) -> bool {
-        matches!(capability, "chat" | "embed")
+        capability == self.capability
     }
 
     fn invoke(&self, capability: &str, request: &Invocation) -> Result<Value, ProviderError> {
@@ -142,6 +145,7 @@ mod tests {
 
     fn provider(transport: ScriptedTransport) -> CohereProvider {
         CohereProvider::with_transport(
+            "chat",
             DEFAULT_BASE_URL,
             "test-key",
             "command-r",

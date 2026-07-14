@@ -20,6 +20,7 @@ use std::collections::BTreeMap;
 use crate::value::Value;
 
 mod anthropic;
+mod artifact;
 mod cohere;
 mod factory;
 mod gemini;

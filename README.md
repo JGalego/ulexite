@@ -70,7 +70,7 @@ ulx trace demo
 | [`crates/ulx-cli`](crates/ulx-cli) | The `ulx` binary: `parse`, `check`, `run`, `approve`/`deny`, `replay`, `trace`, `init`, `manifest` |
 | [`tooling/vscode-ulx`](tooling/vscode-ulx) | TextMate grammar + language config for `.ulx` syntax highlighting in VS Code (§20.10) |
 
-Not implemented: `vision`/`transcribe`/`speak`/`generate_image` against a real vendor (mock-only for now), a full retry/backoff/circuit-breaker policy for real providers, `benchmark`/`test` execution, `plan`'s cost estimation, a formatter, a language server, and package dependency resolution beyond parsing `ulexite.toml` — see [§24 Limitations](docs/spec/24-limitations.md) and [§25 Future Directions](docs/spec/25-future-directions.md) for the honest accounting and the plan.
+Not implemented: PDF/video input to `vision` and a real content-addressed artifact store (a real vendor's `speak`/`generate_image` output is written to a temp file today, not a proper blob store), `benchmark`/`test` execution, `plan`'s cost estimation, a formatter, a language server, and package dependency resolution beyond parsing `ulexite.toml` — see [§24 Limitations](docs/spec/24-limitations.md) and [§25 Future Directions](docs/spec/25-future-directions.md) for the honest accounting and the plan.
 
 ## Configuring providers
 
@@ -90,9 +90,14 @@ temperature = 0.2                              # defaults, overridable per call:
 capability = "chat"
 vendor = "openai_compatible"                   # any OpenAI-shaped /chat/completions server: vLLM, LM Studio, Groq, etc.
 base_url = "http://localhost:8000/v1"
+
+[providers.transcribe_openai]
+capability = "transcribe"                     # each capability is its own [providers.*] entry, even for the same vendor
+vendor = "openai"
+model = "whisper-1"
 ```
 
-`vendor = "ollama"` needs no API key and defaults to `http://localhost:11434`. Only `chat` (every vendor) and `embed` (`openai_compatible`, `gemini`, `cohere`, `ollama`) are implemented against real vendors today; a rate limit, timeout, or safety refusal from a real provider surfaces as an unsettled `Draft<T>` (§9.3), not a crash. Adding a provider that isn't listed above needs no compiler/grammar/IR change (§12.4) — see `crates/ulx-runtime/src/provider/`.
+`vendor = "ollama"` needs no API key and defaults to `http://localhost:11434`. `chat` is implemented for every vendor; `embed` for `openai_compatible`/`gemini`/`cohere`/`ollama`; `vision` for `openai_compatible`/`anthropic`/`gemini`/`ollama` (image files only — jpg/png/gif/webp, read straight off disk or passed through as an `http(s)://` URL where the vendor supports it; PDF/video are mock-only); `transcribe`/`speak`/`generate_image` for `openai_compatible` (covers OpenAI directly, and Groq for `transcribe`). Every real HTTP call goes through one retry-with-backoff policy plus a per-provider circuit breaker (`crates/ulx-runtime/src/provider/transport.rs`) — a handful of consecutive failures trips it open for a cooldown instead of hammering a downed vendor. A rate limit, timeout, or safety refusal surfaces as an unsettled `Draft<T>` (§9.3), not a crash. Adding a provider that isn't listed above needs no compiler/grammar/IR change (§12.4) — see `crates/ulx-runtime/src/provider/`.
 
 ## How it compares
 
