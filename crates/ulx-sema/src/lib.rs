@@ -18,7 +18,9 @@ mod typecheck;
 
 pub use capability::{stdlib_capabilities, CapabilitySpec};
 pub use diagnostic::{Diagnostic, Severity};
-pub use resolve::{load_and_analyze, AnalyzedModule, Workspace};
+pub use resolve::{
+    load_and_analyze, load_and_analyze_with_deps, AnalyzedModule, DependencyPaths, Workspace,
+};
 
 use std::collections::HashSet;
 use std::path::Path;
@@ -47,4 +49,16 @@ pub fn analyze_file(
     known_manifest_providers: Option<&HashSet<String>>,
 ) -> Result<Workspace, String> {
     load_and_analyze(entry, known_manifest_providers)
+}
+
+/// Same as `analyze_file`, but also given `entry`'s package's resolved
+/// `[dependencies]` table, so a cross-package `from "..."` import can
+/// resolve against a `path` dependency's directory (see
+/// `DependencyPaths`/`load_and_analyze_with_deps`).
+pub fn analyze_file_with_deps(
+    entry: &Path,
+    known_manifest_providers: Option<&HashSet<String>>,
+    deps: &DependencyPaths,
+) -> Result<Workspace, String> {
+    load_and_analyze_with_deps(entry, known_manifest_providers, deps)
 }

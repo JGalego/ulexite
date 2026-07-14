@@ -47,6 +47,25 @@ pub struct Workspace {
     pub modules: HashMap<PathBuf, AnalyzedModule>,
 }
 
+/// The entry package's `ulexite.toml` `[dependencies]` table, boiled down to
+/// just what cross-file import resolution needs (§14's dependency table,
+/// wired into `import` resolution — registry/`git` fetching itself is still
+/// out of scope, see the module doc on `ulx-cli`'s `project_manifest`).
+///
+/// `path_deps` maps a dependency name to its (already-joined-with-the-
+/// manifest's-own-directory) directory, for `path = "..."` entries.
+/// `unresolvable` is every other declared dependency name (a bare version
+/// string, or a `git` table with no `path`) — resolvable in principle once
+/// there's a registry/git fetcher, but not today, so an import that
+/// references one of these gets a clear "not implemented" error instead of
+/// silently falling through to relative-path resolution and failing
+/// confusingly.
+#[derive(Debug, Default, Clone)]
+pub struct DependencyPaths {
+    pub path_deps: HashMap<String, PathBuf>,
+    pub unresolvable: HashSet<String>,
+}
+
 impl Workspace {
     pub fn entry_module(&self) -> &AnalyzedModule {
         &self.modules[&self.entry]
@@ -114,13 +133,27 @@ pub fn load_and_analyze(
     entry: &Path,
     known_manifest_providers: Option<&HashSet<String>>,
 ) -> Result<Workspace, String> {
+    load_and_analyze_with_deps(entry, known_manifest_providers, &DependencyPaths::default())
+}
+
+/// Same as `load_and_analyze`, but also given the entry package's resolved
+/// `[dependencies]` table (`ulx-cli`'s `pipeline` module builds this from
+/// `project_manifest::discover` next to `entry`, the same manifest-discovery
+/// convention every other manifest consumer shares) so that a `from "..."`
+/// import whose first path segment names a `path` dependency resolves
+/// against that dependency's directory instead of `entry`'s own.
+pub fn load_and_analyze_with_deps(
+    entry: &Path,
+    known_manifest_providers: Option<&HashSet<String>>,
+    deps: &DependencyPaths,
+) -> Result<Workspace, String> {
     let entry = entry
         .canonicalize()
         .map_err(|e| format!("could not read {}: {e}", entry.display()))?;
 
     let mut modules: HashMap<PathBuf, Program> = HashMap::new();
     let mut loading: HashSet<PathBuf> = HashSet::new();
-    load_recursive(&entry, &mut modules, &mut loading)?;
+    load_recursive(&entry, &mut modules, &mut loading, deps)?;
 
     let caps = stdlib_capabilities();
     let mut analyzed: HashMap<PathBuf, AnalyzedModule> = HashMap::new();
@@ -151,24 +184,28 @@ pub fn load_and_analyze(
                     if matches!(kind, ImportKind::Provider) {
                         providers.insert(name.clone());
                     }
-                    let target_path = resolve_import_path(path, from);
-                    match modules.get(&target_path) {
-                        None => diags.push(Diagnostic::error(
-                            format!("could not resolve import `{from}`"),
-                            span.clone(),
-                        )),
-                        Some(target_program) => {
-                            let found = target_program
-                                .decls
-                                .iter()
-                                .any(|(d, _)| decl_name(d) == name && decl_kind(d) == *kind);
-                            if !found {
-                                diags.push(Diagnostic::error(
-                                    format!("`{name}` is not declared as a {kind:?} in `{from}`"),
-                                    span.clone(),
-                                ));
+                    match resolve_import_path(path, from, deps) {
+                        Err(e) => diags.push(Diagnostic::error(e, span.clone())),
+                        Ok(target_path) => match modules.get(&target_path) {
+                            None => diags.push(Diagnostic::error(
+                                format!("could not resolve import `{from}`"),
+                                span.clone(),
+                            )),
+                            Some(target_program) => {
+                                let found = target_program
+                                    .decls
+                                    .iter()
+                                    .any(|(d, _)| decl_name(d) == name && decl_kind(d) == *kind);
+                                if !found {
+                                    diags.push(Diagnostic::error(
+                                        format!(
+                                            "`{name}` is not declared as a {kind:?} in `{from}`"
+                                        ),
+                                        span.clone(),
+                                    ));
+                                }
                             }
-                        }
+                        },
                     }
                 }
                 Import::Module {
@@ -214,16 +251,40 @@ pub fn load_and_analyze(
     })
 }
 
-fn resolve_import_path(from_file: &Path, relative: &str) -> PathBuf {
+/// Resolves a `from "..."` import string against `from_file`'s directory —
+/// unless `relative`'s first path segment names a dependency in `deps`, in
+/// which case it resolves against that dependency's directory instead (a
+/// `path` dependency), or fails with a clear error (a `git`/registry-only
+/// dependency, which this v0.1 can't fetch). A first segment that doesn't
+/// match any declared dependency name falls through to the plain
+/// relative-to-`from_file` behavior unchanged, so single-package projects
+/// with no `[dependencies]` see no difference.
+fn resolve_import_path(
+    from_file: &Path,
+    relative: &str,
+    deps: &DependencyPaths,
+) -> Result<PathBuf, String> {
+    if let Some((first, rest)) = relative.split_once('/') {
+        if let Some(base) = deps.path_deps.get(first) {
+            let candidate = base.join(rest);
+            return Ok(candidate.canonicalize().unwrap_or(candidate));
+        }
+        if deps.unresolvable.contains(first) {
+            return Err(format!(
+                "dependency `{first}` has no `path`; git/registry dependency fetching is not implemented yet"
+            ));
+        }
+    }
     let dir = from_file.parent().unwrap_or_else(|| Path::new("."));
     let candidate = dir.join(relative);
-    candidate.canonicalize().unwrap_or(candidate)
+    Ok(candidate.canonicalize().unwrap_or(candidate))
 }
 
 fn load_recursive(
     path: &Path,
     modules: &mut HashMap<PathBuf, Program>,
     loading: &mut HashSet<PathBuf>,
+    deps: &DependencyPaths,
 ) -> Result<(), String> {
     if modules.contains_key(path) {
         return Ok(());
@@ -239,8 +300,8 @@ fn load_recursive(
 
     for (import, _) in &program.imports {
         if let Import::Named { from, .. } = import {
-            let target = resolve_import_path(path, from);
-            load_recursive(&target, modules, loading)?;
+            let target = resolve_import_path(path, from, deps)?;
+            load_recursive(&target, modules, loading, deps)?;
         }
     }
 

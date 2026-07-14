@@ -32,6 +32,37 @@ fn known_manifest_providers(file: &Path) -> Result<Option<HashSet<String>>, Stri
     Ok(manifest.map(|m| m.providers.keys().cloned().collect()))
 }
 
+/// Builds `ulx-sema`'s `DependencyPaths` from `ulexite.toml`'s
+/// `[dependencies]` table next to `file`, if a manifest exists there (same
+/// discovery convention as `known_manifest_providers` above) — `path`
+/// entries are joined against the manifest's own directory (so a relative
+/// `path = "../other-pkg"` is resolved the same way a human reading the
+/// manifest would expect), everything else (a bare version string, or a
+/// `git` table with no `path`) becomes an `unresolvable` name so a
+/// cross-package import referencing it gets a clear error instead of
+/// silently falling through to relative-path resolution.
+fn dependency_paths(file: &Path) -> Result<ulx_sema::DependencyPaths, String> {
+    let dir = crate::manifest::base_dir_of(file);
+    let manifest = project_manifest::discover(&dir).map_err(|e| e.to_string())?;
+    let mut deps = ulx_sema::DependencyPaths::default();
+    let Some(manifest) = manifest else {
+        return Ok(deps);
+    };
+    for (name, dep) in &manifest.dependencies {
+        match dep {
+            project_manifest::Dependency::Detailed {
+                path: Some(path), ..
+            } => {
+                deps.path_deps.insert(name.clone(), dir.join(path));
+            }
+            _ => {
+                deps.unresolvable.insert(name.clone());
+            }
+        }
+    }
+    Ok(deps)
+}
+
 /// Collects every `TopDecl::Provider` visible across the whole workspace
 /// (own file + transitively imported modules), erroring if two visible
 /// providers share a name — ambiguous regardless of what per-module
@@ -67,7 +98,14 @@ pub fn check(file: &Path) -> bool {
             return false;
         }
     };
-    let ws = match ulx_sema::analyze_file(file, known_providers.as_ref()) {
+    let deps = match dependency_paths(file) {
+        Ok(d) => d,
+        Err(e) => {
+            eprintln!("error: {e}");
+            return false;
+        }
+    };
+    let ws = match ulx_sema::analyze_file_with_deps(file, known_providers.as_ref(), &deps) {
         Ok(ws) => ws,
         Err(e) => {
             eprintln!("error: {e}");
@@ -108,7 +146,14 @@ pub fn load(file: &Path) -> Option<Loaded> {
             return None;
         }
     };
-    let ws = match ulx_sema::analyze_file(file, known_providers.as_ref()) {
+    let deps = match dependency_paths(file) {
+        Ok(d) => d,
+        Err(e) => {
+            eprintln!("error: {e}");
+            return None;
+        }
+    };
+    let ws = match ulx_sema::analyze_file_with_deps(file, known_providers.as_ref(), &deps) {
         Ok(ws) => ws,
         Err(e) => {
             eprintln!("error: {e}");
@@ -152,4 +197,73 @@ pub fn load(file: &Path) -> Option<Loaded> {
         }
     };
     Some(Loaded { ir, provider_decls })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::dependency_paths;
+
+    /// `dependency_paths` should turn `ulexite.toml`'s `[dependencies]`
+    /// table into `ulx-sema`'s `DependencyPaths`: `path` entries resolved
+    /// relative to the manifest's own directory, and every other kind
+    /// (bare version string, or `git` with no `path`) recorded as
+    /// `unresolvable` so import resolution can reject it with a clear
+    /// error instead of mishandling it.
+    #[test]
+    fn builds_path_and_unresolvable_entries_from_manifest() {
+        let dir = std::env::temp_dir().join(format!(
+            "ulexite-cli-dependency-paths-test-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("ulexite.toml"),
+            r#"
+            [package]
+            name = "tiny"
+            version = "0.1.0"
+            ulexite = "^0.1"
+
+            [dependencies]
+            local-thing = { path = "../local-thing" }
+            versioned-thing = "^2.1"
+            git-thing = { git = "https://example.com/git-thing.git", tag = "v1.0.0" }
+            "#,
+        )
+        .unwrap();
+        let file = dir.join("main.ulx");
+        std::fs::write(&file, "conversation Foo() -> text { \"hi\" }").unwrap();
+
+        let deps = dependency_paths(&file).expect("must load manifest");
+        assert_eq!(
+            deps.path_deps.get("local-thing"),
+            Some(&dir.join("../local-thing"))
+        );
+        assert!(deps.unresolvable.contains("versioned-thing"));
+        assert!(deps.unresolvable.contains("git-thing"));
+        assert!(!deps.path_deps.contains_key("versioned-thing"));
+        assert!(!deps.path_deps.contains_key("git-thing"));
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// No `ulexite.toml` next to `file` at all — same "nothing to resolve
+    /// against" convention `known_manifest_providers` follows: empty, not
+    /// an error.
+    #[test]
+    fn no_manifest_means_no_dependencies() {
+        let dir = std::env::temp_dir().join(format!(
+            "ulexite-cli-dependency-paths-no-manifest-test-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("main.ulx");
+        std::fs::write(&file, "conversation Foo() -> text { \"hi\" }").unwrap();
+
+        let deps = dependency_paths(&file).expect("must not error");
+        assert!(deps.path_deps.is_empty());
+        assert!(deps.unresolvable.is_empty());
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
 }
