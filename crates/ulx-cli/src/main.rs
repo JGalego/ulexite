@@ -1,14 +1,18 @@
 //! `ulx` — the Ulexite CLI (§20.12).
 //!
 //! Implemented: `parse`, `check` (§20.7's diagnostics ahead of a full LSP),
-//! `run`, `approve`/`deny` (§10.7's human-approval resume, v0.1-style —
-//! see `ulx-runtime`'s docs for how that actually works), `replay` (§18.3),
-//! `trace` (§20.6, text-only — no viewer webview yet).
+//! `run`, `bench` (§16 — dataset-parametrized `benchmark` execution; see
+//! `ulx-runtime::run_benchmark` for the narrower-than-spec scope: no
+//! `expect`-polling/retry-until-converged, no golden-file `snapshot`
+//! comparison, no `metrics.*` aggregation or JUnit/JSON report — a
+//! plain-text per-row pass/fail report), `approve`/`deny` (§10.7's
+//! human-approval resume, v0.1-style — see `ulx-runtime`'s docs for how
+//! that actually works), `replay` (§18.3), `trace` (§20.6, text-only — no
+//! viewer webview yet).
 //!
-//! Not implemented: `test`/`benchmark` execution (§16 — needs dataset-driven
-//! parametrization the interpreter doesn't wire up to the CLI yet), `plan`
-//! (§10.5 — needs real provider cost metadata), `fmt`/`doc`/`repl`/language
-//! server (§20). See `docs/spec/25-future-directions.md`.
+//! Not implemented: `plan` (§10.5 — needs real provider cost metadata),
+//! `fmt`/`doc`/`repl`/language server (§20). See
+//! `docs/spec/25-future-directions.md`.
 
 mod diagnostics;
 mod manifest;
@@ -55,6 +59,18 @@ enum Command {
         providers: Vec<String>,
         /// Force the deterministic offline mock provider, ignoring any
         /// configured real providers entirely.
+        #[arg(long, conflicts_with = "providers")]
+        mock: bool,
+    },
+    /// Run a `benchmark` declaration to completion (§16): loads its
+    /// `dataset:`, runs the benchmark body once per row, and prints a
+    /// pass/fail report. Errors if no provider is configured — pass
+    /// --mock to run against the deterministic mock provider instead.
+    Bench {
+        file: PathBuf,
+        benchmark: String,
+        #[arg(long = "provider", value_name = "NAME")]
+        providers: Vec<String>,
         #[arg(long, conflicts_with = "providers")]
         mock: bool,
     },
@@ -110,6 +126,12 @@ fn main() {
             providers,
             mock,
         } => cmd_run(&file, &conversation, &args, run_id, &providers, mock),
+        Command::Bench {
+            file,
+            benchmark,
+            providers,
+            mock,
+        } => cmd_bench(&file, &benchmark, &providers, mock),
         Command::Approve {
             run_id,
             value,
@@ -279,6 +301,73 @@ fn execute(
             println!("run id: {run_id}");
             println!("resume with: ulx approve {run_id} --value <text>   (or: ulx deny {run_id})");
             false
+        }
+        Err(e) => {
+            eprintln!("error: {e}");
+            false
+        }
+    }
+}
+
+fn default_bench_run_id(file: &std::path::Path, benchmark: &str) -> String {
+    let input = format!("{}::bench::{benchmark}", file.display());
+    ulx_runtime::value::hash_bytes(input.as_bytes())[..16].to_string()
+}
+
+fn cmd_bench(
+    file: &Path,
+    benchmark: &str,
+    selected_providers: &[String],
+    force_mock: bool,
+) -> bool {
+    let Some(loaded) = pipeline::load(file) else {
+        return false;
+    };
+    let run_id = default_bench_run_id(file, benchmark);
+
+    let providers = match providers::resolve_providers(
+        file,
+        &loaded.provider_decls,
+        selected_providers,
+        force_mock,
+    ) {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("error: {e}");
+            return false;
+        }
+    };
+    let ctx = match build_context(&loaded.ir, providers, file, &run_id) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("error: could not set up run context: {e}");
+            return false;
+        }
+    };
+
+    match ulx_runtime::run_benchmark(&ctx, benchmark) {
+        Ok(report) => {
+            for row in &report.rows {
+                let status = if row.passed() { "PASS" } else { "FAIL" };
+                println!("row {}: {status}", row.row_index);
+                for check in &row.checks {
+                    if !check.passed {
+                        let reason = check
+                            .message
+                            .as_deref()
+                            .map(|m| format!(": {m}"))
+                            .unwrap_or_default();
+                        println!("  - {} failed{reason}", check.kind);
+                    }
+                }
+            }
+            println!(
+                "{}: {}/{} row(s) passed",
+                report.name,
+                report.passed_count(),
+                report.total()
+            );
+            report.all_passed()
         }
         Err(e) => {
             eprintln!("error: {e}");

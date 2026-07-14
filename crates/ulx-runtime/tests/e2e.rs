@@ -346,6 +346,99 @@ fn validator_regex_is_real_not_mocked() {
     }
 }
 
+/// `run_benchmark` (§16.4): loads a `dataset`, runs `run:`/`expect:`/
+/// `assert:` once per row with `$` bound to that row, and reports a
+/// pass/fail per row. Row 0's source/golden are unremarkable, so the mock
+/// judge passes and `result != golden` holds (mock chat output never
+/// equals a fixture's golden translation) — an all-pass row. Row 1's
+/// source deliberately contains the mock provider's documented
+/// `MOCK_JUDGE_FAIL` marker (`mock.rs`'s `mock_judge`); since the mock
+/// chat response echoes its input messages, that marker propagates into
+/// `result`, so `expect result satisfies judge Fluency(result)` should
+/// fail that row even though `assert` alone would still pass.
+#[test]
+fn benchmark_runs_once_per_dataset_row_and_reports_pass_fail() {
+    let tmp = tempfile::tempdir().unwrap();
+    let src = r#"
+        judge Fluency(subject: text) -> Verdict {
+          rubric: """Is this fluent?"""
+        }
+
+        conversation Translate(source: text, target_lang: text) -> text {
+          system: """You are a professional translator."""
+          user: """Translate to {target_lang}: {source}"""
+          assistant -> draft: text
+          draft
+        }
+
+        dataset TranslationPairs: [{source: text, target_lang: text, golden: text}] {
+          from "translations.jsonl"
+        }
+
+        benchmark TranslateQuality {
+          dataset: TranslationPairs
+          run: Translate(source: $.source, target_lang: $.target_lang) -> result
+          expect result satisfies judge Fluency(result) with threshold(0.8)
+          assert result != $.golden
+        }
+    "#;
+    std::fs::write(
+        tmp.path().join("translations.jsonl"),
+        "{\"source\": \"Good morning\", \"target_lang\": \"fr\", \"golden\": \"Bonjour\"}\n\
+         {\"source\": \"MOCK_JUDGE_FAIL this one\", \"target_lang\": \"de\", \"golden\": \"unused\"}\n",
+    )
+    .unwrap();
+
+    let program = setup(src, &tmp);
+    let ctx = make_ctx(&program, &tmp, "run_bench");
+
+    let report =
+        ulx_runtime::run_benchmark(&ctx, "TranslateQuality").expect("benchmark should run");
+    assert_eq!(report.total(), 2);
+    assert!(
+        report.rows[0].passed(),
+        "row 0 should pass: {:#?}",
+        report.rows[0]
+    );
+    assert!(
+        !report.rows[1].passed(),
+        "row 1 should fail (judge fail marker): {:#?}",
+        report.rows[1]
+    );
+    assert_eq!(report.passed_count(), 1);
+    assert!(!report.all_passed());
+
+    // The failing row's `expect` check carries a reason a report can print;
+    // the `assert` check on that same row still holds independently.
+    let row1_expect = report.rows[1]
+        .checks
+        .iter()
+        .find(|c| c.kind == "expect")
+        .expect("row 1 should have an expect check");
+    assert!(!row1_expect.passed);
+    assert!(row1_expect.message.is_some());
+    let row1_assert = report.rows[1]
+        .checks
+        .iter()
+        .find(|c| c.kind == "assert")
+        .expect("row 1 should have an assert check");
+    assert!(row1_assert.passed);
+}
+
+#[test]
+fn run_benchmark_reports_a_clear_error_for_an_unknown_name() {
+    let tmp = tempfile::tempdir().unwrap();
+    let src = r#"
+        dataset Empty: [{x: text}] { from "empty.jsonl" }
+        benchmark NotThis { dataset: Empty }
+    "#;
+    std::fs::write(tmp.path().join("empty.jsonl"), "").unwrap();
+    let program = setup(src, &tmp);
+    let ctx = make_ctx(&program, &tmp, "run_bench_unknown");
+    let err = ulx_runtime::run_benchmark(&ctx, "DoesNotExist").unwrap_err();
+    assert!(matches!(err, RuntimeError::UnknownBenchmark(name) if name == "DoesNotExist"));
+}
+
 #[test]
 fn real_examples_run_or_fail_cleanly() {
     // Not every example is fully executable (some reference illustrative

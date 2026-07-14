@@ -218,6 +218,218 @@ pub(crate) fn eval_expr(
     }
 }
 
+/// One `assert`/`expect`/`snapshot` check's outcome for a single dataset
+/// row (§16.1: all three ultimately produce the same pass/fail-shaped
+/// result the compiler and reporter treat uniformly). `kind` is one of
+/// `"assert"`, `"expect"`, `"snapshot"` — a plain string rather than a new
+/// enum since it's purely a report label, never matched on.
+#[derive(Debug, Clone)]
+pub struct CheckResult {
+    pub kind: &'static str,
+    pub passed: bool,
+    pub message: Option<String>,
+}
+
+/// The outcome of running a `benchmark`'s body once for one dataset row
+/// (§16.2's "N cases, N reports" ergonomic).
+#[derive(Debug, Clone)]
+pub struct BenchmarkRowResult {
+    pub row_index: usize,
+    pub checks: Vec<CheckResult>,
+}
+
+impl BenchmarkRowResult {
+    /// A row passes iff every check it produced passed (an empty check list
+    /// — a benchmark whose body is only `run:` statements — counts as a
+    /// pass, same as an empty `all()`).
+    pub fn passed(&self) -> bool {
+        self.checks.iter().all(|c| c.passed)
+    }
+}
+
+/// The full report for one `benchmark` run: one row per dataset entry.
+#[derive(Debug, Clone)]
+pub struct BenchmarkReport {
+    pub name: String,
+    pub rows: Vec<BenchmarkRowResult>,
+}
+
+impl BenchmarkReport {
+    pub fn total(&self) -> usize {
+        self.rows.len()
+    }
+
+    pub fn passed_count(&self) -> usize {
+        self.rows.iter().filter(|r| r.passed()).count()
+    }
+
+    pub fn all_passed(&self) -> bool {
+        self.rows.iter().all(|r| r.passed())
+    }
+}
+
+/// Executes a `benchmark` declaration (§16.4): resolves its `dataset:`
+/// statement via `crate::dataset::load` (the same loader `resolve_var` uses
+/// for an ordinary `dataset` reference), then runs the benchmark's
+/// remaining statements once per row with `$` bound to that row (§16.2) —
+/// exactly the way a conversation body runs, reusing `eval_expr` for
+/// `run:`'s conversation call, `expect ... satisfies judge ...`'s judge
+/// call, and `assert`'s boolean expression.
+///
+/// Scope, honestly: this is a narrower executor than §16 describes in
+/// full. `expect`'s "resample/re-evaluate until the verdict converges"
+/// polling (§16.3) isn't implemented — a judge call is evaluated exactly
+/// once, same as `match judge ... {}` elsewhere in this interpreter.
+/// `snapshot` (§16.5) doesn't record/compare against a golden baseline
+/// file yet — it evaluates its expression and key (so a real effectful
+/// subexpression still runs and any error still surfaces) and always
+/// reports "recorded", since there's no `--update-snapshots` flag or
+/// baseline store wired up. There's also no `metrics.*` aggregation
+/// (§16.6) or JUnit/JSON report format — `BenchmarkReport` is a plain
+/// in-memory pass/fail-per-row structure for `ulx bench` to print.
+pub fn run_benchmark(ctx: &RunContext, name: &str) -> Result<BenchmarkReport, RuntimeError> {
+    let benchmark = ctx
+        .program
+        .benchmarks
+        .iter()
+        .find(|b| b.name == name)
+        .ok_or_else(|| RuntimeError::UnknownBenchmark(name.to_string()))?;
+
+    let dataset_name = benchmark
+        .steps
+        .iter()
+        .find_map(|s| match s {
+            IrBenchmarkStep::Dataset(n) => Some(n.clone()),
+            _ => None,
+        })
+        .ok_or_else(|| {
+            RuntimeError::TypeError(format!(
+                "benchmark `{name}` has no `dataset:` statement"
+            ))
+        })?;
+
+    let dataset = ctx
+        .program
+        .datasets
+        .iter()
+        .find(|d| d.name == dataset_name)
+        .ok_or_else(|| RuntimeError::UnknownDataset(dataset_name.clone()))?;
+
+    let rows = match crate::dataset::load(ctx, dataset)? {
+        Value::List(rows) => rows,
+        other => {
+            return Err(RuntimeError::TypeError(format!(
+                "dataset `{dataset_name}` did not load as a list of rows (got {other})"
+            )))
+        }
+    };
+
+    let mut report = BenchmarkReport {
+        name: name.to_string(),
+        rows: Vec::with_capacity(rows.len()),
+    };
+
+    for (row_index, row) in rows.into_iter().enumerate() {
+        let mut env = Env::new();
+        env.declare("$", row);
+        let mut checks = Vec::new();
+
+        for step in &benchmark.steps {
+            match step {
+                IrBenchmarkStep::Dataset(_) => {}
+                IrBenchmarkStep::Run { expr, bind } => {
+                    let value = eval_expr(ctx, expr, &mut env)?;
+                    env.declare(bind.clone(), value);
+                }
+                IrBenchmarkStep::Expect {
+                    expr,
+                    judge,
+                    threshold,
+                } => {
+                    // `expr` (the subject) is evaluated for effect/error
+                    // propagation even though its value isn't otherwise
+                    // used here directly — the judge call (almost always
+                    // `judge Fluency(result)`) references the same bound
+                    // name itself, so re-evaluating `expr` mirrors what a
+                    // hand-written `match judge Fluency(result) {...}`
+                    // would do.
+                    eval_expr(ctx, expr, &mut env)?;
+                    let verdict = eval_expr(ctx, judge, &mut env)?;
+                    let (passed, message) = evaluate_expect_verdict(&verdict, *threshold);
+                    checks.push(CheckResult {
+                        kind: "expect",
+                        passed,
+                        message,
+                    });
+                }
+                IrBenchmarkStep::Assert(expr) => {
+                    let value = eval_expr(ctx, expr, &mut env)?;
+                    let passed = value.truthy();
+                    let message = if passed {
+                        None
+                    } else {
+                        Some(format!("assertion failed (evaluated to {value})"))
+                    };
+                    checks.push(CheckResult {
+                        kind: "assert",
+                        passed,
+                        message,
+                    });
+                }
+                IrBenchmarkStep::Snapshot { expr, key } => {
+                    let value = eval_expr(ctx, expr, &mut env)?;
+                    let key_value = eval_expr(ctx, key, &mut env)?;
+                    checks.push(CheckResult {
+                        kind: "snapshot",
+                        passed: true,
+                        message: Some(format!("recorded `{key_value}`: {value}")),
+                    });
+                }
+            }
+        }
+
+        report.rows.push(BenchmarkRowResult { row_index, checks });
+    }
+
+    Ok(report)
+}
+
+/// Interprets an `expect ... satisfies judge ... with threshold(t)`
+/// verdict into a pass/fail (§16.4): `Pass` always passes, `Fail(reason)`
+/// always fails with that reason, `Score(s)` passes iff `s >= threshold`
+/// (or `s > 0.0` when no threshold was written), and `Escalate` — a judge
+/// declining to decide — fails, since there's no human-in-the-loop
+/// resolution inside a benchmark row (§16.3's polling/retry-until-converged
+/// semantics aren't implemented either; a judge call happens exactly once).
+fn evaluate_expect_verdict(verdict: &Value, threshold: Option<f64>) -> (bool, Option<String>) {
+    match verdict {
+        Value::Verdict(Verdict::Pass) => (true, None),
+        Value::Verdict(Verdict::Fail(reason)) => (false, Some(reason.clone())),
+        Value::Verdict(Verdict::Score(s)) => {
+            let passed = match threshold {
+                Some(t) => *s >= t,
+                None => *s > 0.0,
+            };
+            let message = if passed {
+                None
+            } else {
+                Some(format!(
+                    "score {s} did not meet threshold {}",
+                    threshold.map(|t| t.to_string()).unwrap_or_else(|| "(none)".to_string())
+                ))
+            };
+            (passed, message)
+        }
+        Value::Verdict(Verdict::Escalate) => {
+            (false, Some("judge could not decide (Escalate)".to_string()))
+        }
+        other => (
+            false,
+            Some(format!("`satisfies` expects a Verdict, got {other}")),
+        ),
+    }
+}
+
 fn resolve_var(ctx: &RunContext, name: &str, env: &Env) -> Result<Value, RuntimeError> {
     if let Some(v) = env.get(name) {
         return Ok(v.clone());
