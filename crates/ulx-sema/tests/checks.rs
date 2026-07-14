@@ -408,3 +408,150 @@ fn real_examples_have_no_diagnostics_at_all() {
         }
     }
 }
+
+/// A `from "..."` import whose first path segment (`"other"`) names a
+/// `path` dependency (`ulexite.toml`'s `[dependencies.other] path = "..."`,
+/// translated by `ulx-cli`'s `pipeline::dependency_paths` into
+/// `DependencyPaths::path_deps`) should resolve against that dependency's
+/// directory rather than the importing file's own — i.e. `ulexite.toml`'s
+/// `[dependencies]` table actually does something for cross-file imports.
+#[test]
+fn path_dependency_import_resolves_into_dependency_directory() {
+    let base = std::env::temp_dir().join(format!(
+        "ulexite-sema-path-dep-test-{}",
+        std::process::id()
+    ));
+    let main_dir = base.join("main-pkg");
+    let other_dir = base.join("other-pkg");
+    std::fs::create_dir_all(&main_dir).unwrap();
+    std::fs::create_dir_all(&other_dir).unwrap();
+
+    let other_file = other_dir.join("shared.ulx");
+    std::fs::write(
+        &other_file,
+        r#"
+        judge Fluency(subject: text) -> Verdict {
+          rubric: """is it fluent"""
+        }
+        "#,
+    )
+    .unwrap();
+
+    let main_file = main_dir.join("main.ulx");
+    std::fs::write(
+        &main_file,
+        r#"
+        import judge Fluency from "other/shared.ulx"
+
+        conversation UseIt(x: text) -> Verdict {
+          judge Fluency(x)
+        }
+        "#,
+    )
+    .unwrap();
+
+    let mut deps = ulx_sema::DependencyPaths::default();
+    deps.path_deps.insert("other".to_string(), other_dir);
+
+    let ws = ulx_sema::analyze_file_with_deps(&main_file, None, &deps).expect("must load");
+
+    let all_diags: Vec<_> = ws
+        .modules
+        .values()
+        .flat_map(|m| m.diagnostics.iter())
+        .collect();
+    assert!(
+        all_diags.is_empty(),
+        "expected no diagnostics resolving a path dependency, got: {all_diags:?}"
+    );
+
+    let expected_target = other_file.canonicalize().unwrap();
+    assert!(
+        ws.modules.contains_key(&expected_target),
+        "expected workspace to contain the dependency's `shared.ulx` at {}, got modules: {:?}",
+        expected_target.display(),
+        ws.modules.keys().collect::<Vec<_>>()
+    );
+
+    std::fs::remove_dir_all(&base).ok();
+}
+
+/// A dependency declared with only `git` (no `path`) can't be fetched by
+/// this v0.1 — an import referencing it should fail with a clear,
+/// unambiguous error naming the dependency, not silently fall through to
+/// relative-path resolution and fail with a confusing "file not found".
+#[test]
+fn import_referencing_git_only_dependency_fails_clearly() {
+    let base =
+        std::env::temp_dir().join(format!("ulexite-sema-git-dep-test-{}", std::process::id()));
+    std::fs::create_dir_all(&base).unwrap();
+    let main_file = base.join("main.ulx");
+    std::fs::write(
+        &main_file,
+        r#"
+        import judge Fluency from "other/shared.ulx"
+        "#,
+    )
+    .unwrap();
+
+    let mut deps = ulx_sema::DependencyPaths::default();
+    deps.unresolvable.insert("other".to_string());
+
+    let err = match ulx_sema::analyze_file_with_deps(&main_file, None, &deps) {
+        Ok(_) => panic!("expected resolving a git-only dependency to fail"),
+        Err(e) => e,
+    };
+    assert!(
+        err.contains("dependency `other` has no `path`") && err.contains("not implemented"),
+        "expected a clear not-implemented error naming the dependency, got: {err}"
+    );
+
+    std::fs::remove_dir_all(&base).ok();
+}
+
+/// An import whose first segment doesn't match *any* declared dependency
+/// name (listed or not) must behave exactly as it did before dependency
+/// resolution existed — plain relative-path resolution, failing with the
+/// same "could not read" error it always has. No regression for
+/// single-package projects, and no accidental matching against unrelated
+/// dependency names.
+#[test]
+fn import_referencing_unlisted_package_name_fails_like_before() {
+    let base = std::env::temp_dir().join(format!(
+        "ulexite-sema-unlisted-dep-test-{}",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(&base).unwrap();
+    let main_file = base.join("main.ulx");
+    std::fs::write(
+        &main_file,
+        r#"
+        import judge Fluency from "nope/shared.ulx"
+        "#,
+    )
+    .unwrap();
+
+    // No dependencies declared at all — today's plain behavior.
+    let no_deps_err = match ulx_sema::analyze_file(&main_file, None) {
+        Ok(_) => panic!("expected resolving a nonexistent relative import to fail"),
+        Err(e) => e,
+    };
+    assert!(
+        no_deps_err.contains("could not read"),
+        "expected a plain file-not-found error, got: {no_deps_err}"
+    );
+
+    // An unrelated dependency *is* declared, but "nope" doesn't match it —
+    // must fail identically to the no-dependencies case.
+    let mut deps = ulx_sema::DependencyPaths::default();
+    deps.path_deps
+        .insert("unrelated".to_string(), base.join("unrelated-pkg"));
+    let with_unrelated_deps_err =
+        match ulx_sema::analyze_file_with_deps(&main_file, None, &deps) {
+            Ok(_) => panic!("expected resolving a nonexistent relative import to fail"),
+            Err(e) => e,
+        };
+    assert_eq!(no_deps_err, with_unrelated_deps_err);
+
+    std::fs::remove_dir_all(&base).ok();
+}
