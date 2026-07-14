@@ -9,22 +9,34 @@
 # `{ model = "...", params = { ... } }` table for per-capability overrides.
 #
 # api_key_env only ever names an environment variable — never put a
-# literal API key in this file. Set it before running:
+# literal API key in this file. Set only the ones you actually use:
 #   export OPENAI_API_KEY=sk-...
+#   export ANTHROPIC_API_KEY=sk-ant-...
+#   export GEMINI_API_KEY=...
+#   export GROQ_API_KEY=gsk_...
+#   export COHERE_API_KEY=...
+#
+# This file lists every supported vendor for reference — it's not meant to
+# be copied in verbatim with all of them left enabled. If more than one
+# entry declares the same capability (as several do here, e.g. `chat`),
+# `ProviderRegistry::resolve` just picks the first one registered
+# (alphabetical by table name) and the rest sit unused; delete the entries
+# you don't want before copying this to `ulexite.toml`.
 
 [package]
-name = "ulexite-examples"
+name    = "ulexite-examples"
 version = "0.1.0"
 ulexite = "^0.1"
 
+# OpenAI — every real capability this codebase implements lives here.
 [providers.openai]
-vendor = "openai"
-api_key_env = "OPENAI_API_KEY"
-chat = "gpt-4o-mini"
-vision = "gpt-4o-mini"
-embed = "text-embedding-3-small"
-transcribe = "whisper-1"
-speak = "tts-1"
+vendor         = "openai"
+api_key_env    = "OPENAI_API_KEY"
+chat           = "gpt-4o-mini"
+vision         = "gpt-4o-mini"
+embed          = "text-embedding-3-small"
+transcribe     = "whisper-1"
+speak          = "tts-1"
 generate_image = "dall-e-3"
 
 # Per-capability overrides look like this instead of a bare string:
@@ -32,3 +44,57 @@ generate_image = "dall-e-3"
 # model = "gpt-4o-mini"
 # [providers.openai.chat.params]
 # temperature = 0.2
+
+# Anthropic — chat + vision are native to the same Messages API.
+[providers.anthropic]
+vendor      = "anthropic"
+api_key_env = "ANTHROPIC_API_KEY"
+chat        = "claude-3-5-sonnet-20241022"
+vision      = "claude-3-5-sonnet-20241022"
+
+# Gemini — chat/vision/embed; vision only reads local files today (no
+# File API upload support yet), never a remote URL.
+[providers.gemini]
+vendor      = "gemini"
+api_key_env = "GEMINI_API_KEY"
+chat        = "gemini-1.5-flash"
+vision      = "gemini-1.5-flash"
+embed       = "text-embedding-004"
+
+# Groq — OpenAI-compatible chat, plus a fast hosted Whisper for transcribe.
+[providers.groq]
+vendor      = "groq"
+api_key_env = "GROQ_API_KEY"
+chat        = "llama-3.3-70b-versatile"
+transcribe  = "whisper-large-v3"
+
+# Cohere — chat (v2) + embed; no vision API to speak of.
+[providers.cohere]
+vendor      = "cohere"
+api_key_env = "COHERE_API_KEY"
+chat        = "command-r"
+embed       = "embed-english-v3.0"
+
+# Ollama — local, no API key. `vision` needs a multimodal model (e.g.
+# llava) pulled locally; defaults to http://localhost:11434 if base_url
+# is omitted.
+[providers.ollama]
+vendor = "ollama"
+chat   = "llama3"
+vision = "llava"
+embed  = "nomic-embed-text"
+
+# Any other OpenAI-shaped /chat/completions server (vLLM, LM Studio,
+# text-generation-webui, ...) — base_url is required, api_key_env is
+# optional (omit it entirely if the server doesn't need auth).
+[providers.local_llm]
+vendor   = "openai_compatible"
+base_url = "http://localhost:8000/v1"
+chat     = "meta-llama/Llama-3-8b"
+
+# The deterministic offline default — rarely declared explicitly since
+# it's already what runs with no ulexite.toml at all; shown here only for
+# completeness. Model names are accepted but ignored.
+[providers.mock_example]
+vendor = "mock"
+chat   = "unused"
