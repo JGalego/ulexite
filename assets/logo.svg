@@ -25,22 +25,22 @@
   </defs>
 
   <!-- shard 1 -->
-  <polygon points="24,84 40,70 56,84 56,156 40,170 24,156" fill="url(#shard1)" stroke="#ffffff" stroke-opacity="0.25" stroke-width="1.5"/>
-  <line x1="40" y1="76" x2="40" y2="164" stroke="#ffffff" stroke-opacity="0.35" stroke-width="1"/>
+  <polygon points="42,97 58,83 74,97 74,169 58,183 42,169" fill="url(#shard1)" stroke="#ffffff" stroke-opacity="0.25" stroke-width="1.5"/>
+  <line x1="58" y1="89" x2="58" y2="177" stroke="#ffffff" stroke-opacity="0.35" stroke-width="1"/>
 
   <!-- shard 2 -->
-  <polygon points="54,58 72,42 90,58 90,166 72,182 54,166" fill="url(#shard2)" stroke="#ffffff" stroke-opacity="0.25" stroke-width="1.5"/>
-  <line x1="72" y1="48" x2="72" y2="176" stroke="#ffffff" stroke-opacity="0.35" stroke-width="1"/>
+  <polygon points="72,71 90,55 108,71 108,179 90,195 72,179" fill="url(#shard2)" stroke="#ffffff" stroke-opacity="0.25" stroke-width="1.5"/>
+  <line x1="90" y1="61" x2="90" y2="189" stroke="#ffffff" stroke-opacity="0.35" stroke-width="1"/>
 
   <!-- shard 3 (center, tallest) -->
-  <polygon points="84,36 104,18 124,36 124,178 104,196 84,178" fill="url(#shard3)" stroke="#ffffff" stroke-opacity="0.3" stroke-width="1.5"/>
-  <line x1="104" y1="26" x2="104" y2="188" stroke="#ffffff" stroke-opacity="0.45" stroke-width="1.2"/>
+  <polygon points="102,49 122,31 142,49 142,191 122,209 102,191" fill="url(#shard3)" stroke="#ffffff" stroke-opacity="0.3" stroke-width="1.5"/>
+  <line x1="122" y1="39" x2="122" y2="201" stroke="#ffffff" stroke-opacity="0.45" stroke-width="1.2"/>
 
   <!-- shard 4 -->
-  <polygon points="118,62 136,46 154,62 154,162 136,178 118,162" fill="url(#shard4)" stroke="#ffffff" stroke-opacity="0.25" stroke-width="1.5"/>
-  <line x1="136" y1="52" x2="136" y2="172" stroke="#ffffff" stroke-opacity="0.35" stroke-width="1"/>
+  <polygon points="136,75 154,59 172,75 172,175 154,191 136,175" fill="url(#shard4)" stroke="#ffffff" stroke-opacity="0.25" stroke-width="1.5"/>
+  <line x1="154" y1="65" x2="154" y2="185" stroke="#ffffff" stroke-opacity="0.35" stroke-width="1"/>
 
   <!-- shard 5 -->
-  <polygon points="151,89 166,76 181,89 181,149 166,162 151,149" fill="url(#shard5)" stroke="#ffffff" stroke-opacity="0.25" stroke-width="1.5"/>
-  <line x1="166" y1="82" x2="166" y2="156" stroke="#ffffff" stroke-opacity="0.35" stroke-width="1"/>
+  <polygon points="169,102 184,89 199,102 199,162 184,175 169,162" fill="url(#shard5)" stroke="#ffffff" stroke-opacity="0.25" stroke-width="1.5"/>
+  <line x1="184" y1="95" x2="184" y2="169" stroke="#ffffff" stroke-opacity="0.35" stroke-width="1"/>
 </svg>

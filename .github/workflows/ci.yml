@@ -50,6 +50,27 @@ jobs:
             node -e "JSON.parse(require('fs').readFileSync('$f', 'utf8'))"
           done
 
+  install-scripts:
+    name: Install scripts (shellcheck + PowerShell syntax)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: shellcheck scripts/install.sh
+        run: shellcheck scripts/install.sh
+
+      - name: Parse scripts/install.ps1 (syntax only, doesn't execute it)
+        shell: pwsh
+        run: |
+          $tokens = $null
+          $errors = $null
+          [void][System.Management.Automation.Language.Parser]::ParseFile("scripts/install.ps1", [ref]$tokens, [ref]$errors)
+          if ($errors.Count -gt 0) {
+            $errors | ForEach-Object { Write-Error $_ }
+            exit 1
+          }
+          Write-Host "scripts/install.ps1 parses cleanly"
+
   spec-examples:
     name: Spec examples parse, type-check, and lower
     runs-on: ubuntu-latest

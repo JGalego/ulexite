@@ -18,22 +18,21 @@ This repository contains the language specification (RFC-0001) and a working ref
 
 ## Install
 
-**Prebuilt binary** (Linux or macOS — x86_64 or arm64, no Rust toolchain needed):
+**Prebuilt binary** — no Rust toolchain needed, detects your OS/architecture automatically:
+
+Linux / macOS (x86_64 or arm64):
 
 ```sh
-target=$(case "$(uname -s)-$(uname -m)" in
-  Linux-x86_64)  echo x86_64-unknown-linux-gnu ;;
-  Linux-aarch64) echo aarch64-unknown-linux-gnu ;;
-  Darwin-x86_64) echo x86_64-apple-darwin ;;
-  Darwin-arm64)  echo aarch64-apple-darwin ;;
-  *) echo "unsupported platform" >&2; exit 1 ;;
-esac) && \
-curl -fsSL "https://github.com/JGalego/ulexite/releases/latest/download/ulx-${target}.tar.gz" | tar xz && \
-install -Dm755 "ulx-${target}/ulx" "$HOME/.local/bin/ulx" && \
-rm -rf "ulx-${target}"
+curl -fsSL https://raw.githubusercontent.com/JGalego/ulexite/main/scripts/install.sh | sh
 ```
 
-(Requires `~/.local/bin` on your `PATH`; swap in any directory you like.) On **Windows**, or if you'd rather pick the file by hand, grab the right archive from the [latest release](https://github.com/JGalego/ulexite/releases/latest) page instead.
+Windows (x86_64):
+
+```powershell
+irm https://raw.githubusercontent.com/JGalego/ulexite/main/scripts/install.ps1 | iex
+```
+
+Both scripts ([`scripts/install.sh`](scripts/install.sh), [`scripts/install.ps1`](scripts/install.ps1)) just fetch the matching archive from the [latest release](https://github.com/JGalego/ulexite/releases/latest), so reading either one tells you exactly what it's going to do before you pipe it into a shell. Prefer to do it by hand? Grab the archive for your platform from the same releases page instead.
 
 **From source** (any platform with Rust installed):
 
