@@ -24,6 +24,13 @@ pub fn cache_dir() -> PathBuf {
     state_dir().join("cache")
 }
 
+/// Root of the content-addressed artifact store (§11.2) — `speak`'s audio
+/// and `generate_image`'s image output land here, sharded the same way
+/// `cache_dir()`'s entries are, instead of the OS temp directory.
+pub fn artifacts_dir() -> PathBuf {
+    state_dir().join("artifacts")
+}
+
 pub fn traces_dir() -> PathBuf {
     state_dir().join("traces")
 }

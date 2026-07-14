@@ -5,7 +5,7 @@
 node_modules/
 tooling/vscode-ulx/out/
 
-# local ulx runtime state (cache/traces/run manifests, §12.5/§18) — never checked in
+# local ulx runtime state (cache/artifacts/traces/run manifests, §11.2/§12.5/§18) — never checked in
 .ulexite/
 
 # provider API keys (README's "Configuring providers") — real secrets belong

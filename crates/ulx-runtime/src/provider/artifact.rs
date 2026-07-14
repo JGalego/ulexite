@@ -1,16 +1,18 @@
 //! Minimal local-file/URL resolution for binary inputs to real vendor
-//! calls (`vision`'s image, `transcribe`'s audio file). There is no
-//! artifact-loading mechanism anywhere else in the runtime today — a
-//! CLI `--arg doc=photo.jpg` becomes a bare `Value::Text("photo.jpg")`
-//! (`crates/ulx-cli/src/main.rs`) that nothing reads or decodes — so this
-//! module is deliberately narrow rather than a general artifact/blob
-//! system: image formats (jpg/png/gif/webp) plus, for Anthropic only, PDF
-//! (`resolve_document`, consumed by `anthropic.rs`'s `document` content
-//! block) — read directly off disk at the HTTP-call boundary, with no new
-//! `Value` variant and no change to the `Provider` trait's signature.
-//! Every other vendor still rejects a `.pdf` extension via
-//! `resolve_image`/`guess_image_mime`. Video passthrough and a real
-//! content-addressed artifact store (§12.7) remain future work — see
+//! calls (`vision`'s image, `transcribe`'s audio file), plus `write_artifact`
+//! for binary outputs (`speak`'s audio, `generate_image`'s image), which
+//! writes into the real content-addressed `crate::cache::ArtifactStore`
+//! (§11.2/§12.7). There is no artifact-*loading* mechanism anywhere else in
+//! the runtime today — a CLI `--arg doc=photo.jpg` becomes a bare
+//! `Value::Text("photo.jpg")` (`crates/ulx-cli/src/main.rs`) that nothing
+//! reads or decodes — so the input side stays deliberately narrow rather
+//! than a general artifact/blob system: image formats (jpg/png/gif/webp)
+//! plus, for Anthropic only, PDF (`resolve_document`, consumed by
+//! `anthropic.rs`'s `document` content block) — read directly off disk at
+//! the HTTP-call boundary, with no new `Value` variant and no change to the
+//! `Provider` trait's signature. Every other vendor still rejects a `.pdf`
+//! extension via `resolve_image`/`guess_image_mime`. Video passthrough
+//! remains future work — see
 //! `docs/spec/24-limitations.md`.
 
 use base64::Engine;
@@ -120,17 +122,19 @@ fn guess_image_mime(path: &str) -> Result<&'static str, ProviderError> {
 }
 
 /// Writes generated binary output (`speak`'s audio, `generate_image`'s
-/// image) to a content-addressed path under the system temp directory and
-/// returns it as a `Value::Text` path — there is no real artifact/blob
-/// store yet (§12.7), so this is the honest stand-in: same bytes in,
-/// same path out, at least idempotent even if not a proper cache.
-pub fn write_artifact(bytes: &[u8], extension: &str) -> Result<crate::value::Value, ProviderError> {
-    let dir = std::env::temp_dir().join("ulexite-artifacts");
-    std::fs::create_dir_all(&dir)
-        .map_err(|e| ProviderError::Failed(format!("could not create artifact directory: {e}")))?;
+/// image) into the given `ArtifactStore` — §11.2's real, project-local,
+/// content-addressed artifact store (`crate::cache::ArtifactStore`), not
+/// the OS temp directory — and returns the resulting path as a
+/// `Value::Text`. Same bytes in, same path out, and idempotent: a repeat
+/// call with identical bytes is a no-op write (`ArtifactStore::put`).
+pub fn write_artifact(
+    store: &crate::cache::ArtifactStore,
+    bytes: &[u8],
+    extension: &str,
+) -> Result<crate::value::Value, ProviderError> {
     let hash = crate::value::hash_bytes(bytes);
-    let path = dir.join(format!("{}.{extension}", &hash[..16]));
-    std::fs::write(&path, bytes)
+    let path = store
+        .put(&hash[..16], extension, bytes)
         .map_err(|e| ProviderError::Failed(format!("could not write artifact: {e}")))?;
     Ok(crate::value::Value::Text(
         path.to_string_lossy().to_string(),
