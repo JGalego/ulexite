@@ -1294,6 +1294,7 @@ dependencies = [
  "dotenvy",
  "serde",
  "serde_json",
+ "tempfile",
  "toml",
  "ulx-ast",
  "ulx-ir",

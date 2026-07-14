@@ -4,7 +4,7 @@
 use std::collections::HashSet;
 use std::path::Path;
 
-use ulx_ast::TopDecl;
+use ulx_ast::{Program, TopDecl};
 
 use crate::diagnostics;
 use crate::project_manifest;
@@ -184,8 +184,22 @@ pub fn load(file: &Path) -> Option<Loaded> {
         }
     };
 
-    let entry = ws.entry_module();
-    let ir = match ulx_ir::lower_program(&entry.program) {
+    // `ulx-ir::lower_program` resolves a bare-identifier call (e.g. a
+    // benchmark's `run: Translate(...)`, or one conversation calling
+    // another) to a `ConversationCall` only when the callee's name appears
+    // among the *same* `Program`'s own top-level decls (see its
+    // `known_conversations` set) — otherwise it falls back to an
+    // `OpaqueCall`, which the runtime can't actually resolve. An imported
+    // conversation/judge/validator (`import conversation Translate from
+    // "translate.ulx"`) therefore wouldn't be callable at all if only the
+    // entry file's own `Program` were lowered. Flattening every workspace
+    // module's decls into one merged `Program` before lowering (name
+    // collisions resolved entry-first) fixes that — a blunt, single-
+    // namespace merge rather than real per-module IR linking, but real
+    // enough to make cross-file calls (like `examples/eval_translate.ulx`
+    // calling `Translate` from `translate.ulx`) actually execute.
+    let merged = merge_workspace_program(&ws);
+    let ir = match ulx_ir::lower_program(&merged) {
         Ok(ir) => ir,
         Err(e) => {
             eprintln!("error: {name}: lowering failed: {e:?}");
@@ -197,6 +211,45 @@ pub fn load(file: &Path) -> Option<Loaded> {
         }
     };
     Some(Loaded { ir, provider_decls })
+}
+
+/// Flattens every module in `ws` into one `Program` for lowering — see the
+/// comment at `load()`'s call site for why. Entry-first, then the rest in a
+/// deterministic (path-sorted) order; a decl name already seen is skipped,
+/// so the entry module's own declarations always win over an imported
+/// module's same-named one.
+fn merge_workspace_program(ws: &ulx_sema::Workspace) -> Program {
+    let mut modules: Vec<&ulx_sema::AnalyzedModule> = ws.modules.values().collect();
+    modules.sort_by(|a, b| {
+        let a_is_entry = a.path == ws.entry;
+        let b_is_entry = b.path == ws.entry;
+        b_is_entry.cmp(&a_is_entry).then_with(|| a.path.cmp(&b.path))
+    });
+
+    let mut seen: HashSet<String> = HashSet::new();
+    let mut decls = Vec::new();
+    for module in modules {
+        for (decl, span) in &module.program.decls {
+            if seen.insert(pipeline_decl_name(decl).to_string()) {
+                decls.push((decl.clone(), span.clone()));
+            }
+        }
+    }
+    Program {
+        imports: Vec::new(),
+        decls,
+    }
+}
+
+fn pipeline_decl_name(decl: &TopDecl) -> &str {
+    match decl {
+        TopDecl::Conversation(c) => &c.name,
+        TopDecl::Judge(r) | TopDecl::Validator(r) => &r.name,
+        TopDecl::Dataset(d) => &d.name,
+        TopDecl::Type(t) => &t.name,
+        TopDecl::Benchmark(b) => &b.name,
+        TopDecl::Provider(p) => &p.name,
+    }
 }
 
 #[cfg(test)]

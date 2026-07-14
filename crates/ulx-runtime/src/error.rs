@@ -11,6 +11,7 @@ pub enum RuntimeError {
     UnknownJudgeOrValidator(String),
     UnknownConversation(String),
     UnknownDataset(String),
+    UnknownBenchmark(String),
     Provider(ProviderError),
     /// A conversation reached `escalate(...)` with no recorded human
     /// decision (§7.3, §10.7) — the caller should report `cache_key` to the
@@ -38,6 +39,7 @@ impl std::fmt::Display for RuntimeError {
             }
             RuntimeError::UnknownConversation(n) => write!(f, "no `conversation` named `{n}`"),
             RuntimeError::UnknownDataset(n) => write!(f, "no `dataset` named `{n}`"),
+            RuntimeError::UnknownBenchmark(n) => write!(f, "no `benchmark` named `{n}`"),
             RuntimeError::Provider(e) => write!(f, "{e}"),
             RuntimeError::Suspended { reason, target, .. } => {
                 write!(f, "suspended waiting on `{target}`: {reason}")
