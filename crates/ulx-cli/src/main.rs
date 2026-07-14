@@ -1,17 +1,20 @@
 //! `ulx` — the Ulexite CLI (§20.12).
 //!
-//! Implemented: `parse`, `check` (§20.7's diagnostics ahead of a full LSP),
-//! `run`, `approve`/`deny` (§10.7's human-approval resume, v0.1-style —
-//! see `ulx-runtime`'s docs for how that actually works), `replay` (§18.3),
-//! `trace` (§20.6, text-only — no viewer webview yet).
+//! Implemented: `parse`, `check` (§20.7's diagnostics — also exposed live
+//! through `ulx-lsp`, §20.2's language server), `run`, `approve`/`deny`
+//! (§10.7's human-approval resume, v0.1-style — see `ulx-runtime`'s docs
+//! for how that actually works), `replay` (§18.3), `trace` (§20.6 — no
+//! viewer webview, but `--output mermaid`/`html` render a shareable
+//! diagram/page in its place; see `output.rs`).
 //!
 //! Not implemented: `test`/`benchmark` execution (§16 — needs dataset-driven
 //! parametrization the interpreter doesn't wire up to the CLI yet), `plan`
-//! (§10.5 — needs real provider cost metadata), `fmt`/`doc`/`repl`/language
-//! server (§20). See `docs/spec/25-future-directions.md`.
+//! (§10.5 — needs real provider cost metadata), `fmt`/`doc`/`repl` (§20).
+//! See `docs/spec/25-future-directions.md`.
 
 mod diagnostics;
 mod manifest;
+mod output;
 mod pipeline;
 mod project_manifest;
 mod providers;
@@ -20,6 +23,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use clap::{Parser, Subcommand};
+use output::{OutputFormat, RunOutcome};
 use ulx_runtime::{Cache, ProviderRegistry, RunContext, RuntimeError, TraceWriter, Value};
 
 #[derive(Parser)]
@@ -57,6 +61,11 @@ enum Command {
         /// configured real providers entirely.
         #[arg(long, conflicts_with = "providers")]
         mock: bool,
+        /// Output format: `text` (default), `json`, `jsonl`, `mermaid`, or
+        /// `html`. The latter three render the run's full trace, not just
+        /// its final value.
+        #[arg(long, value_enum, default_value = "text")]
+        output: OutputFormat,
     },
     /// Record a human decision for a suspended run and resume it.
     Approve {
@@ -68,6 +77,8 @@ enum Command {
         providers: Vec<String>,
         #[arg(long, conflicts_with = "providers")]
         mock: bool,
+        #[arg(long, value_enum, default_value = "text")]
+        output: OutputFormat,
     },
     /// Record a denial for a suspended run (does not resume execution).
     Deny {
@@ -78,12 +89,24 @@ enum Command {
         providers: Vec<String>,
         #[arg(long, conflicts_with = "providers")]
         mock: bool,
+        #[arg(long, value_enum, default_value = "text")]
+        output: OutputFormat,
     },
     /// Strictly replay a completed run from its trace log (§18.3) — a cache
     /// miss is an error, never a live provider call.
-    Replay { run_id: String },
+    Replay {
+        run_id: String,
+        #[arg(long, value_enum, default_value = "text")]
+        output: OutputFormat,
+    },
     /// Print a run's trace log (§18, §20.6 without the viewer webview).
-    Trace { run_id: String },
+    Trace {
+        run_id: String,
+        /// Output format: `text` (default), `json`, `jsonl`, `mermaid`
+        /// (a sequence diagram), or `html` (a self-contained page).
+        #[arg(long, value_enum, default_value = "text")]
+        output: OutputFormat,
+    },
     /// Scaffold a new package: `ulexite.toml` + a starter conversation (§14.1).
     Init {
         name: String,
@@ -109,21 +132,32 @@ fn main() {
             run_id,
             providers,
             mock,
-        } => cmd_run(&file, &conversation, &args, run_id, &providers, mock),
+            output,
+        } => cmd_run(
+            &file,
+            &conversation,
+            &args,
+            run_id,
+            &providers,
+            mock,
+            output,
+        ),
         Command::Approve {
             run_id,
             value,
             providers,
             mock,
-        } => cmd_approve(&run_id, &value, &providers, mock),
+            output,
+        } => cmd_approve(&run_id, &value, &providers, mock, output),
         Command::Deny {
             run_id,
             note,
             providers,
             mock,
-        } => cmd_deny(&run_id, note.as_deref(), &providers, mock),
-        Command::Replay { run_id } => cmd_replay(&run_id),
-        Command::Trace { run_id } => cmd_trace(&run_id),
+            output,
+        } => cmd_deny(&run_id, note.as_deref(), &providers, mock, output),
+        Command::Replay { run_id, output } => cmd_replay(&run_id, output),
+        Command::Trace { run_id, output } => cmd_trace(&run_id, output),
         Command::Init { name, dir } => cmd_init(&name, &dir),
         Command::Manifest { file } => cmd_manifest(&file),
     };
@@ -207,6 +241,7 @@ fn build_context<'a>(
     ))
 }
 
+#[allow(clippy::too_many_arguments)]
 fn cmd_run(
     file: &Path,
     conversation: &str,
@@ -214,6 +249,7 @@ fn cmd_run(
     run_id: Option<String>,
     selected_providers: &[String],
     force_mock: bool,
+    output: OutputFormat,
 ) -> bool {
     let Some(loaded) = pipeline::load(file) else {
         return false;
@@ -260,34 +296,75 @@ fn cmd_run(
 
     let value_args: BTreeMap<String, Value> =
         args.into_iter().map(|(k, v)| (k, Value::Text(v))).collect();
-    execute(&ctx, conversation, value_args, &run_id)
+    execute(&ctx, conversation, value_args, &run_id, output)
 }
 
+/// `Text` (the default) is handled inline here, byte-for-byte what `ulx`
+/// printed before `--output` existed — every other format is rendered by
+/// `output.rs` instead. `Json` needs only the final outcome; `Jsonl`/
+/// `Mermaid`/`Html` need the whole trace, so those re-read the trace file
+/// `run_conversation` just finished writing — a cheap local read, and it
+/// keeps this feature entirely CLI-side with no `ulx-runtime` changes.
 fn execute(
     ctx: &RunContext,
     conversation: &str,
     args: BTreeMap<String, Value>,
     run_id: &str,
+    output: OutputFormat,
 ) -> bool {
-    match ulx_runtime::run_conversation(ctx, conversation, args) {
-        Ok(value) => {
-            println!("{value}");
-            true
-        }
-        Err(RuntimeError::Suspended { reason, target, .. }) => {
-            println!("suspended: waiting on `{target}` — {reason}");
-            println!("run id: {run_id}");
-            println!("resume with: ulx approve {run_id} --value <text>   (or: ulx deny {run_id})");
-            false
-        }
-        Err(e) => {
-            eprintln!("error: {e}");
-            false
-        }
+    let result = ulx_runtime::run_conversation(ctx, conversation, args);
+    if let OutputFormat::Text = output {
+        return match result {
+            Ok(value) => {
+                println!("{value}");
+                true
+            }
+            Err(RuntimeError::Suspended { reason, target, .. }) => {
+                println!("suspended: waiting on `{target}` — {reason}");
+                println!("run id: {run_id}");
+                println!(
+                    "resume with: ulx approve {run_id} --value <text>   (or: ulx deny {run_id})"
+                );
+                false
+            }
+            Err(e) => {
+                eprintln!("error: {e}");
+                false
+            }
+        };
     }
+
+    let (ok, outcome) = match &result {
+        Ok(value) => (true, RunOutcome::Value(value)),
+        Err(RuntimeError::Suspended { reason, target, .. }) => (
+            false,
+            RunOutcome::Suspended {
+                run_id,
+                reason,
+                target,
+            },
+        ),
+        Err(e) => (false, RunOutcome::Error(e.to_string())),
+    };
+    match output {
+        OutputFormat::Json => println!("{}", output::render_run_json(&outcome)),
+        OutputFormat::Jsonl | OutputFormat::Mermaid | OutputFormat::Html => {
+            let records =
+                ulx_runtime::read_trace(manifest::traces_dir(), run_id).unwrap_or_default();
+            println!("{}", output::render_trace(output, &records));
+        }
+        OutputFormat::Text => unreachable!("returned above"),
+    }
+    ok
 }
 
-fn resume(run_id: &str, decision: Value, selected_providers: &[String], force_mock: bool) -> bool {
+fn resume(
+    run_id: &str,
+    decision: Value,
+    selected_providers: &[String],
+    force_mock: bool,
+    output: OutputFormat,
+) -> bool {
     let manifest = match manifest::load(run_id) {
         Ok(m) => m,
         Err(e) => {
@@ -369,15 +446,22 @@ fn resume(run_id: &str, decision: Value, selected_providers: &[String], force_mo
             return false;
         }
     };
-    execute(&ctx, &manifest.conversation, args, run_id)
+    execute(&ctx, &manifest.conversation, args, run_id, output)
 }
 
-fn cmd_approve(run_id: &str, value: &str, selected_providers: &[String], force_mock: bool) -> bool {
+fn cmd_approve(
+    run_id: &str,
+    value: &str,
+    selected_providers: &[String],
+    force_mock: bool,
+    output: OutputFormat,
+) -> bool {
     resume(
         run_id,
         Value::Text(value.to_string()),
         selected_providers,
         force_mock,
+        output,
     )
 }
 
@@ -386,6 +470,7 @@ fn cmd_deny(
     note: Option<&str>,
     selected_providers: &[String],
     force_mock: bool,
+    output: OutputFormat,
 ) -> bool {
     let reason = note.unwrap_or("denied by human reviewer").to_string();
     println!("run `{run_id}` denied: {reason}");
@@ -396,10 +481,11 @@ fn cmd_deny(
         Value::Verdict(ulx_runtime::value::Verdict::Fail(reason)),
         selected_providers,
         force_mock,
+        output,
     )
 }
 
-fn cmd_replay(run_id: &str) -> bool {
+fn cmd_replay(run_id: &str, output: OutputFormat) -> bool {
     let manifest = match manifest::load(run_id) {
         Ok(m) => m,
         Err(e) => {
@@ -437,33 +523,37 @@ fn cmd_replay(run_id: &str) -> bool {
         .iter()
         .map(|(k, v)| (k.clone(), Value::Text(v.clone())))
         .collect();
-    execute(&ctx, &manifest.conversation, args, run_id)
+    execute(&ctx, &manifest.conversation, args, run_id, output)
 }
 
-fn cmd_trace(run_id: &str) -> bool {
+fn cmd_trace(run_id: &str, output: OutputFormat) -> bool {
     match ulx_runtime::read_trace(manifest::traces_dir(), run_id) {
         Ok(records) => {
-            for r in records {
-                let status = if r.cache_hit {
-                    "hit "
-                } else if r.error.is_some() {
-                    "err "
-                } else {
-                    "miss"
-                };
-                let cap = r.capability.as_deref().unwrap_or("-");
-                let out = r
-                    .output
-                    .as_ref()
-                    .map(|v| v.to_string())
-                    .or_else(|| r.error.clone())
-                    .unwrap_or_default();
-                println!(
-                    "#{:<3} [{status}] {:<10} {}",
-                    r.seq,
-                    cap,
-                    truncate(&out, 100)
-                );
+            if let OutputFormat::Text = output {
+                for r in &records {
+                    let status = if r.cache_hit {
+                        "hit "
+                    } else if r.error.is_some() {
+                        "err "
+                    } else {
+                        "miss"
+                    };
+                    let cap = r.capability.as_deref().unwrap_or("-");
+                    let out = r
+                        .output
+                        .as_ref()
+                        .map(|v| v.to_string())
+                        .or_else(|| r.error.clone())
+                        .unwrap_or_default();
+                    println!(
+                        "#{:<3} [{status}] {:<10} {}",
+                        r.seq,
+                        cap,
+                        output::truncate(&out, 100)
+                    );
+                }
+            } else {
+                println!("{}", output::render_trace(output, &records));
             }
             true
         }
@@ -471,14 +561,6 @@ fn cmd_trace(run_id: &str) -> bool {
             eprintln!("error: could not read trace for `{run_id}`: {e}");
             false
         }
-    }
-}
-
-fn truncate(s: &str, max: usize) -> String {
-    if s.len() <= max {
-        s.to_string()
-    } else {
-        format!("{}...", &s[..max])
     }
 }
 

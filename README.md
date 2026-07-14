@@ -70,7 +70,7 @@ ulx trace demo
 | [`crates/ulx-sema`](crates/ulx-sema) | Name/import resolution across files, artifact-type checking for `ask` calls (§9.2), `Verdict` match-exhaustiveness (§9.4), `with`-block independence checking (§9.7) |
 | [`crates/ulx-ir`](crates/ulx-ir) | Lowers the AST to a pure/effect IR (§13.4), desugaring message-literal sugar into explicit `chat` effects, plus a dead-binding elimination pass (§13.5) |
 | [`crates/ulx-runtime`](crates/ulx-runtime) | Tree-walking interpreter (§12.2) — a pluggable `Provider` trait with a deterministic `MockProvider` plus real HTTP-backed adapters (OpenAI/Groq/any OpenAI-compatible server, Anthropic, Gemini, Cohere, Ollama), a content-addressed cache and trace log (§10.3, §18), real concurrent `with`-block execution (`std::thread::scope`), and cache-backed suspend/resume for `escalate` (§10.7) |
-| [`crates/ulx-cli`](crates/ulx-cli) | The `ulx` binary: `parse`, `check`, `run`, `approve`/`deny`, `replay`, `trace`, `init`, `manifest` |
+| [`crates/ulx-cli`](crates/ulx-cli) | The `ulx` binary: `parse`, `check`, `run`, `approve`/`deny`, `replay`, `trace`, `init`, `manifest` — `run`/`approve`/`deny`/`replay`/`trace` support `--output text\|json\|jsonl\|mermaid\|html` |
 | [`tooling/vscode-ulx`](tooling/vscode-ulx) | TextMate grammar + language config for `.ulx` syntax highlighting in VS Code (§20.10) |
 
 ## Configuring providers
@@ -139,6 +139,24 @@ conversation Greet(name: text) -> text {
 See [`examples/custom_provider.ulx`](examples/custom_provider.ulx) for a runnable, fully-offline version (§21.12). `provider` decls can be imported across files too, the same way `judge`/`conversation`/`dataset` already are (`import provider Prod from "providers.ulx"`). This is the one place `.ulx` source can name an actual vendor — every `ask` call site still only ever names a capability (plus, optionally, a provider *name*, never a vendor kind directly); §12.4's provider-independence principle still holds for ordinary `ask` calls, this is an explicit, opt-in escape hatch layered on top of it, not a replacement for it.
 
 **API keys via `.env`**: `ulx run` also loads a `.env` file next to the `.ulx` file being run, if one exists, before resolving providers — so `OPENAI_API_KEY=sk-...` can live in a local, gitignored `.env` instead of being `export`ed by hand every session. A real shell-exported variable always wins over the `.env` file's value. See [`examples/.env.example`](examples/.env.example).
+
+## Output formats
+
+`ulx run`/`approve`/`deny`/`replay`/`trace` all take `--output <FORMAT>`, defaulting to `text` (today's plain, human-readable output, unchanged):
+
+- `text` — the default; a final value, a `suspended: ...`/resume hint, or an `error: ...` on stderr for `run`/`approve`/`deny`/`replay`; a `#seq [hit|miss|err] capability  output` table for `trace`.
+- `json` — one JSON object, always on stdout (including for errors — this is the one deliberate difference from `text` mode, which puts errors on stderr): `{"status": "ok", "value": ...}`, `{"status": "suspended", "run_id", "reason", "target", "resume_hint"}`, or `{"status": "error", "message"}`. `ulx trace --output json` prints the whole trace as a JSON array instead.
+- `jsonl` — one JSON object per trace record (`seq`, `kind`, `capability`, `cache_hit`, `output`, `error`, `timestamp_ms`), newline-delimited. For `run`/`approve`/`deny`/`replay` this is the *whole run's* trace, not just the final value — pipe through `tail -1` for the last record, or `jq` to filter.
+- `mermaid` — a `sequenceDiagram` of the run's trace (one participant per capability, request/response arrows labeled with `#seq` and a truncated `[hit|miss|err]` output) — paste into a Markdown `mermaid` code fence or a Mermaid live editor to render it.
+- `html` — a self-contained page (no JS, no external assets, theme-aware) rendering the trace as a list of status-colored cards. Redirect to a file to view it: `ulx trace <run-id> --output html > trace.html`.
+
+```sh
+ulx run examples/translate.ulx Translate --arg source=hello --arg target_lang=fr --mock --output json
+ulx trace <run-id> --output mermaid
+ulx trace <run-id> --output html > trace.html
+```
+
+`jsonl`/`mermaid`/`html` always describe the *whole trace* of a run, even when invoked via `run`/`approve`/`deny`/`replay` — those re-read the trace file the run itself just wrote, rather than needing a separate `ulx trace` call. Errors that happen before a conversation starts running (an unreadable file, an ambiguous or unconfigured provider, a bad `--arg`) are always plain text on stderr regardless of `--output` — only a conversation's actual outcome or trace is format-aware.
 
 ## How it compares
 
