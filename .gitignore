@@ -6,3 +6,7 @@ node_modules/
 
 # local ulx runtime state (cache/traces/run manifests, §12.5/§18) — never checked in
 .ulexite/
+
+# provider API keys (README's "Configuring providers") — real secrets belong
+# here, never in ulexite.toml; see .env.example / examples/.env.example
+.env

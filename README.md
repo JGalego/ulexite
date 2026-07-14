@@ -112,6 +112,8 @@ chat = "my-gpt4o-deployment"                   # this is your *deployment name*,
 
 Provider config lives entirely in `ulexite.toml`, never in `.ulx` source — a `.ulx` program only ever names a capability (`ask chat(...)`, `ask vision(...)`), never a vendor, by design (§12.4's provider-independence principle).
 
+**API keys via `.env`**: `ulx run` also loads a `.env` file next to the `.ulx` file being run, if one exists, before resolving providers — so `OPENAI_API_KEY=sk-...` can live in a local, gitignored `.env` instead of being `export`ed by hand every session. A real shell-exported variable always wins over the `.env` file's value. See [`examples/.env.example`](examples/.env.example).
+
 ## How it compares
 
 A condensed slice of [§22's full comparison matrix](docs/spec/22-comparison-matrix.md) (11 systems, 19 capabilities) — ratings are **Yes** (native/structural), **Partial** (bolt-on/wrapper), or **No**, grounded in the specific findings of [§2's prior-art survey](docs/spec/02-prior-art-survey.md), not general reputation:

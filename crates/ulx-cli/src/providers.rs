@@ -7,6 +7,13 @@
 //! about `toml::Value` or the manifest's shape at all). Absent a manifest
 //! (or an empty `[providers]` table), behavior is unchanged from before
 //! this existed: `ProviderRegistry::with_mock()`.
+//!
+//! Before any of that, a `.env` file next to the `.ulx` file (if one
+//! exists) is loaded into the process environment — the same place
+//! `api_key_env` values are read from, so this is purely a convenience so
+//! `OPENAI_API_KEY=...` can live in a local, gitignored file instead of
+//! being `export`ed by hand every session. Real shell-exported variables
+//! always win: `dotenvy::from_path` never overrides an already-set var.
 
 use std::path::Path;
 
@@ -15,7 +22,10 @@ use ulx_runtime::{build_provider, ProviderRegistry, ProviderSpec, Value};
 use crate::project_manifest::{self, CapabilityConfig, ProviderEntry};
 
 pub fn resolve_providers(file: &Path) -> Result<ProviderRegistry, String> {
-    let manifest_path = crate::manifest::base_dir_of(file).join("ulexite.toml");
+    let base_dir = crate::manifest::base_dir_of(file);
+    load_dotenv(&base_dir)?;
+
+    let manifest_path = base_dir.join("ulexite.toml");
     if !manifest_path.exists() {
         return Ok(ProviderRegistry::with_mock());
     }
@@ -40,6 +50,18 @@ pub fn resolve_providers(file: &Path) -> Result<ProviderRegistry, String> {
         }
     }
     Ok(registry)
+}
+
+/// Loads `<dir>/.env` into the process environment, if it exists. Not
+/// finding one is fine (most projects won't have one); a malformed one is
+/// a real misconfiguration and surfaces as a clear error rather than
+/// being silently skipped, same as a malformed `ulexite.toml`.
+fn load_dotenv(dir: &Path) -> Result<(), String> {
+    let dotenv_path = dir.join(".env");
+    if !dotenv_path.exists() {
+        return Ok(());
+    }
+    dotenvy::from_path(&dotenv_path).map_err(|e| format!("{}: {e}", dotenv_path.display()))
 }
 
 fn to_provider_spec(
@@ -82,6 +104,50 @@ fn toml_to_value(v: &toml::Value) -> Value {
 mod tests {
     use super::*;
     use std::collections::BTreeMap;
+
+    fn temp_test_dir(label: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "ulexite-dotenv-test-{label}-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn missing_dotenv_file_is_fine() {
+        let dir = temp_test_dir("missing");
+        assert!(load_dotenv(&dir).is_ok());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn dotenv_file_sets_unset_vars() {
+        let dir = temp_test_dir("sets-unset");
+        let var_name = "ULEXITE_TEST_DOTENV_UNSET_VAR";
+        std::env::remove_var(var_name);
+        std::fs::write(dir.join(".env"), format!("{var_name}=from-dotenv\n")).unwrap();
+
+        load_dotenv(&dir).unwrap();
+        assert_eq!(std::env::var(var_name).as_deref(), Ok("from-dotenv"));
+
+        std::env::remove_var(var_name);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn dotenv_file_does_not_override_a_real_env_var() {
+        let dir = temp_test_dir("no-override");
+        let var_name = "ULEXITE_TEST_DOTENV_ALREADY_SET_VAR";
+        std::env::set_var(var_name, "from-shell");
+        std::fs::write(dir.join(".env"), format!("{var_name}=from-dotenv\n")).unwrap();
+
+        load_dotenv(&dir).unwrap();
+        assert_eq!(std::env::var(var_name).as_deref(), Ok("from-shell"));
+
+        std::env::remove_var(var_name);
+        std::fs::remove_dir_all(&dir).ok();
+    }
 
     #[test]
     fn bare_model_string_becomes_a_model_only_spec() {
