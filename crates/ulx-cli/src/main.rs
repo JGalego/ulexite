@@ -407,7 +407,16 @@ fn cmd_manifest(file: &Path) -> bool {
             if !m.providers.is_empty() {
                 println!("providers:");
                 for (name, p) in &m.providers {
-                    println!("  {name}: capability={}, policy={}", p.capability, p.policy);
+                    let capabilities = p
+                        .capabilities
+                        .keys()
+                        .cloned()
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    println!(
+                        "  {name}: vendor={}, capabilities=[{capabilities}]",
+                        p.vendor
+                    );
                 }
             }
             println!(

@@ -1,10 +1,12 @@
 # Copy this to `examples/ulexite.toml` (same directory as the .ulx files
 # below) to run them against real vendors instead of the built-in mock —
-# see README.md's "Configuring providers". Every capability is its own
-# [providers.*] entry, even though they all point at the same vendor here
-# (crates/ulx-runtime/src/provider/factory.rs's ProviderSpec.capability
-# gates resolution per entry, so one instance never silently answers for a
-# capability it wasn't configured for).
+# see README.md's "Configuring providers". Each [providers.<name>] table
+# is one vendor account/deployment; `vendor` is mandatory and never
+# inferred from the table name, so two entries for the same vendor (e.g.
+# two different openai_compatible servers) are unambiguous. Every other
+# key in a table is a capability name (chat/vision/embed/transcribe/
+# speak/generate_image/...) mapped to either a bare model-name string or a
+# `{ model = "...", params = { ... } }` table for per-capability overrides.
 #
 # api_key_env only ever names an environment variable — never put a
 # literal API key in this file. Set it before running:
@@ -15,38 +17,18 @@ name = "ulexite-examples"
 version = "0.1.0"
 ulexite = "^0.1"
 
-[providers.chat]
-capability = "chat"
+[providers.openai]
 vendor = "openai"
-model = "gpt-4o-mini"
 api_key_env = "OPENAI_API_KEY"
+chat = "gpt-4o-mini"
+vision = "gpt-4o-mini"
+embed = "text-embedding-3-small"
+transcribe = "whisper-1"
+speak = "tts-1"
+generate_image = "dall-e-3"
 
-[providers.vision]
-capability = "vision"
-vendor = "openai"
-model = "gpt-4o-mini"
-api_key_env = "OPENAI_API_KEY"
-
-[providers.embed]
-capability = "embed"
-vendor = "openai"
-model = "text-embedding-3-small"
-api_key_env = "OPENAI_API_KEY"
-
-[providers.transcribe]
-capability = "transcribe"
-vendor = "openai"
-model = "whisper-1"
-api_key_env = "OPENAI_API_KEY"
-
-[providers.speak]
-capability = "speak"
-vendor = "openai"
-model = "tts-1"
-api_key_env = "OPENAI_API_KEY"
-
-[providers.generate_image]
-capability = "generate_image"
-vendor = "openai"
-model = "dall-e-3"
-api_key_env = "OPENAI_API_KEY"
+# Per-capability overrides look like this instead of a bare string:
+# [providers.openai.chat]
+# model = "gpt-4o-mini"
+# [providers.openai.chat.params]
+# temperature = 0.2

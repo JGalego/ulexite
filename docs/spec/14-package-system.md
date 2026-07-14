@@ -14,8 +14,11 @@ ulexite = "^1.0"          # language/compiler version requirement
 translation-judges = "^2.1"
 rag-toolkit = { git = "https://example.com/rag-toolkit.git", tag = "v0.9.0" }
 
-[providers]
-default_chat = { capability = "chat", policy = "cheapest" }
+[providers.openai]
+vendor = "openai"                # mandatory — never inferred from the table name
+api_key_env = "OPENAI_API_KEY"   # names an env var; never a literal key in this file
+chat = "gpt-4o-mini"             # every other key is a capability, bare model name or
+vision = "gpt-4o-mini"           # a { model = "...", params = { ... } } table for overrides
 
 [runtime]
 concurrency = 8

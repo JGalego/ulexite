@@ -1,9 +1,10 @@
-//! `ulexite.toml` (§14.1): package metadata, dependencies, provider policy,
-//! and runtime config. Parsing/validation only — dependency *resolution*
-//! (a registry, a lockfile, semver-contract checks at publish time, §14.2–
-//! §14.4) is real, sizable infrastructure this v0.1 doesn't build; only
-//! `git`/`path` dependencies make sense to even parse without a registry
-//! to resolve named versions against. See `docs/spec/24-limitations.md`.
+//! `ulexite.toml` (§14.1): package metadata, dependencies, provider
+//! config, and runtime config. Parsing/validation only — dependency
+//! *resolution* (a registry, a lockfile, semver-contract checks at publish
+//! time, §14.2–§14.4) is real, sizable infrastructure this v0.1 doesn't
+//! build; only `git`/`path` dependencies make sense to even parse without
+//! a registry to resolve named versions against. See
+//! `docs/spec/24-limitations.md`.
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -16,7 +17,7 @@ pub struct Manifest {
     #[serde(default)]
     pub dependencies: BTreeMap<String, Dependency>,
     #[serde(default)]
-    pub providers: BTreeMap<String, ProviderPolicy>,
+    pub providers: BTreeMap<String, ProviderEntry>,
     #[serde(default)]
     pub runtime: RuntimeConfig,
 }
@@ -42,18 +43,15 @@ pub enum Dependency {
     },
 }
 
+/// One `[providers.<name>]` table: a single vendor account/deployment,
+/// covering however many capabilities it serves. The table name is just a
+/// label (so e.g. two distinct `openai_compatible` servers can each get
+/// their own entry) — `vendor` is mandatory and never inferred from it.
 #[derive(Debug, Deserialize)]
-pub struct ProviderPolicy {
-    pub capability: String,
-    #[serde(default = "default_policy")]
-    pub policy: String,
+pub struct ProviderEntry {
     /// Which adapter to build (§12.4): `openai`, `anthropic`, `gemini`,
-    /// `groq`, `cohere`, `ollama`, `openai_compatible`, or `mock`. Absent
-    /// (or `mock`) keeps today's zero-config offline behavior.
-    #[serde(default)]
-    pub vendor: Option<String>,
-    #[serde(default)]
-    pub model: Option<String>,
+    /// `groq`, `cohere`, `ollama`, `openai_compatible`, or `mock`.
+    pub vendor: String,
     /// Required for `openai_compatible` (e.g. a local vLLM/LM Studio
     /// server); optional override elsewhere.
     #[serde(default)]
@@ -62,14 +60,41 @@ pub struct ProviderPolicy {
     /// literal secret in this file.
     #[serde(default)]
     pub api_key_env: Option<String>,
-    /// Default request params (`temperature`, `max_tokens`, `top_p`, ...),
-    /// overridable per call via `ask capability(temperature: 0.2)`.
-    #[serde(default)]
-    pub params: BTreeMap<String, toml::Value>,
+    /// Every other key in the table is a capability name (`chat`, `vision`,
+    /// `embed`, `transcribe`, `speak`, `generate_image`, ...) — a bare
+    /// model-name string, or a `{ model = "...", ... }` table for
+    /// per-capability parameter overrides (`ask chat(temperature: 0.7)`
+    /// still wins over this at call time).
+    #[serde(flatten)]
+    pub capabilities: BTreeMap<String, CapabilityConfig>,
 }
 
-fn default_policy() -> String {
-    "balanced".to_string()
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+pub enum CapabilityConfig {
+    Model(String),
+    Detailed {
+        #[serde(default)]
+        model: Option<String>,
+        #[serde(default)]
+        params: BTreeMap<String, toml::Value>,
+    },
+}
+
+impl CapabilityConfig {
+    pub fn model(&self) -> Option<&str> {
+        match self {
+            CapabilityConfig::Model(m) => Some(m.as_str()),
+            CapabilityConfig::Detailed { model, .. } => model.as_deref(),
+        }
+    }
+
+    pub fn params(&self) -> BTreeMap<String, toml::Value> {
+        match self {
+            CapabilityConfig::Model(_) => BTreeMap::new(),
+            CapabilityConfig::Detailed { params, .. } => params.clone(),
+        }
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -160,6 +185,14 @@ fn validate(m: &Manifest) -> Result<(), ManifestError> {
             }
         }
     }
+    for (name, entry) in &m.providers {
+        if entry.capabilities.is_empty() {
+            return Err(ManifestError::Invalid(format!(
+                "provider `{name}` (vendor `{}`) declares no capabilities — add at least one, e.g. `chat = \"...\"`",
+                entry.vendor
+            )));
+        }
+    }
     Ok(())
 }
 
@@ -194,8 +227,9 @@ mod tests {
             translation-judges = "^2.1"
             rag-toolkit = { git = "https://example.com/rag-toolkit.git", tag = "v0.9.0" }
 
-            [providers]
-            default_chat = { capability = "chat", policy = "cheapest" }
+            [providers.openai]
+            vendor = "openai"
+            chat = "gpt-4o-mini"
 
             [runtime]
             concurrency = 8
@@ -206,7 +240,7 @@ mod tests {
         assert_eq!(m.package.name, "acme-support-bot");
         assert_eq!(m.runtime.concurrency, 8);
         assert_eq!(m.dependencies.len(), 2);
-        assert_eq!(m.providers["default_chat"].capability, "chat");
+        assert_eq!(m.providers["openai"].vendor, "openai");
     }
 
     #[test]
@@ -225,7 +259,7 @@ mod tests {
     }
 
     #[test]
-    fn provider_vendor_fields_parse() {
+    fn bare_string_capability_is_just_a_model_name() {
         let m = parse(
             r#"
             [package]
@@ -233,48 +267,57 @@ mod tests {
             version = "0.1.0"
             ulexite = "^0.1"
 
-            [providers.default_chat]
-            capability = "chat"
+            [providers.anthropic]
             vendor = "anthropic"
-            model = "claude-3-5-sonnet-20241022"
             api_key_env = "ANTHROPIC_API_KEY"
-
-            [providers.default_chat.params]
-            temperature = 0.2
-            max_tokens = 512
-
-            [providers.local_chat]
-            capability = "chat"
-            vendor = "openai_compatible"
-            base_url = "http://localhost:8000/v1"
+            chat = "claude-3-5-sonnet-20241022"
+            vision = "claude-3-5-sonnet-20241022"
             "#,
         )
         .expect("should parse");
-        let default_chat = &m.providers["default_chat"];
-        assert_eq!(default_chat.vendor.as_deref(), Some("anthropic"));
+        let entry = &m.providers["anthropic"];
+        assert_eq!(entry.vendor, "anthropic");
+        assert_eq!(entry.api_key_env.as_deref(), Some("ANTHROPIC_API_KEY"));
         assert_eq!(
-            default_chat.model.as_deref(),
+            entry.capabilities["chat"].model(),
             Some("claude-3-5-sonnet-20241022")
         );
+        assert!(entry.capabilities["chat"].params().is_empty());
+        assert_eq!(entry.capabilities.len(), 2);
+    }
+
+    #[test]
+    fn detailed_capability_table_carries_params() {
+        let m = parse(
+            r#"
+            [package]
+            name = "tiny"
+            version = "0.1.0"
+            ulexite = "^0.1"
+
+            [providers.openai]
+            vendor = "openai"
+            api_key_env = "OPENAI_API_KEY"
+
+            [providers.openai.chat]
+            model = "gpt-4o-mini"
+
+            [providers.openai.chat.params]
+            temperature = 0.2
+            max_tokens = 512
+            "#,
+        )
+        .expect("should parse");
+        let chat = &m.providers["openai"].capabilities["chat"];
+        assert_eq!(chat.model(), Some("gpt-4o-mini"));
         assert_eq!(
-            default_chat.api_key_env.as_deref(),
-            Some("ANTHROPIC_API_KEY")
-        );
-        assert_eq!(
-            default_chat
-                .params
-                .get("temperature")
-                .and_then(|v| v.as_float()),
+            chat.params().get("temperature").and_then(|v| v.as_float()),
             Some(0.2)
-        );
-        assert_eq!(
-            m.providers["local_chat"].base_url.as_deref(),
-            Some("http://localhost:8000/v1")
         );
     }
 
     #[test]
-    fn provider_without_vendor_defaults_to_none() {
+    fn distinct_entries_for_the_same_vendor_are_fine() {
         let m = parse(
             r#"
             [package]
@@ -282,13 +325,60 @@ mod tests {
             version = "0.1.0"
             ulexite = "^0.1"
 
-            [providers]
-            default_chat = { capability = "chat", policy = "cheapest" }
+            [providers.vllm_local]
+            vendor = "openai_compatible"
+            base_url = "http://localhost:8000/v1"
+            chat = "meta-llama/Llama-3-8b"
+
+            [providers.vllm_remote]
+            vendor = "openai_compatible"
+            base_url = "http://gpu-box:8000/v1"
+            chat = "meta-llama/Llama-3-70b"
             "#,
         )
         .expect("should parse");
-        assert!(m.providers["default_chat"].vendor.is_none());
-        assert!(m.providers["default_chat"].params.is_empty());
+        assert_eq!(
+            m.providers["vllm_local"].base_url.as_deref(),
+            Some("http://localhost:8000/v1")
+        );
+        assert_eq!(
+            m.providers["vllm_remote"].base_url.as_deref(),
+            Some("http://gpu-box:8000/v1")
+        );
+    }
+
+    #[test]
+    fn provider_without_vendor_is_rejected() {
+        let err = parse(
+            r#"
+            [package]
+            name = "tiny"
+            version = "0.1.0"
+            ulexite = "^0.1"
+
+            [providers.default]
+            chat = "gpt-4o-mini"
+            "#,
+        )
+        .unwrap_err();
+        assert!(matches!(err, ManifestError::Parse(_)));
+    }
+
+    #[test]
+    fn provider_with_no_capabilities_is_rejected() {
+        let err = parse(
+            r#"
+            [package]
+            name = "tiny"
+            version = "0.1.0"
+            ulexite = "^0.1"
+
+            [providers.default]
+            vendor = "openai"
+            "#,
+        )
+        .unwrap_err();
+        assert!(matches!(err, ManifestError::Invalid(_)));
     }
 
     #[test]

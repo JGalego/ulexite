@@ -74,30 +74,36 @@ Not implemented: PDF/video input to `vision` and a real content-addressed artifa
 
 ## Configuring providers
 
-Zero-config `ulx run` always uses the deterministic mock provider — no API key, fully offline. To use a real vendor, add a `[providers.<name>]` table to `ulexite.toml` next to your `.ulx` file:
+Zero-config `ulx run` always uses the deterministic mock provider — no API key, fully offline. To use a real vendor, add a `[providers.<name>]` table to `ulexite.toml` next to your `.ulx` file — one table per vendor account/deployment, `vendor` mandatory (never inferred from the table name, so two entries for the same vendor are unambiguous), and every other key a capability name mapped to a model:
 
 ```toml
-[providers.default_chat]
-capability = "chat"
+[providers.anthropic]
 vendor = "anthropic"                          # openai | anthropic | gemini | groq | cohere | ollama | openai_compatible | mock
-model = "claude-3-5-sonnet-20241022"
 api_key_env = "ANTHROPIC_API_KEY"              # name of an env var — never a literal key in this file
+vision = "claude-3-5-sonnet-20241022"          # bare string = just the model name
 
-[providers.default_chat.params]
+[providers.anthropic.chat]                     # per-capability overrides need this longer table form instead:
+model = "claude-3-5-sonnet-20241022"
+
+[providers.anthropic.chat.params]
 temperature = 0.2                              # defaults, overridable per call: ask chat(temperature: 0.7) { ... }
 
-[providers.local_chat]
-capability = "chat"
+[providers.local_llm]
 vendor = "openai_compatible"                   # any OpenAI-shaped /chat/completions server: vLLM, LM Studio, Groq, etc.
 base_url = "http://localhost:8000/v1"
+chat = "meta-llama/Llama-3-8b"
 
-[providers.transcribe_openai]
-capability = "transcribe"                     # each capability is its own [providers.*] entry, even for the same vendor
+[providers.openai]
 vendor = "openai"
-model = "whisper-1"
+api_key_env = "OPENAI_API_KEY"
+transcribe = "whisper-1"                       # each vendor entry can list as many capabilities as it serves
+speak = "tts-1"
+generate_image = "dall-e-3"
 ```
 
 `vendor = "ollama"` needs no API key and defaults to `http://localhost:11434`. `chat` is implemented for every vendor; `embed` for `openai_compatible`/`gemini`/`cohere`/`ollama`; `vision` for `openai_compatible`/`anthropic`/`gemini`/`ollama` (image files only — jpg/png/gif/webp, read straight off disk or passed through as an `http(s)://` URL where the vendor supports it; PDF/video are mock-only); `transcribe`/`speak`/`generate_image` for `openai_compatible` (covers OpenAI directly, and Groq for `transcribe`). Every real HTTP call goes through one retry-with-backoff policy plus a per-provider circuit breaker (`crates/ulx-runtime/src/provider/transport.rs`) — a handful of consecutive failures trips it open for a cooldown instead of hammering a downed vendor. A rate limit, timeout, or safety refusal surfaces as an unsettled `Draft<T>` (§9.3), not a crash. Adding a provider that isn't listed above needs no compiler/grammar/IR change (§12.4) — see `crates/ulx-runtime/src/provider/`.
+
+Provider config lives entirely in `ulexite.toml`, never in `.ulx` source — a `.ulx` program only ever names a capability (`ask chat(...)`, `ask vision(...)`), never a vendor, by design (§12.4's provider-independence principle).
 
 ## How it compares
 
