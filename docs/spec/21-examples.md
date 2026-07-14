@@ -194,3 +194,33 @@ conversation RefundRequest(order_id: text, amount: float) -> Verdict {
 ## 21.9 Reusable workflow as an importable, parametrized value
 
 `Translate` (§21.1) is already this: any package can `import conversation Translate from "translate.ulx"` and call it with different arguments, or wrap it (§21.7) in a `benchmark`, without subclassing or decorator ordering (§4.8, §7.7) — no additional syntax is needed beyond what §21.1 and §21.7 already show, which is itself the point: reuse in Ulexite is exactly "import and call," never a distinct mechanism from ordinary composition.
+
+## 21.10 Voice memo reply (`transcribe` + `speak`)
+
+```
+// examples/voice_memo.ulx
+conversation VoiceMemoReply(recording: audio) -> audio {
+  ask transcribe(recording) { } -> transcript: text
+  ask chat() {
+    system: """You write a one-sentence spoken reply to a voice memo."""
+    user: """Voice memo transcript:\n{transcript}"""
+  } -> reply_text: text
+  ask speak() { user: """{reply_text}""" } -> reply_audio: audio
+  reply_audio
+}
+```
+
+`transcribe`/`speak` are `MockProvider`-covered like every capability (a canned placeholder each way, so this always runs offline), and real against `openai_compatible` (§12.4, README's "Configuring providers") — `examples/fixtures/sample.wav` is a genuine (if tiny) WAV fixture for trying it against a real vendor: `ulx run examples/voice_memo.ulx VoiceMemoReply --arg recording=examples/fixtures/sample.wav`.
+
+## 21.11 Generate, then describe what was generated (`generate_image` + `vision`)
+
+```
+// examples/generate_and_describe.ulx
+conversation GenerateAndDescribe(prompt: text) -> text {
+  ask generate_image() { user: """{prompt}""" } -> picture: image
+  ask vision(picture) { user: """Describe what you generated in one sentence.""" } -> description: text
+  description
+}
+```
+
+The interesting part isn't either capability alone — it's that `picture`, `generate_image`'s output, feeds straight back into `vision` as an ordinary `image`-typed value: against a real `openai_compatible` vendor, `generate_image` writes the decoded image to a local temp file (no artifact/blob store yet, §12.7/§24 Limitations) and `vision` reads that same path right back off disk (`provider::artifact`), with no special-casing anywhere in this program for the fact that the image was just synthesized rather than supplied by the caller.

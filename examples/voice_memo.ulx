@@ -1,0 +1,19 @@
+// examples/voice_memo.ulx
+// See docs/spec/21-examples.md §21.10
+//
+// Exercises transcribe -> chat -> speak end to end. Against the mock
+// provider (the default) every capability returns a canned placeholder, so
+// this always completes; against a real vendor (§`Configuring providers`
+// in README.md) it actually transcribes `recording`, drafts a one-sentence
+// reply, and synthesizes it back to audio. Try it with the real fixture:
+//   ulx run examples/voice_memo.ulx VoiceMemoReply --arg recording=examples/fixtures/sample.wav
+
+conversation VoiceMemoReply(recording: audio) -> audio {
+  ask transcribe(recording) { } -> transcript: text
+  ask chat() {
+    system: """You write a one-sentence spoken reply to a voice memo."""
+    user: """Voice memo transcript:\n{transcript}"""
+  } -> reply_text: text
+  ask speak() { user: """{reply_text}""" } -> reply_audio: audio
+  reply_audio
+}

@@ -1,0 +1,16 @@
+// examples/generate_and_describe.ulx
+// See docs/spec/21-examples.md §21.11
+//
+// Exercises generate_image -> vision end to end: generate an image from a
+// text prompt, then describe the image the model just generated. Against
+// the mock provider (the default) both capabilities return a canned
+// placeholder; against a real vendor the generated image is written to a
+// local temp file (no artifact store yet, §24 Limitations) and that same
+// path is fed straight back into `vision`. Try it for real:
+//   ulx run examples/generate_and_describe.ulx GenerateAndDescribe --arg prompt="a lighthouse at sunset"
+
+conversation GenerateAndDescribe(prompt: text) -> text {
+  ask generate_image() { user: """{prompt}""" } -> picture: image
+  ask vision(picture) { user: """Describe what you generated in one sentence.""" } -> description: text
+  description
+}

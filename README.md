@@ -133,6 +133,16 @@ Start at [docs/spec/00-index.md](docs/spec/00-index.md) for the full table of co
 
 The `.ulx` programs referenced by the spec live in [`examples/`](examples/), each with any fixture data it needs (`examples/tickets/`, `examples/kb/`, `examples/fixtures/`). All of them parse, type-check with zero diagnostics, and lower to IR (`cargo test` covers this end to end), and every conversation in every file runs to completion against the mock provider — `approval.ulx` deliberately suspends on `escalate` instead, demonstrating the human-approval flow (see [Try it](#try-it) above). `eval_translate.ulx` is the one exception: it's a `benchmark` declaration, which the CLI doesn't execute yet (§16, see Limitations).
 
+Two examples specifically exercise the newer capabilities against a real provider: [`voice_memo.ulx`](examples/voice_memo.ulx) (`transcribe` + `speak`, §21.10) and [`generate_and_describe.ulx`](examples/generate_and_describe.ulx) (`generate_image` + `vision`, §21.11) — see [`examples/fixtures/`](examples/fixtures/) for real (if tiny) `sample.png`/`sample.wav` fixtures, and [`examples/ulexite.example.toml`](examples/ulexite.example.toml) for a `[providers]` block covering every real-vendor capability, ready to copy to `examples/ulexite.toml` once you've set the matching API key env var:
+
+```sh
+export OPENAI_API_KEY=sk-...
+cp examples/ulexite.example.toml examples/ulexite.toml
+ulx run examples/rag.ulx Caption --arg photo=examples/fixtures/sample.png
+ulx run examples/voice_memo.ulx VoiceMemoReply --arg recording=examples/fixtures/sample.wav
+ulx run examples/generate_and_describe.ulx GenerateAndDescribe --arg prompt="a lighthouse at sunset"
+```
+
 ## Contributing / CI
 
 ```sh

@@ -1,0 +1,52 @@
+# Copy this to `examples/ulexite.toml` (same directory as the .ulx files
+# below) to run them against real vendors instead of the built-in mock —
+# see README.md's "Configuring providers". Every capability is its own
+# [providers.*] entry, even though they all point at the same vendor here
+# (crates/ulx-runtime/src/provider/factory.rs's ProviderSpec.capability
+# gates resolution per entry, so one instance never silently answers for a
+# capability it wasn't configured for).
+#
+# api_key_env only ever names an environment variable — never put a
+# literal API key in this file. Set it before running:
+#   export OPENAI_API_KEY=sk-...
+
+[package]
+name = "ulexite-examples"
+version = "0.1.0"
+ulexite = "^0.1"
+
+[providers.chat]
+capability = "chat"
+vendor = "openai"
+model = "gpt-4o-mini"
+api_key_env = "OPENAI_API_KEY"
+
+[providers.vision]
+capability = "vision"
+vendor = "openai"
+model = "gpt-4o-mini"
+api_key_env = "OPENAI_API_KEY"
+
+[providers.embed]
+capability = "embed"
+vendor = "openai"
+model = "text-embedding-3-small"
+api_key_env = "OPENAI_API_KEY"
+
+[providers.transcribe]
+capability = "transcribe"
+vendor = "openai"
+model = "whisper-1"
+api_key_env = "OPENAI_API_KEY"
+
+[providers.speak]
+capability = "speak"
+vendor = "openai"
+model = "tts-1"
+api_key_env = "OPENAI_API_KEY"
+
+[providers.generate_image]
+capability = "generate_image"
+vendor = "openai"
+model = "dall-e-3"
+api_key_env = "OPENAI_API_KEY"
