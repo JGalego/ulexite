@@ -406,6 +406,11 @@ impl Transport for CircuitBreakerTransport {
 #[cfg(test)]
 pub struct ScriptedTransport {
     responses: Mutex<std::collections::VecDeque<Result<HttpResponse, ProviderError>>>,
+    /// Every JSON request body sent so far, in order — lets a test assert
+    /// on the exact request shape an adapter built (e.g. a `document` vs
+    /// `image` content block), not just the parsed response. Multipart
+    /// bodies aren't captured here; no test needs to inspect those today.
+    sent: Mutex<Vec<serde_json::Value>>,
 }
 
 #[cfg(test)]
@@ -413,6 +418,7 @@ impl ScriptedTransport {
     pub fn new(responses: Vec<Result<HttpResponse, ProviderError>>) -> Self {
         ScriptedTransport {
             responses: Mutex::new(responses.into_iter().collect()),
+            sent: Mutex::new(Vec::new()),
         }
     }
 
@@ -431,6 +437,11 @@ impl ScriptedTransport {
             retry_after: None,
         })
     }
+
+    /// The JSON bodies sent so far, in order.
+    pub fn sent_bodies(&self) -> Vec<serde_json::Value> {
+        self.sent.lock().unwrap().clone()
+    }
 }
 
 #[cfg(test)]
@@ -439,9 +450,12 @@ impl Transport for ScriptedTransport {
         &self,
         _url: &str,
         _headers: &[(String, String)],
-        _body: RequestBody,
+        body: RequestBody,
         _accept: ResponseKind,
     ) -> Result<HttpResponse, ProviderError> {
+        if let RequestBody::Json(json) = &body {
+            self.sent.lock().unwrap().push(json.clone());
+        }
         self.responses
             .lock()
             .unwrap()
@@ -451,6 +465,23 @@ impl Transport for ScriptedTransport {
                     "no scripted response left".to_string(),
                 ))
             })
+    }
+}
+
+/// Lets a test keep its own handle on a `ScriptedTransport` (to call
+/// `sent_bodies()` afterwards) while still handing the provider a
+/// `Box<dyn Transport>` it can own — `Arc<ScriptedTransport>` is `Clone`,
+/// so the test keeps one clone and boxes the other.
+#[cfg(test)]
+impl Transport for std::sync::Arc<ScriptedTransport> {
+    fn send(
+        &self,
+        url: &str,
+        headers: &[(String, String)],
+        body: RequestBody,
+        accept: ResponseKind,
+    ) -> Result<HttpResponse, ProviderError> {
+        (**self).send(url, headers, body, accept)
     }
 }
 
