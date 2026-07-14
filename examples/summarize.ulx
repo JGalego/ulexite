@@ -1,0 +1,14 @@
+// examples/summarize.ulx
+// See docs/spec/21-examples.md §21.2
+
+conversation Summarize(doc: pdf) -> text {
+  with {
+    outline  = ask vision(doc) { user: "Extract a section outline." } -> text
+    keyfacts = ask vision(doc) { user: "List the five most important facts." } -> text
+  }
+  ask chat() {
+    system: "You are a technical writer."
+    user: """Using this outline: {outline}\nAnd these facts: {keyfacts}\nWrite a one-page summary."""
+  } -> summary: text
+  summary
+}

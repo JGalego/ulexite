@@ -1,0 +1,27 @@
+// examples/multi_agent.ulx
+// See docs/spec/21-examples.md §21.5
+
+conversation ResearchAgent(topic: text) -> text {
+  ask chat() { user: "Research key facts about {topic}." } -> notes: text
+  notes
+}
+
+conversation WriteAgent(notes: text) -> text {
+  ask chat() { user: "Write a two-paragraph report from these notes: {notes}" } -> report: text
+  report
+}
+
+conversation ReviewAgent(report: text) -> Verdict {
+  judge Quality(report)
+}
+
+conversation ResearchReport(topic: text) -> text {
+  notes  = ResearchAgent(topic)
+  report = WriteAgent(notes)
+  match ReviewAgent(report) {
+    Pass          => report
+    Fail(reason)  => retry(1) { report = WriteAgent(notes) } else escalate(human_approval, reason: reason)
+    Escalate      => escalate(human_approval, reason: "review inconclusive")
+    Score(_)      => report
+  }
+}

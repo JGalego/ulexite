@@ -1,0 +1,17 @@
+// examples/eval_translate.ulx
+// See docs/spec/21-examples.md §21.7
+
+import conversation Translate from "translate.ulx"
+import judge Fluency from "translate.ulx"
+
+dataset TranslationPairs: [{source: text, target_lang: text, golden: text}] {
+  from "fixtures/translations.jsonl"
+}
+
+benchmark TranslateQuality {
+  dataset: TranslationPairs
+  run: Translate(source: $.source, target_lang: $.target_lang) -> result
+  expect result satisfies judge Fluency(result) with threshold(0.8)
+  assert result != $.golden
+  snapshot result as "translate/{$.target_lang}"
+}

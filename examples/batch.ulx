@@ -1,0 +1,19 @@
+// examples/batch.ulx
+// See docs/spec/21-examples.md §21.6
+
+dataset SupportTickets: [{ticket_id: text, body: text}] {
+  from "tickets/backlog.jsonl"
+}
+
+conversation Triage(body: text) -> text {
+  ask chat() { user: "Classify this support ticket's severity (low/medium/high): {body}" } -> severity: text
+  severity
+}
+
+conversation TriageBacklog() -> list<text> {
+  results = list<text>()
+  for ticket in SupportTickets {
+    results.append(Triage(ticket.body))
+  }
+  results
+}
