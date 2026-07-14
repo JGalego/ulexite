@@ -3,6 +3,7 @@
 .DS_Store
 *.vsix
 node_modules/
+tooling/vscode-ulx/out/
 
 # local ulx runtime state (cache/traces/run manifests, §12.5/§18) — never checked in
 .ulexite/

@@ -10,7 +10,7 @@ use crate::typecheck::{check_decl_with, Ctx};
 /// Stdlib module names a `import "..." as ident` may reference (§15). Not
 /// exhaustive against every stdlib submodule in the spec — this is the v0.1
 /// set the runtime (`ulx-runtime`) actually implements something for.
-const STDLIB_MODULES: &[&str] = &[
+pub const STDLIB_MODULES: &[&str] = &[
     "llm",
     "judge",
     "vision",

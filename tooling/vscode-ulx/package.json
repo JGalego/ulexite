@@ -1,7 +1,7 @@
 {
   "name": "ulexite",
   "displayName": "Ulexite",
-  "description": "Syntax highlighting for Ulexite (.ulx) — the conversation-first language for LLM interactions",
+  "description": "Syntax highlighting and language server support for Ulexite (.ulx) — the conversation-first language for LLM interactions",
   "version": "0.0.1",
   "publisher": "ulexite",
   "license": "Apache-2.0",
@@ -10,11 +10,24 @@
     "url": "https://github.com/JGalego/ulexite.git"
   },
   "engines": {
-    "vscode": "^1.75.0"
+    "vscode": "^1.91.0"
   },
   "categories": [
     "Programming Languages"
   ],
+  "main": "./out/extension.js",
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./"
+  },
+  "dependencies": {
+    "vscode-languageclient": "^10.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "^26.1.1",
+    "@types/vscode": "^1.91.0",
+    "typescript": "^7.0.2"
+  },
   "contributes": {
     "languages": [
       {
@@ -34,6 +47,16 @@
         "scopeName": "source.ulexite",
         "path": "./syntaxes/ulx.tmLanguage.json"
       }
-    ]
+    ],
+    "configuration": {
+      "title": "Ulexite",
+      "properties": {
+        "ulexite.serverPath": {
+          "type": "string",
+          "default": "ulx-lsp",
+          "description": "Path to the ulx-lsp language server binary. Defaults to 'ulx-lsp' resolved on PATH — build it with `cargo build --release -p ulx-lsp` and either put it on PATH or set this to its full path."
+        }
+      }
+    }
   }
 }

@@ -1,0 +1,24 @@
+[package]
+name = "ulx-lsp"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+name = "ulx_lsp"
+path = "src/lib.rs"
+
+[[bin]]
+name = "ulx-lsp"
+path = "src/main.rs"
+
+[dependencies]
+ulx-ast = { workspace = true }
+ulx-syntax = { workspace = true }
+ulx-sema = { workspace = true }
+toml = { workspace = true }
+tower-lsp = "0.20"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "io-std", "sync", "fs"] }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "io-std", "sync", "fs"] }

@@ -364,25 +364,32 @@ pub enum ArtifactType {
 }
 
 impl ArtifactType {
+    /// Every `(keyword, variant)` pair `from_keyword` recognizes — the
+    /// single source of truth for tooling (e.g. `ulx-lsp`'s completion)
+    /// that needs the full keyword list rather than a one-shot lookup.
+    pub const ALL: &'static [(&'static str, ArtifactType)] = &[
+        ("text", Self::Text),
+        ("markdown", Self::Markdown),
+        ("image", Self::Image),
+        ("audio", Self::Audio),
+        ("video", Self::Video),
+        ("pdf", Self::Pdf),
+        ("json", Self::Json),
+        ("xml", Self::Xml),
+        ("html", Self::Html),
+        ("csv", Self::Csv),
+        ("embedding", Self::Embedding),
+        ("vector", Self::Vector),
+        ("tool_output", Self::ToolOutput),
+    ];
+
     /// The fourteen closed artifact types of §9.2 (as keywords, thirteen are
     /// distinct identifiers here since `embedding`/`vector` are listed once
     /// each per §8's `artifact_type` production).
     pub fn from_keyword(s: &str) -> Option<Self> {
-        Some(match s {
-            "text" => Self::Text,
-            "markdown" => Self::Markdown,
-            "image" => Self::Image,
-            "audio" => Self::Audio,
-            "video" => Self::Video,
-            "pdf" => Self::Pdf,
-            "json" => Self::Json,
-            "xml" => Self::Xml,
-            "html" => Self::Html,
-            "csv" => Self::Csv,
-            "embedding" => Self::Embedding,
-            "vector" => Self::Vector,
-            "tool_output" => Self::ToolOutput,
-            _ => return None,
-        })
+        Self::ALL
+            .iter()
+            .find(|(kw, _)| *kw == s)
+            .map(|(_, ty)| *ty)
     }
 }

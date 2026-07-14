@@ -1,16 +1,29 @@
-# Ulexite VS Code extension (syntax highlighting)
+# Ulexite VS Code extension
 
-Minimal TextMate-grammar-only extension for `.ulx` files (§20.10 of the language spec). No language server yet — see [`docs/spec/20-ide-integration.md`](../../docs/spec/20-ide-integration.md) for the planned `ulx-lsp`.
+TextMate-grammar syntax highlighting (§20.10) plus a `vscode-languageclient` client for `ulx-lsp` (§20.2's language server — see [`docs/spec/20-ide-integration.md`](../../docs/spec/20-ide-integration.md)): diagnostics, hover, go-to-definition, document symbols, and completion for `.ulx` files.
+
+## Build the language server
+
+The extension doesn't bundle `ulx-lsp` — build it once from the repo root and either put it on `PATH` or point the extension at it:
+
+```sh
+cargo build --release -p ulx-lsp
+# binary lands at target/release/ulx-lsp
+```
+
+If it's not on `PATH`, set the `ulexite.serverPath` setting (in VS Code's settings UI, or `.vscode/settings.json`) to the built binary's full path.
 
 ## Try it locally
 
 ```sh
 cd tooling/vscode-ulx
+npm install
+npm run compile
 npx --yes @vscode/vsce package   # produces ulexite-0.0.1.vsix
 code --install-extension ulexite-0.0.1.vsix
 ```
 
-Or just symlink/copy this folder into your VS Code extensions directory (`~/.vscode/extensions/ulexite-dev`) and reload the window.
+Or just symlink/copy this folder (after `npm install && npm run compile`, so `out/` exists) into your VS Code extensions directory (`~/.vscode/extensions/ulexite-dev`) and reload the window.
 
 ## What it highlights
 

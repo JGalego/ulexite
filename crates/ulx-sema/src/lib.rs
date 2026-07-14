@@ -18,7 +18,7 @@ mod typecheck;
 
 pub use capability::{stdlib_capabilities, CapabilitySpec};
 pub use diagnostic::{Diagnostic, Severity};
-pub use resolve::{load_and_analyze, AnalyzedModule, Workspace};
+pub use resolve::{load_and_analyze, AnalyzedModule, Workspace, STDLIB_MODULES};
 
 use std::collections::HashSet;
 use std::path::Path;
