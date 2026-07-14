@@ -78,7 +78,7 @@ Zero-config `ulx run` always uses the deterministic mock provider — no API key
 
 ```toml
 [providers.anthropic]
-vendor = "anthropic"                          # openai | anthropic | gemini | groq | cohere | ollama | openai_compatible | mock
+vendor = "anthropic"                          # openai | azure_openai | anthropic | gemini | groq | cohere | ollama | openai_compatible | mock
 api_key_env = "ANTHROPIC_API_KEY"              # name of an env var — never a literal key in this file
 vision = "claude-3-5-sonnet-20241022"          # bare string = just the model name
 
@@ -99,9 +99,16 @@ api_key_env = "OPENAI_API_KEY"
 transcribe = "whisper-1"                       # each vendor entry can list as many capabilities as it serves
 speak = "tts-1"
 generate_image = "dall-e-3"
+
+[providers.azure]
+vendor = "azure_openai"                        # same JSON shape as OpenAI, different URL/auth conventions
+base_url = "https://my-resource.openai.azure.com"
+api_key_env = "AZURE_OPENAI_API_KEY"
+api_version = "2024-06-01"                     # optional; defaults to a recent stable version
+chat = "my-gpt4o-deployment"                   # this is your *deployment name*, not a generic model id
 ```
 
-`vendor = "ollama"` needs no API key and defaults to `http://localhost:11434`. `chat` is implemented for every vendor; `embed` for `openai_compatible`/`gemini`/`cohere`/`ollama`; `vision` for `openai_compatible`/`anthropic`/`gemini`/`ollama` (image files only — jpg/png/gif/webp, read straight off disk or passed through as an `http(s)://` URL where the vendor supports it; PDF/video are mock-only); `transcribe`/`speak`/`generate_image` for `openai_compatible` (covers OpenAI directly, and Groq for `transcribe`). Every real HTTP call goes through one retry-with-backoff policy plus a per-provider circuit breaker (`crates/ulx-runtime/src/provider/transport.rs`) — a handful of consecutive failures trips it open for a cooldown instead of hammering a downed vendor. A rate limit, timeout, or safety refusal surfaces as an unsettled `Draft<T>` (§9.3), not a crash. Adding a provider that isn't listed above needs no compiler/grammar/IR change (§12.4) — see `crates/ulx-runtime/src/provider/`.
+`vendor = "ollama"` needs no API key and defaults to `http://localhost:11434`. `chat` is implemented for every vendor; `embed` for `openai_compatible`/`gemini`/`cohere`/`ollama`/`azure_openai`; `vision` for `openai_compatible`/`anthropic`/`gemini`/`ollama`/`azure_openai` (image files only — jpg/png/gif/webp, read straight off disk or passed through as an `http(s)://` URL where the vendor supports it; PDF/video are mock-only); `transcribe`/`speak`/`generate_image` for `openai_compatible` (covers OpenAI directly, and Groq for `transcribe`; not yet implemented for `azure_openai`, which does offer Whisper/TTS/DALL-E deployments of its own). Every real HTTP call goes through one retry-with-backoff policy plus a per-provider circuit breaker (`crates/ulx-runtime/src/provider/transport.rs`) — a handful of consecutive failures trips it open for a cooldown instead of hammering a downed vendor. A rate limit, timeout, or safety refusal surfaces as an unsettled `Draft<T>` (§9.3), not a crash. Adding a provider that isn't listed above needs no compiler/grammar/IR change (§12.4) — see `crates/ulx-runtime/src/provider/`.
 
 Provider config lives entirely in `ulexite.toml`, never in `.ulx` source — a `.ulx` program only ever names a capability (`ask chat(...)`, `ask vision(...)`), never a vendor, by design (§12.4's provider-independence principle).
 

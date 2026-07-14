@@ -11,6 +11,7 @@
 # api_key_env only ever names an environment variable — never put a
 # literal API key in this file. Set only the ones you actually use:
 #   export OPENAI_API_KEY=sk-...
+#   export AZURE_OPENAI_API_KEY=...
 #   export ANTHROPIC_API_KEY=sk-ant-...
 #   export GEMINI_API_KEY=...
 #   export GROQ_API_KEY=gsk_...
@@ -44,6 +45,21 @@ generate_image = "dall-e-3"
 # model = "gpt-4o-mini"
 # [providers.openai.chat.params]
 # temperature = 0.2
+
+# Azure OpenAI — same request/response shape as OpenAI, but a per-customer
+# resource endpoint, a deployment name instead of a model in the URL path,
+# and a mandatory api-version. `chat`/`vision`/`embed` value is your
+# *deployment name*, not a generic model id (Azure resolves the underlying
+# model server-side from the deployment). api_version defaults to a recent
+# stable release if omitted.
+[providers.azure]
+vendor      = "azure_openai"
+base_url    = "https://my-resource.openai.azure.com"
+api_key_env = "AZURE_OPENAI_API_KEY"
+api_version = "2024-06-01"
+chat        = "my-gpt4o-deployment"
+vision      = "my-gpt4o-deployment"
+embed       = "my-embedding-deployment"
 
 # Anthropic — chat + vision are native to the same Messages API.
 [providers.anthropic]

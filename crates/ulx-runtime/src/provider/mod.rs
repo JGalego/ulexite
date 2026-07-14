@@ -3,17 +3,20 @@
 //! capability. `mock::MockProvider` remains the zero-config default —
 //! deterministic and network-free, so the whole test suite (and anyone
 //! trying the language without an API key) gets real, reproducible
-//! behavior. Real HTTP-backed adapters (`openai_compat`, `anthropic`,
-//! `gemini`, `cohere`, `ollama`) cover `chat` (and, where the vendor has a
-//! simple stable endpoint, `embed`) across the mainstream hosted APIs and
-//! local/self-hosted runtimes; `vision`/`transcribe`/`speak`/
-//! `generate_image` stay mock-only for now — see `docs/spec/24-limitations.md`.
+//! behavior. Real HTTP-backed adapters cover `chat` (every vendor),
+//! `embed` (`openai_compat`, `gemini`, `cohere`, `ollama`), `vision`
+//! (`openai_compat`, `anthropic`, `gemini`, `ollama`, `azure_openai`), and
+//! `transcribe`/`speak`/`generate_image` (`openai_compat` only) — see
+//! `docs/spec/24-limitations.md` for exactly what's still mock-only.
 //!
 //! Adding a brand-new provider needs no compiler/grammar/IR change (§12.4):
 //! implement `Provider` in a new module and add it to `factory::build_provider`.
-//! If it merely speaks an OpenAI-shaped chat/completions API, it needs no
-//! new code at all — `openai_compat::OpenAiCompatibleProvider` with a
-//! different `base_url` already covers it.
+//! If it merely speaks an OpenAI-shaped chat/completions API with a plain
+//! `base_url` and `Authorization: Bearer` auth, it needs no new code at
+//! all — `openai_compat::OpenAiCompatibleProvider` already covers it;
+//! `openai_shape` factors out the request/response JSON shape itself so a
+//! vendor with the same JSON shape but different URL/auth conventions
+//! (`azure_openai`) only has to write the URL-building and header logic.
 
 use std::collections::BTreeMap;
 
@@ -21,12 +24,14 @@ use crate::value::Value;
 
 mod anthropic;
 mod artifact;
+mod azure_openai;
 mod cohere;
 mod factory;
 mod gemini;
 mod mock;
 mod ollama;
 mod openai_compat;
+mod openai_shape;
 mod transport;
 
 pub use factory::{build_provider, ProviderBuildError, ProviderSpec};

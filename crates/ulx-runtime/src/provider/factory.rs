@@ -11,6 +11,7 @@ use std::collections::BTreeMap;
 use crate::value::Value;
 
 use super::anthropic::AnthropicProvider;
+use super::azure_openai::{self, AzureOpenAiProvider};
 use super::cohere::{self, CohereProvider};
 use super::gemini::{self, GeminiProvider};
 use super::mock::MockProvider;
@@ -29,9 +30,14 @@ pub struct ProviderSpec {
     /// vendor (one meant for `chat`, one for `transcribe`) would make
     /// `ProviderRegistry::resolve` pick ambiguously between them.
     pub capability: String,
+    /// For `azure_openai`, this names the *deployment*, not a model — the
+    /// deployment is what actually pins the underlying model server-side.
     pub model: Option<String>,
     pub base_url: Option<String>,
     pub api_key_env: Option<String>,
+    /// `azure_openai` only: the mandatory `api-version` query parameter.
+    /// Defaults to `azure_openai::DEFAULT_API_VERSION` if unset.
+    pub api_version: Option<String>,
     pub params: BTreeMap<String, Value>,
 }
 
@@ -79,6 +85,34 @@ pub fn build_provider(spec: &ProviderSpec) -> Result<Box<dyn Provider>, Provider
                 )
             })?;
             build_openai_family(spec, "openai_compatible", &base_url, None, "")
+        }
+        "azure_openai" => {
+            let base_url = spec.base_url.clone().ok_or_else(|| {
+                ProviderBuildError::InvalidConfig(
+                    "vendor `azure_openai` requires `base_url` (your resource endpoint, e.g. https://<resource>.openai.azure.com)"
+                        .to_string(),
+                )
+            })?;
+            let deployment = spec.model.clone().ok_or_else(|| {
+                ProviderBuildError::InvalidConfig(
+                    "vendor `azure_openai` requires a model name — this names your deployment, not a generic model id"
+                        .to_string(),
+                )
+            })?;
+            let api_key = require_api_key(spec, "AZURE_OPENAI_API_KEY")?;
+            let api_version = spec
+                .api_version
+                .clone()
+                .unwrap_or_else(|| azure_openai::DEFAULT_API_VERSION.to_string());
+            Ok(Box::new(AzureOpenAiProvider::with_transport(
+                spec.capability.clone(),
+                base_url,
+                deployment,
+                api_key,
+                api_version,
+                spec.params.clone(),
+                transport::real_transport(),
+            )))
         }
         "anthropic" => {
             let base_url = spec
@@ -268,6 +302,66 @@ mod tests {
             ..Default::default()
         };
         assert!(build_provider(&spec).is_ok());
+    }
+
+    #[test]
+    fn azure_openai_without_base_url_is_rejected() {
+        let spec = ProviderSpec {
+            vendor: "azure_openai".to_string(),
+            model: Some("my-deployment".to_string()),
+            api_key_env: Some("ULEXITE_TEST_AZURE_KEY_A".to_string()),
+            ..Default::default()
+        };
+        assert!(matches!(
+            build_provider(&spec).err().unwrap(),
+            ProviderBuildError::InvalidConfig(_)
+        ));
+    }
+
+    #[test]
+    fn azure_openai_without_deployment_is_rejected() {
+        let spec = ProviderSpec {
+            vendor: "azure_openai".to_string(),
+            base_url: Some("https://my-resource.openai.azure.com".to_string()),
+            api_key_env: Some("ULEXITE_TEST_AZURE_KEY_B".to_string()),
+            ..Default::default()
+        };
+        assert!(matches!(
+            build_provider(&spec).err().unwrap(),
+            ProviderBuildError::InvalidConfig(_)
+        ));
+    }
+
+    #[test]
+    fn azure_openai_without_api_key_env_set_is_rejected() {
+        let env_name = "ULEXITE_TEST_MISSING_AZURE_KEY_XYZ";
+        std::env::remove_var(env_name);
+        let spec = ProviderSpec {
+            vendor: "azure_openai".to_string(),
+            base_url: Some("https://my-resource.openai.azure.com".to_string()),
+            model: Some("my-deployment".to_string()),
+            api_key_env: Some(env_name.to_string()),
+            ..Default::default()
+        };
+        assert_eq!(
+            build_provider(&spec).err().unwrap(),
+            ProviderBuildError::MissingApiKey(env_name.to_string())
+        );
+    }
+
+    #[test]
+    fn azure_openai_with_all_required_fields_builds() {
+        let env_name = "ULEXITE_TEST_AZURE_KEY_PRESENT";
+        std::env::set_var(env_name, "test-key");
+        let spec = ProviderSpec {
+            vendor: "azure_openai".to_string(),
+            base_url: Some("https://my-resource.openai.azure.com".to_string()),
+            model: Some("my-deployment".to_string()),
+            api_key_env: Some(env_name.to_string()),
+            ..Default::default()
+        };
+        assert!(build_provider(&spec).is_ok());
+        std::env::remove_var(env_name);
     }
 
     #[test]

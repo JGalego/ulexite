@@ -50,16 +50,22 @@ pub enum Dependency {
 #[derive(Debug, Deserialize)]
 pub struct ProviderEntry {
     /// Which adapter to build (§12.4): `openai`, `anthropic`, `gemini`,
-    /// `groq`, `cohere`, `ollama`, `openai_compatible`, or `mock`.
+    /// `groq`, `cohere`, `ollama`, `openai_compatible`, `azure_openai`, or
+    /// `mock`.
     pub vendor: String,
     /// Required for `openai_compatible` (e.g. a local vLLM/LM Studio
-    /// server); optional override elsewhere.
+    /// server) and `azure_openai` (your resource endpoint); optional
+    /// override elsewhere.
     #[serde(default)]
     pub base_url: Option<String>,
     /// Name of the environment variable holding the API key — never a
     /// literal secret in this file.
     #[serde(default)]
     pub api_key_env: Option<String>,
+    /// `azure_openai` only: the mandatory `api-version` query parameter
+    /// (defaults to a recent stable version if omitted).
+    #[serde(default)]
+    pub api_version: Option<String>,
     /// Every other key in the table is a capability name (`chat`, `vision`,
     /// `embed`, `transcribe`, `speak`, `generate_image`, ...) — a bare
     /// model-name string, or a `{ model = "...", ... }` table for

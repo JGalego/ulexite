@@ -18,6 +18,7 @@ use serde_json::json;
 use crate::value::Value;
 
 use super::artifact::{self, ImageSource};
+use super::openai_shape;
 use super::transport::{
     send_json_expect_bytes_with_retry, send_json_with_retry, send_multipart_with_retry, Transport,
 };
@@ -95,22 +96,9 @@ impl OpenAiCompatibleProvider {
         image_url: Option<String>,
     ) -> Result<Value, ProviderError> {
         let model = resolve_model(&request.args, &self.model);
-        let mut messages: Vec<serde_json::Value> = request
-            .messages
-            .iter()
-            .map(|m| json!({"role": openai_role(&m.role), "content": m.text}))
-            .collect();
-
+        let mut messages = openai_shape::build_messages(&request.messages);
         if let Some(image_url) = image_url {
-            let image_block = json!({"type": "image_url", "image_url": {"url": image_url}});
-            if let Some(last) = messages.last_mut() {
-                let role = last.get("role").cloned().unwrap_or_else(|| json!("user"));
-                let text = last.get("content").cloned().unwrap_or_else(|| json!(""));
-                *last =
-                    json!({"role": role, "content": [{"type": "text", "text": text}, image_block]});
-            } else {
-                messages.push(json!({"role": "user", "content": [image_block]}));
-            }
+            openai_shape::attach_image(&mut messages, image_url);
         }
 
         let mut body = json!({"model": model, "messages": messages});
@@ -127,22 +115,7 @@ impl OpenAiCompatibleProvider {
         let url = format!("{}/chat/completions", self.base_url);
         let resp =
             send_json_with_retry(self.transport.as_ref(), &url, &self.json_headers(), &body)?;
-
-        let choice = resp
-            .get("choices")
-            .and_then(|c| c.get(0))
-            .ok_or_else(|| ProviderError::Failed("response had no `choices`".to_string()))?;
-        if choice.get("finish_reason").and_then(|r| r.as_str()) == Some("content_filter") {
-            return Err(ProviderError::Refused(
-                "content filtered by provider".to_string(),
-            ));
-        }
-        let text = choice
-            .get("message")
-            .and_then(|m| m.get("content"))
-            .and_then(|c| c.as_str())
-            .ok_or_else(|| ProviderError::Failed("response had no message content".to_string()))?;
-        Ok(Value::Text(text.to_string()))
+        openai_shape::parse_chat_response(&resp)
     }
 
     fn embed(&self, request: &Invocation) -> Result<Value, ProviderError> {
@@ -157,19 +130,7 @@ impl OpenAiCompatibleProvider {
         let url = format!("{}/embeddings", self.base_url);
         let resp =
             send_json_with_retry(self.transport.as_ref(), &url, &self.json_headers(), &body)?;
-
-        let embedding = resp
-            .get("data")
-            .and_then(|d| d.get(0))
-            .and_then(|d| d.get("embedding"))
-            .and_then(|e| e.as_array())
-            .ok_or_else(|| ProviderError::Failed("response had no embedding".to_string()))?;
-        let values = embedding
-            .iter()
-            .filter_map(|v| v.as_f64())
-            .map(Value::Float)
-            .collect();
-        Ok(Value::List(values))
+        openai_shape::parse_embed_response(&resp)
     }
 
     /// `/audio/transcriptions` (Whisper-compatible): a multipart upload of
@@ -276,14 +237,6 @@ impl Provider for OpenAiCompatibleProvider {
             "generate_image" => self.generate_image(request),
             other => Err(ProviderError::UnsupportedCapability(other.to_string())),
         }
-    }
-}
-
-fn openai_role(role: &str) -> &str {
-    match role {
-        "system" => "system",
-        "assistant" => "assistant",
-        _ => "user",
     }
 }
 

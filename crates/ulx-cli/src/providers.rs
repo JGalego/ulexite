@@ -53,6 +53,7 @@ fn to_provider_spec(
         model: cap_config.model().map(str::to_string),
         base_url: entry.base_url.clone(),
         api_key_env: entry.api_key_env.clone(),
+        api_version: entry.api_version.clone(),
         params: cap_config
             .params()
             .iter()
@@ -88,6 +89,7 @@ mod tests {
             vendor: "anthropic".to_string(),
             base_url: None,
             api_key_env: Some("ANTHROPIC_API_KEY".to_string()),
+            api_version: None,
             capabilities: BTreeMap::new(),
         };
         let cap = CapabilityConfig::Model("claude-3-5-sonnet-20241022".to_string());
@@ -104,6 +106,7 @@ mod tests {
             vendor: "openai".to_string(),
             base_url: None,
             api_key_env: None,
+            api_version: None,
             capabilities: BTreeMap::new(),
         };
         let mut params = BTreeMap::new();
