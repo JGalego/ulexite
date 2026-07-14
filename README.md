@@ -12,7 +12,7 @@
 
 Ulexite is a programming language for conversational AI interactions. Its primary abstraction is the `Conversation`, not the prompt, the model, or the agent. The runtime executes conversations involving humans, LLMs, tools, judges, datasets, and multimodal artifacts, with deterministic execution where possible, reproducible traces, and first-class testing.
 
-This repository contains the language specification (RFC-0001) and a working reference implementation: a lexer, parser, semantic analyzer, IR lowering pass, and a tree-walking runtime with a content-addressed cache, a JSONL trace log, real `with`-block concurrency, and a suspend/resume flow for human-approval checkpoints — all exercised against a deterministic mock provider so the whole thing runs and tests fully offline, no API key required. See [§13 Compiler Architecture](docs/spec/13-compiler-architecture.md), [§12 Runtime Architecture](docs/spec/12-runtime-architecture.md), and [§24 Limitations](docs/spec/24-limitations.md) for exactly what is and isn't implemented yet.
+This repository contains the language specification (RFC-0001) and a working reference implementation: a lexer, parser, semantic analyzer, IR lowering pass, and a tree-walking runtime with a content-addressed cache, a JSONL trace log, real `with`-block concurrency, and a suspend/resume flow for human-approval checkpoints. By default everything runs against a deterministic mock provider, so the whole thing runs and tests fully offline, no API key required; real HTTP-backed providers (OpenAI, Anthropic, Gemini, Groq, Cohere, Ollama, and any OpenAI-compatible server such as vLLM or LM Studio) are one `ulexite.toml` `[providers]` entry away — see [Configuring providers](#configuring-providers) below. See [§13 Compiler Architecture](docs/spec/13-compiler-architecture.md), [§12 Runtime Architecture](docs/spec/12-runtime-architecture.md), and [§24 Limitations](docs/spec/24-limitations.md) for exactly what is and isn't implemented yet.
 
 > **Why "Ulexite"?** Ulexite is a real mineral, nicknamed the "TV rock" — it naturally grows as a bundle of parallel, fiber-optic-like crystal fibers that pipe an image straight through the stone, undistorted, from one face to the other. That felt like the right name for a language whose whole job is carrying a conversation — through models, tools, judges, and retries — faithfully from one end to the other.
 
@@ -66,11 +66,33 @@ ulx trace demo
 | [`crates/ulx-syntax`](crates/ulx-syntax) | Lexer (`logos`) + parser (`chumsky`) implementing the grammar in [§8](docs/spec/08-grammar.md), including interpolated text blocks |
 | [`crates/ulx-sema`](crates/ulx-sema) | Name/import resolution across files, artifact-type checking for `ask` calls (§9.2), `Verdict` match-exhaustiveness (§9.4), `with`-block independence checking (§9.7) |
 | [`crates/ulx-ir`](crates/ulx-ir) | Lowers the AST to a pure/effect IR (§13.4), desugaring message-literal sugar into explicit `chat` effects, plus a dead-binding elimination pass (§13.5) |
-| [`crates/ulx-runtime`](crates/ulx-runtime) | Tree-walking interpreter (§12.2) — a pluggable `Provider` trait with a deterministic `MockProvider`, a content-addressed cache and trace log (§10.3, §18), real concurrent `with`-block execution (`std::thread::scope`), and cache-backed suspend/resume for `escalate` (§10.7) |
+| [`crates/ulx-runtime`](crates/ulx-runtime) | Tree-walking interpreter (§12.2) — a pluggable `Provider` trait with a deterministic `MockProvider` plus real HTTP-backed adapters (OpenAI/Groq/any OpenAI-compatible server, Anthropic, Gemini, Cohere, Ollama), a content-addressed cache and trace log (§10.3, §18), real concurrent `with`-block execution (`std::thread::scope`), and cache-backed suspend/resume for `escalate` (§10.7) |
 | [`crates/ulx-cli`](crates/ulx-cli) | The `ulx` binary: `parse`, `check`, `run`, `approve`/`deny`, `replay`, `trace`, `init`, `manifest` |
 | [`tooling/vscode-ulx`](tooling/vscode-ulx) | TextMate grammar + language config for `.ulx` syntax highlighting in VS Code (§20.10) |
 
-Not implemented: a real HTTP-backed provider, `benchmark`/`test` execution, `plan`'s cost estimation, a formatter, a language server, and package dependency resolution beyond parsing `ulexite.toml` — see [§24 Limitations](docs/spec/24-limitations.md) and [§25 Future Directions](docs/spec/25-future-directions.md) for the honest accounting and the plan.
+Not implemented: `vision`/`transcribe`/`speak`/`generate_image` against a real vendor (mock-only for now), a full retry/backoff/circuit-breaker policy for real providers, `benchmark`/`test` execution, `plan`'s cost estimation, a formatter, a language server, and package dependency resolution beyond parsing `ulexite.toml` — see [§24 Limitations](docs/spec/24-limitations.md) and [§25 Future Directions](docs/spec/25-future-directions.md) for the honest accounting and the plan.
+
+## Configuring providers
+
+Zero-config `ulx run` always uses the deterministic mock provider — no API key, fully offline. To use a real vendor, add a `[providers.<name>]` table to `ulexite.toml` next to your `.ulx` file:
+
+```toml
+[providers.default_chat]
+capability = "chat"
+vendor = "anthropic"                          # openai | anthropic | gemini | groq | cohere | ollama | openai_compatible | mock
+model = "claude-3-5-sonnet-20241022"
+api_key_env = "ANTHROPIC_API_KEY"              # name of an env var — never a literal key in this file
+
+[providers.default_chat.params]
+temperature = 0.2                              # defaults, overridable per call: ask chat(temperature: 0.7) { ... }
+
+[providers.local_chat]
+capability = "chat"
+vendor = "openai_compatible"                   # any OpenAI-shaped /chat/completions server: vLLM, LM Studio, Groq, etc.
+base_url = "http://localhost:8000/v1"
+```
+
+`vendor = "ollama"` needs no API key and defaults to `http://localhost:11434`. Only `chat` (every vendor) and `embed` (`openai_compatible`, `gemini`, `cohere`, `ollama`) are implemented against real vendors today; a rate limit, timeout, or safety refusal from a real provider surfaces as an unsettled `Draft<T>` (§9.3), not a crash. Adding a provider that isn't listed above needs no compiler/grammar/IR change (§12.4) — see `crates/ulx-runtime/src/provider/`.
 
 ## How it compares
 

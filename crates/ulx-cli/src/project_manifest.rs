@@ -47,6 +47,25 @@ pub struct ProviderPolicy {
     pub capability: String,
     #[serde(default = "default_policy")]
     pub policy: String,
+    /// Which adapter to build (§12.4): `openai`, `anthropic`, `gemini`,
+    /// `groq`, `cohere`, `ollama`, `openai_compatible`, or `mock`. Absent
+    /// (or `mock`) keeps today's zero-config offline behavior.
+    #[serde(default)]
+    pub vendor: Option<String>,
+    #[serde(default)]
+    pub model: Option<String>,
+    /// Required for `openai_compatible` (e.g. a local vLLM/LM Studio
+    /// server); optional override elsewhere.
+    #[serde(default)]
+    pub base_url: Option<String>,
+    /// Name of the environment variable holding the API key — never a
+    /// literal secret in this file.
+    #[serde(default)]
+    pub api_key_env: Option<String>,
+    /// Default request params (`temperature`, `max_tokens`, `top_p`, ...),
+    /// overridable per call via `ask capability(temperature: 0.2)`.
+    #[serde(default)]
+    pub params: BTreeMap<String, toml::Value>,
 }
 
 fn default_policy() -> String {
@@ -203,6 +222,73 @@ mod tests {
         .expect("should parse");
         assert_eq!(m.runtime.cache_backend, "local");
         assert!(m.dependencies.is_empty());
+    }
+
+    #[test]
+    fn provider_vendor_fields_parse() {
+        let m = parse(
+            r#"
+            [package]
+            name = "tiny"
+            version = "0.1.0"
+            ulexite = "^0.1"
+
+            [providers.default_chat]
+            capability = "chat"
+            vendor = "anthropic"
+            model = "claude-3-5-sonnet-20241022"
+            api_key_env = "ANTHROPIC_API_KEY"
+
+            [providers.default_chat.params]
+            temperature = 0.2
+            max_tokens = 512
+
+            [providers.local_chat]
+            capability = "chat"
+            vendor = "openai_compatible"
+            base_url = "http://localhost:8000/v1"
+            "#,
+        )
+        .expect("should parse");
+        let default_chat = &m.providers["default_chat"];
+        assert_eq!(default_chat.vendor.as_deref(), Some("anthropic"));
+        assert_eq!(
+            default_chat.model.as_deref(),
+            Some("claude-3-5-sonnet-20241022")
+        );
+        assert_eq!(
+            default_chat.api_key_env.as_deref(),
+            Some("ANTHROPIC_API_KEY")
+        );
+        assert_eq!(
+            default_chat
+                .params
+                .get("temperature")
+                .and_then(|v| v.as_float()),
+            Some(0.2)
+        );
+        assert_eq!(
+            m.providers["local_chat"].base_url.as_deref(),
+            Some("http://localhost:8000/v1")
+        );
+    }
+
+    #[test]
+    fn provider_without_vendor_defaults_to_none() {
+        let m = parse(
+            r#"
+            [package]
+            name = "tiny"
+            version = "0.1.0"
+            ulexite = "^0.1"
+
+            [providers]
+            default_chat = { capability = "chat", policy = "cheapest" }
+            "#,
+        )
+        .expect("should parse");
+        assert!(m.providers["default_chat"].vendor.is_none());
+        assert!(m.providers["default_chat"].params.is_empty());
     }
 
     #[test]

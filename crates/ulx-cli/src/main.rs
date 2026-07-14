@@ -14,12 +14,13 @@ mod diagnostics;
 mod manifest;
 mod pipeline;
 mod project_manifest;
+mod providers;
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use clap::{Parser, Subcommand};
-use ulx_runtime::{Cache, ProviderRegistry, RunContext, RuntimeError, TraceWriter, Value};
+use ulx_runtime::{Cache, RunContext, RuntimeError, TraceWriter, Value};
 
 #[derive(Parser)]
 #[command(name = "ulx", about = "Ulexite language CLI")]
@@ -159,9 +160,11 @@ fn build_context<'a>(
 ) -> std::io::Result<RunContext<'a>> {
     let cache = Cache::new(manifest::cache_dir())?;
     let trace = TraceWriter::create(manifest::traces_dir(), run_id)?;
+    let providers = providers::resolve_providers(file)
+        .map_err(std::io::Error::other)?;
     Ok(RunContext::new(
         ir,
-        ProviderRegistry::with_mock(),
+        providers,
         cache,
         trace,
         run_id.to_string(),

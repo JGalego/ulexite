@@ -29,7 +29,7 @@ use ulx_ir::*;
 use crate::cache::cache_key;
 use crate::env::Env;
 use crate::error::RuntimeError;
-use crate::provider::{Invocation, Message};
+use crate::provider::{Invocation, Message, ProviderError};
 use crate::value::{DraftOutcome, Value, Verdict};
 use crate::{stdlib, Args, RunContext};
 
@@ -547,9 +547,7 @@ fn eval_ask(
     let key = cache_key(capability, provider.id(), &refs, &[]);
 
     invoke_cached(ctx, capability, &key, || {
-        provider
-            .invoke(capability, &invocation)
-            .map_err(RuntimeError::Provider)
+        settle(provider.invoke(capability, &invocation))
     })
 }
 
@@ -613,9 +611,7 @@ fn eval_rubric_call(
             };
             let key = cache_key("judge", provider.id(), &[&subject, &rubric_text], &[name]);
             invoke_cached(ctx, "judge", &key, || {
-                provider
-                    .invoke("judge", &invocation)
-                    .map_err(RuntimeError::Provider)
+                settle(provider.invoke("judge", &invocation))
             })
         }
         RubricKind::Validator => {
@@ -807,13 +803,22 @@ fn invoke_cached(
     }
 }
 
-/// Surfaced for completeness/documentation purposes: a `Draft<T>` that
-/// didn't settle (§9.3) is represented dynamically as `Value::Unsettled`;
-/// nothing in v0.1's mock-provider-only world produces one today (the mock
-/// provider never refuses/rate-limits), but the constructor exists so a
-/// future real provider adapter has somewhere to put this outcome without
-/// a `Value` redesign.
-#[allow(dead_code)]
+/// A `Draft<T>` that didn't settle (§9.3) is represented dynamically as
+/// `Value::Unsettled`. A real provider adapter's rate-limit/timeout/refusal
+/// outcomes are legitimate unsettled results, not runtime failures, so they
+/// become `Ok(Value::Unsettled(..))` here rather than propagating as
+/// `RuntimeError::Provider` — every other `ProviderError` (bad request,
+/// auth failure, malformed response) is a genuine hard error.
+fn settle(result: Result<Value, ProviderError>) -> Result<Value, RuntimeError> {
+    match result {
+        Ok(v) => Ok(v),
+        Err(ProviderError::RateLimited) => Ok(unsettled(DraftOutcome::RateLimited)),
+        Err(ProviderError::Timeout) => Ok(unsettled(DraftOutcome::Timeout)),
+        Err(ProviderError::Refused(reason)) => Ok(unsettled(DraftOutcome::Refused(reason))),
+        Err(e) => Err(RuntimeError::Provider(e)),
+    }
+}
+
 fn unsettled(outcome: DraftOutcome) -> Value {
     Value::Unsettled(outcome)
 }

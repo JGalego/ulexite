@@ -26,7 +26,9 @@ pub mod value;
 pub use cache::Cache;
 pub use error::RuntimeError;
 pub use interp::run_conversation;
-pub use provider::{MockProvider, Provider, ProviderRegistry};
+pub use provider::{
+    build_provider, MockProvider, Provider, ProviderBuildError, ProviderRegistry, ProviderSpec,
+};
 pub use trace::{read_trace, TraceRecord, TraceWriter};
 pub use value::Value;
 

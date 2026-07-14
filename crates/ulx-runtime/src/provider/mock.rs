@@ -1,55 +1,15 @@
-//! The provider abstraction (§12.4): a `Provider` is a plugin satisfying
-//! one or more capabilities; the runtime never names a vendor, only a
-//! capability. `MockProvider` is the one shipped implementation for v0 —
-//! deterministic and network-free, so the whole test suite (and anyone
-//! trying the language without an API key) gets real, reproducible
-//! behavior. A real HTTP-backed provider is real, sizable work (auth,
-//! retries, per-vendor request/response shapes) that's explicitly out of
-//! scope here — see `docs/spec/24-limitations.md`.
-
-use std::collections::BTreeMap;
+//! A deterministic, offline stand-in for a real model/tool provider.
+//! Behavior is intentionally simple and documented per-capability so tests
+//! (and users kicking the tyres without an API key) get reproducible
+//! results, not a simulation of "real" model quality. This is the only
+//! provider that covers all seven capabilities (`chat`, `vision`, `embed`,
+//! `transcribe`, `speak`, `generate_image`, `judge`) — real vendor adapters
+//! only cover `chat`/`embed` for now (see the `provider` module doc).
 
 use crate::value::{Value, Verdict};
 
-#[derive(Debug, Clone)]
-pub struct Message {
-    pub role: String,
-    pub text: String,
-}
+use super::{Invocation, Provider, ProviderError};
 
-#[derive(Debug, Clone, Default)]
-pub struct Invocation {
-    pub messages: Vec<Message>,
-    pub args: BTreeMap<String, Value>,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum ProviderError {
-    UnsupportedCapability(String),
-    Failed(String),
-}
-
-impl std::fmt::Display for ProviderError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            ProviderError::UnsupportedCapability(c) => {
-                write!(f, "provider does not support capability `{c}`")
-            }
-            ProviderError::Failed(msg) => write!(f, "provider call failed: {msg}"),
-        }
-    }
-}
-
-pub trait Provider: Send + Sync {
-    fn id(&self) -> &str;
-    fn supports(&self, capability: &str) -> bool;
-    fn invoke(&self, capability: &str, request: &Invocation) -> Result<Value, ProviderError>;
-}
-
-/// A deterministic, offline stand-in for a real model/tool provider.
-/// Behavior is intentionally simple and documented per-capability so tests
-/// (and users kicking the tyres without an API key) get reproducible
-/// results, not a simulation of "real" model quality.
 pub struct MockProvider;
 
 impl MockProvider {
@@ -147,43 +107,5 @@ fn truncate(s: &str, max: usize) -> String {
         s.to_string()
     } else {
         format!("{}...", &s[..max])
-    }
-}
-
-/// Resolves an unqualified `ask <capability>(...)` to a concrete provider
-/// (§12.4, §5.5) — v0.1's "policy" is simply "first registered provider
-/// that supports it," since `MockProvider` is the only one shipped.
-pub struct ProviderRegistry {
-    providers: Vec<Box<dyn Provider>>,
-}
-
-impl ProviderRegistry {
-    pub fn new() -> Self {
-        ProviderRegistry {
-            providers: Vec::new(),
-        }
-    }
-
-    pub fn with_mock() -> Self {
-        let mut r = Self::new();
-        r.register(Box::new(MockProvider::new()));
-        r
-    }
-
-    pub fn register(&mut self, provider: Box<dyn Provider>) {
-        self.providers.push(provider);
-    }
-
-    pub fn resolve(&self, capability: &str) -> Option<&dyn Provider> {
-        self.providers
-            .iter()
-            .find(|p| p.supports(capability))
-            .map(|p| p.as_ref())
-    }
-}
-
-impl Default for ProviderRegistry {
-    fn default() -> Self {
-        Self::new()
     }
 }
