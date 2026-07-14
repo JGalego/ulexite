@@ -6,7 +6,7 @@ dataset SupportTickets: [{ticket_id: text, body: text}] {
 }
 
 conversation Triage(body: text) -> text {
-  ask chat() { user: "Classify this support ticket's severity (low/medium/high): {body}" } -> severity: text
+  ask chat() { user: """Classify this support ticket's severity (low/medium/high): {body}""" } -> severity: text
   severity
 }
 

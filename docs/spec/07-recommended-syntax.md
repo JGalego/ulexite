@@ -69,8 +69,8 @@ Where a set of steps is genuinely independent — the common case §4.5 and §6.
 ```
 conversation Summarize(doc: pdf) -> text {
   with {
-    outline  = ask vision(doc) { user: "Extract a section outline." }        -> text
-    keyfacts = ask vision(doc) { user: "List the five most important facts." } -> text
+    outline  = ask vision(doc) { user: """Extract a section outline.""" }
+    keyfacts = ask vision(doc) { user: """List the five most important facts.""" }
   }
   ask chat() {
     system: "You are a technical writer."

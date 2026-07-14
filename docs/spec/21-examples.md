@@ -37,11 +37,11 @@ Full version of §7.4 — demonstrates parallel execution over independent steps
 // examples/summarize.ulx
 conversation Summarize(doc: pdf) -> text {
   with {
-    outline  = ask vision(doc) { user: "Extract a section outline." } -> text
-    keyfacts = ask vision(doc) { user: "List the five most important facts." } -> text
+    outline  = ask vision(doc) { user: """Extract a section outline.""" }
+    keyfacts = ask vision(doc) { user: """List the five most important facts.""" }
   }
   ask chat() {
-    system: "You are a technical writer."
+    system: """You are a technical writer."""
     user: """Using this outline: {outline}\nAnd these facts: {keyfacts}\nWrite a one-page summary."""
   } -> summary: text
   summary
@@ -61,10 +61,10 @@ conversation PdfQA(doc: pdf, question: text) -> text {
     page_images  = pdf.to_images(doc)                          // for scanned/no-text-layer pages
   }
   ocr_text = if text_layer.length > 0 { text_layer } else {
-    ask vision(page_images) { user: "Transcribe all text in these pages." } -> text
+    ask vision(page_images) { user: """Transcribe all text in these pages.""" }
   }
   ask chat() {
-    system: "Answer strictly using the provided document text."
+    system: """Answer strictly using the provided document text."""
     user: """Document:\n{ocr_text}\n\nQuestion: {question}"""
   } -> answer: text
   answer
@@ -83,7 +83,7 @@ dataset KnowledgeBase: [{doc_id: text, chunk: text, embedding: embedding<1536>}]
 }
 
 conversation Caption(photo: image) -> text {
-  ask vision(photo) { user: "Describe this image in one sentence." } -> caption: text
+  ask vision(photo) { user: """Describe this image in one sentence.""" } -> caption: text
   caption
 }
 
@@ -91,7 +91,7 @@ conversation AnsweredByRAG(question: text) -> text {
   q_embedding = embedding.of(question, model: capability(embed))
   top_chunks  = vector.nearest(query: q_embedding, index: KnowledgeBase, k: 5)
   ask chat() {
-    system: "Answer only from the provided context; say 'I don't know' if the context is insufficient."
+    system: """Answer only from the provided context; say 'I don't know' if the context is insufficient."""
     user: """Context:\n{top_chunks}\n\nQuestion: {question}"""
   } -> answer: text
   answer
@@ -103,12 +103,12 @@ conversation AnsweredByRAG(question: text) -> text {
 ```
 // examples/multi_agent.ulx
 conversation ResearchAgent(topic: text) -> text {
-  ask chat() { user: "Research key facts about {topic}." } -> notes: text
+  ask chat() { user: """Research key facts about {topic}.""" } -> notes: text
   notes
 }
 
 conversation WriteAgent(notes: text) -> text {
-  ask chat() { user: "Write a two-paragraph report from these notes: {notes}" } -> report: text
+  ask chat() { user: """Write a two-paragraph report from these notes: {notes}""" } -> report: text
   report
 }
 
@@ -137,7 +137,7 @@ dataset SupportTickets: [{ticket_id: text, body: text}] {
 }
 
 conversation Triage(body: text) -> text {
-  ask chat() { user: "Classify this support ticket's severity (low/medium/high): {body}" } -> severity: text
+  ask chat() { user: """Classify this support ticket's severity (low/medium/high): {body}""" } -> severity: text
   severity
 }
 
@@ -179,7 +179,7 @@ Run with `ulx test examples/eval_translate.ulx` (§16.6); every row is cached pe
 ```
 // examples/approval.ulx
 conversation RefundRequest(order_id: text, amount: float) -> Verdict {
-  ask chat() { user: "Summarize refund request for order {order_id}, amount {amount}." } -> summary: text
+  ask chat() { user: """Summarize refund request for order {order_id}, amount {amount}.""" } -> summary: text
   escalate(human_approval, reason: summary)   // suspends here; checkpointed per §10.4
   // when a human responds (approve/deny + optional note), execution resumes exactly here
 }

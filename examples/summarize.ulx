@@ -3,11 +3,11 @@
 
 conversation Summarize(doc: pdf) -> text {
   with {
-    outline  = ask vision(doc) { user: "Extract a section outline." } -> text
-    keyfacts = ask vision(doc) { user: "List the five most important facts." } -> text
+    outline  = ask vision(doc) { user: """Extract a section outline.""" }
+    keyfacts = ask vision(doc) { user: """List the five most important facts.""" }
   }
   ask chat() {
-    system: "You are a technical writer."
+    system: """You are a technical writer."""
     user: """Using this outline: {outline}\nAnd these facts: {keyfacts}\nWrite a one-page summary."""
   } -> summary: text
   summary

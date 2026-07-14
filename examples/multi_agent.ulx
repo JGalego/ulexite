@@ -2,12 +2,12 @@
 // See docs/spec/21-examples.md §21.5
 
 conversation ResearchAgent(topic: text) -> text {
-  ask chat() { user: "Research key facts about {topic}." } -> notes: text
+  ask chat() { user: """Research key facts about {topic}.""" } -> notes: text
   notes
 }
 
 conversation WriteAgent(notes: text) -> text {
-  ask chat() { user: "Write a two-paragraph report from these notes: {notes}" } -> report: text
+  ask chat() { user: """Write a two-paragraph report from these notes: {notes}""" } -> report: text
   report
 }
 

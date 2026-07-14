@@ -1,0 +1,115 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "Ulexite",
+  "scopeName": "source.ulexite",
+  "fileTypes": ["ulx"],
+  "patterns": [
+    { "include": "#comments" },
+    { "include": "#keywords-decl" },
+    { "include": "#keywords-control" },
+    { "include": "#message-roles" },
+    { "include": "#artifact-types" },
+    { "include": "#text-block" },
+    { "include": "#string" },
+    { "include": "#number" },
+    { "include": "#row-ref" },
+    { "include": "#type-or-variant" },
+    { "include": "#function-call" },
+    { "include": "#operators" },
+    { "include": "#punctuation" }
+  ],
+  "repository": {
+    "comments": {
+      "patterns": [
+        {
+          "name": "comment.line.documentation.ulexite",
+          "match": "///.*$"
+        },
+        {
+          "name": "comment.line.double-slash.ulexite",
+          "match": "//.*$"
+        },
+        {
+          "name": "comment.block.ulexite",
+          "begin": "/\\*",
+          "end": "\\*/"
+        }
+      ]
+    },
+    "keywords-decl": {
+      "match": "\\b(conversation|judge|validator|dataset|type|benchmark|import)\\b",
+      "name": "keyword.other.declaration.ulexite"
+    },
+    "keywords-control": {
+      "match": "\\b(with|ask|match|retry|else|escalate|for|in|while|break|from|as|satisfies|threshold|expect|assert|snapshot|run|and|or|not|if)\\b",
+      "name": "keyword.control.ulexite"
+    },
+    "message-roles": {
+      "match": "\\b(system|user|assistant)\\b(?=\\s*(:|->))",
+      "name": "keyword.other.role.ulexite"
+    },
+    "artifact-types": {
+      "match": "\\b(text|markdown|image|audio|video|pdf|json|xml|html|csv|embedding|vector|tool_output)\\b",
+      "name": "support.type.artifact.ulexite"
+    },
+    "row-ref": {
+      "match": "\\$",
+      "name": "variable.language.row.ulexite"
+    },
+    "type-or-variant": {
+      "comment": "Capitalized identifiers: conventionally type names and closed-union variants (Pass, Fail, Score, Escalate, Verdict, Draft, ...)",
+      "match": "\\b[A-Z][A-Za-z0-9_]*\\b",
+      "name": "entity.name.type.ulexite"
+    },
+    "function-call": {
+      "match": "\\b([a-z_][A-Za-z0-9_]*)(?=\\s*\\()",
+      "name": "entity.name.function.ulexite"
+    },
+    "number": {
+      "match": "\\b[0-9]+(\\.[0-9]+)?\\b",
+      "name": "constant.numeric.ulexite"
+    },
+    "string": {
+      "name": "string.quoted.double.ulexite",
+      "begin": "\"",
+      "end": "\"",
+      "patterns": [
+        { "match": "\\\\.", "name": "constant.character.escape.ulexite" }
+      ]
+    },
+    "text-block": {
+      "name": "string.quoted.triple.ulexite",
+      "begin": "\"\"\"",
+      "end": "\"\"\"",
+      "patterns": [
+        { "match": "\\\\.", "name": "constant.character.escape.ulexite" },
+        {
+          "name": "meta.interpolation.ulexite",
+          "begin": "\\{",
+          "beginCaptures": { "0": { "name": "punctuation.definition.interpolation.begin.ulexite" } },
+          "end": "\\}",
+          "endCaptures": { "0": { "name": "punctuation.definition.interpolation.end.ulexite" } },
+          "patterns": [
+            { "include": "#row-ref" },
+            { "include": "#function-call" },
+            { "include": "#type-or-variant" },
+            { "include": "#number" },
+            { "include": "#operators" },
+            {
+              "match": "[A-Za-z_][A-Za-z0-9_]*",
+              "name": "variable.other.ulexite"
+            }
+          ]
+        }
+      ]
+    },
+    "operators": {
+      "match": "->|=>|==|!=|<=|>=|[=<>+\\-*/|.]",
+      "name": "keyword.operator.ulexite"
+    },
+    "punctuation": {
+      "match": "[{}()\\[\\],:]",
+      "name": "punctuation.ulexite"
+    }
+  }
+}

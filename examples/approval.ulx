@@ -2,6 +2,6 @@
 // See docs/spec/21-examples.md §21.8
 
 conversation RefundRequest(order_id: text, amount: float) -> Verdict {
-  ask chat() { user: "Summarize refund request for order {order_id}, amount {amount}." } -> summary: text
+  ask chat() { user: """Summarize refund request for order {order_id}, amount {amount}.""" } -> summary: text
   escalate(human_approval, reason: summary)
 }

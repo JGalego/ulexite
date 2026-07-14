@@ -9,7 +9,7 @@ dataset KnowledgeBase: [{doc_id: text, chunk: text, embedding: embedding<1536>}]
 }
 
 conversation Caption(photo: image) -> text {
-  ask vision(photo) { user: "Describe this image in one sentence." } -> caption: text
+  ask vision(photo) { user: """Describe this image in one sentence.""" } -> caption: text
   caption
 }
 
@@ -17,7 +17,7 @@ conversation AnsweredByRAG(question: text) -> text {
   q_embedding = embedding.of(question, model: capability(embed))
   top_chunks  = vector.nearest(query: q_embedding, index: KnowledgeBase, k: 5)
   ask chat() {
-    system: "Answer only from the provided context; say 'I don't know' if the context is insufficient."
+    system: """Answer only from the provided context; say 'I don't know' if the context is insufficient."""
     user: """Context:\n{top_chunks}\n\nQuestion: {question}"""
   } -> answer: text
   answer

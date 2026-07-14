@@ -1,0 +1,21 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/ulx-ast",
+    "crates/ulx-syntax",
+    "crates/ulx-cli",
+]
+
+[workspace.package]
+version = "0.0.1"
+edition = "2021"
+license = "Apache-2.0"
+repository = "https://github.com/JGalego/ulexite"
+
+[workspace.dependencies]
+ulx-ast = { path = "crates/ulx-ast" }
+ulx-syntax = { path = "crates/ulx-syntax" }
+logos = "0.14"
+chumsky = "0.9"
+ariadne = "0.4"
+clap = { version = "4", features = ["derive"] }

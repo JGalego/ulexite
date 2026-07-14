@@ -18,14 +18,16 @@ block_comment = "/*" , { any_char } , "*/" ;
 (* ---------- Program ---------- *)
 program       = { import_decl | top_decl } ;
 
-import_decl   = "import" , kind , ident , "from" , string_lit ;
+import_decl   = "import" , kind , ident , "from" , string_lit    (* e.g. import judge Fluency from "translate.ulx" *)
+              | "import" , string_lit , "as" , ident ;            (* stdlib module import, §15, e.g. import "vector" as vector *)
 kind          = "conversation" | "judge" | "validator" | "dataset" | "type" ;
 
 top_decl      = conversation_decl
               | judge_decl
               | validator_decl
               | dataset_decl
-              | type_decl ;
+              | type_decl
+              | benchmark_decl ;
 
 (* ---------- Conversation ---------- *)
 conversation_decl
@@ -42,12 +44,10 @@ stmt          = message_stmt
               | ask_stmt
               | binding_stmt
               | match_stmt
-              | retry_stmt
-              | escalate_stmt
               | for_stmt
               | while_stmt
               | break_stmt
-              | expr_stmt ;
+              | expr_stmt ;               (* covers bare retry_expr/escalate_expr used as a statement *)
 
 (* ordinary imperative loops, §21.6 — deliberately outside any with_block,
    since a loop body is sequential-by-nature and therefore belongs to the
@@ -61,15 +61,14 @@ message_stmt  = role_literal , ":" , text_block
               | "assistant" , "->" , ident , [ ":" , type_expr ] ;
 role_literal  = "system" | "user" ;
 
-(* explicit multimodal / capability-pinned call, §7.5 *)
-ask_stmt      = "ask" , ident , "(" , [ arg_list ] , ")" , block ,
-                "->" , ident , [ ":" , type_expr ] ;
+(* explicit multimodal / capability-pinned call, §7.5 — reuses ask_expr (below) *)
+ask_stmt      = ask_expr , "->" , ident , [ ":" , type_expr ] ;
 arg_list      = arg , { "," , arg } ;
 arg           = [ ident , ":" ] , expr ;
 
 (* declarative independent sub-block, §7.4 *)
 with_block    = "with" , "{" , { binding_stmt } , "}" ;
-binding_stmt  = ident , "=" , ( judge_call | validator_call | ask_expr | expr ) ;
+binding_stmt  = ident , "=" , expr ;    (* expr covers judge_call/validator_call/ask_expr below *)
 
 judge_call    = "judge" , ident , "(" , [ arg_list ] , ")" ;
 validator_call= "validator" , ident , "(" , [ arg_list ] , ")" ;
@@ -82,8 +81,6 @@ pattern       = ident , [ "(" , [ pattern_binding , { "," , pattern_binding } ] 
               | "_" ;
 pattern_binding = ident ;
 
-retry_stmt    = "retry" , "(" , int_lit , ")" , block , [ "else" , expr ] ;
-escalate_stmt = "escalate" , "(" , ident , [ "," , named_arg_list ] , ")" ;
 named_arg_list= named_arg , { "," , named_arg } ;
 named_arg     = ident , ":" , expr ;
 
@@ -107,7 +104,10 @@ type_expr     = artifact_type
               | record_type
               | union_type
               | generic_type
+              | array_type
               | ident ;                       (* named/alias reference *)
+
+array_type    = "[" , type_expr , "]" ;         (* e.g. [{source: text, golden: text}], §16.2 *)
 
 artifact_type = "text" | "markdown" | "image" | "audio" | "video" | "pdf"
               | "json" | "xml" | "html" | "csv" | "embedding" | "vector"
@@ -119,7 +119,8 @@ field_type    = ident , ":" , type_expr ;
 union_type    = variant , { "|" , variant } ;
 variant       = ident , [ "(" , type_expr , ")" ] ;   (* e.g. Fail(text) *)
 
-generic_type  = ident , "<" , type_expr , ">" ;        (* e.g. Draft<text>, dataset<Row> *)
+generic_type  = ident , "<" , generic_arg , ">" ;      (* e.g. Draft<text>, dataset<Row> *)
+generic_arg   = type_expr | int_lit ;                  (* int_lit covers const-generic dimensions, e.g. embedding<1536>, §11.4 *)
 
 (* ---------- Testing / evaluation, §7.6, §16 ---------- *)
 benchmark_decl= { doc_comment } , "benchmark" , ident , "{" , { benchmark_stmt } , "}" ;
@@ -142,8 +143,29 @@ field_access  = "." , ident ;
 call          = "(" , [ arg_list ] , ")" ;
 index         = "[" , expr , "]" ;
 primary_expr  = int_lit | float_lit | string_lit | text_block
-              | ident | record_lit | "(" , expr , ")" ;
+              | if_expr | generic_call | retry_expr | escalate_expr
+              | judge_call | validator_call | ask_expr
+              | row_ref | ident | record_lit | "(" , expr , ")" ;
+
+(* current-row reference inside a benchmark's run:/expect/assert/snapshot
+   statements (§16.2, §21.7) — bound to the dataset row being evaluated *)
+row_ref       = "$" ;
 record_lit    = "{" , [ field_assign , { "," , field_assign } ] , "}" ;
+
+(* branching expression — the imperative-region complement to match_stmt,
+   used where a two-way choice is simpler to read than a full match, §21.3 *)
+if_expr       = "if" , expr , block , "else" , block ;
+
+(* generic value constructor, e.g. list<text>(), §21.6 — ident immediately
+   followed by a type argument is disambiguated from "<" comparison by the
+   parser requiring a matching ">" directly followed by "(" *)
+generic_call  = ident , "<" , type_expr , ">" , "(" , [ arg_list ] , ")" ;
+
+(* retry/escalate are expressions, not statements: both appear as a match
+   arm's result (§21.1, §21.5) and as an ordinary trailing statement in a
+   block (§21.8) — a bare expression used as a statement is expr_stmt *)
+retry_expr    = "retry" , "(" , int_lit , ")" , block , [ "else" , expr ] ;
+escalate_expr = "escalate" , "(" , ident , [ "," , named_arg_list ] , ")" ;
 
 doc_comment   = "///" , { any_char - newline } ;
 ```
@@ -153,5 +175,5 @@ doc_comment   = "///" , { any_char - newline } ;
 - **No vendor token anywhere.** `capability_ident` (the `ident` following `ask`) resolves against the stdlib's capability registry (§15.1) at semantic-analysis time, not the grammar — consistent with §4.3.
 - **`with_block` bindings are syntactically restricted to a flat list with no forward or sibling reference production** — the grammar itself cannot express `with { a = ...; b = f(a) }`; that dependency must be written as a second, sequential statement outside the block. This is what makes §7.4's "provably independent" claim a parser-enforced guarantee rather than a convention (contrast Pulumi, §2.4, §3.4).
 - **`match_stmt` requires no default arm** in the grammar — exhaustiveness is enforced in semantic analysis (§9.4, §13.3) against the closed variant set of the scrutinee's type, the same way Rust's grammar permits a non-exhaustive `match` syntactically but rejects it in a later compiler pass.
-- **`retry_stmt`'s `else` clause is grammatically mandatory only when the retry's body's block type isn't provably total** — full rule in §9.3; a `retry` whose body cannot fail (rare, e.g. a pure validator with no model call) may omit `else`.
+- **`retry_expr`'s `else` clause is grammatically mandatory only when the retry's body's block type isn't provably total** — full rule in §9.3; a `retry` whose body cannot fail (rare, e.g. a pure validator with no model call) may omit `else`. `retry`/`escalate` are expressions (§8), not statements, so the same production serves both a `match` arm's result and an ordinary trailing statement in a block, via `expr_stmt`.
 - **Message literals (`message_stmt`) and the explicit `ask_stmt` are two productions, not one**, deliberately: the terse `system:`/`user:`/`assistant ->` form covers the common single-capability, text-first turn (§7.3); `ask` is required the moment a step needs multimodal input, an explicit capability, or a provider policy override (§7.5) — this mirrors SQL's separate terse-`SELECT` vs. explicit-`JOIN` forms rather than collapsing everything into one maximally general but noisier production.

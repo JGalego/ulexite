@@ -4,7 +4,20 @@
 
 Ulexite is a programming language for conversational AI interactions. Its primary abstraction is the **conversation**, not the prompt, the model, or the agent. The runtime executes conversations involving humans, LLMs, tools, judges, datasets, and multimodal artifacts, with deterministic execution where possible, reproducible traces, and first-class testing.
 
-This repository currently contains the language specification (RFC-0001) — no compiler or runtime has been implemented yet. See [§13 Compiler Architecture](docs/spec/13-compiler-architecture.md) and [§25 Future Directions](docs/spec/25-future-directions.md) for the implementation plan.
+This repository contains the language specification (RFC-0001) and an in-progress reference implementation. The front end (lexer + parser + AST, §13) exists and parses every example under `examples/`; semantic analysis, the IR, and the runtime (§9, §10, §12) are not implemented yet — see [§13 Compiler Architecture](docs/spec/13-compiler-architecture.md) and [§25 Future Directions](docs/spec/25-future-directions.md) for the plan.
+
+## Building
+
+```sh
+cargo build
+cargo test
+cargo run --bin ulx -- parse examples/translate.ulx
+```
+
+- `crates/ulx-ast` — AST node definitions (§13.4)
+- `crates/ulx-syntax` — lexer (`logos`) + parser (`chumsky`), implementing the grammar in [§8](docs/spec/08-grammar.md)
+- `crates/ulx-cli` — the `ulx` binary (`parse`/`check` today; `run`/`test`/`plan`/`debug` depend on later compiler stages)
+- `tooling/vscode-ulx` — TextMate grammar + language config for `.ulx` syntax highlighting in VS Code (§20.10)
 
 ## Read the spec
 
@@ -21,4 +34,4 @@ Start at [docs/spec/00-index.md](docs/spec/00-index.md) for the full table of co
 
 ## Example programs
 
-Runnable-syntax (not yet executable — no runtime exists) example `.ulx` programs referenced by the spec live in [`examples/`](examples/).
+The `.ulx` programs referenced by the spec live in [`examples/`](examples/) and all parse successfully (`cargo test` includes a golden-file test over this directory) — there's no runtime yet, so they don't *execute*.

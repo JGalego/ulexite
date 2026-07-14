@@ -10,10 +10,10 @@ conversation PdfQA(doc: pdf, question: text) -> text {
     page_images  = pdf.to_images(doc)
   }
   ocr_text = if text_layer.length > 0 { text_layer } else {
-    ask vision(page_images) { user: "Transcribe all text in these pages." } -> text
+    ask vision(page_images) { user: """Transcribe all text in these pages.""" }
   }
   ask chat() {
-    system: "Answer strictly using the provided document text."
+    system: """Answer strictly using the provided document text."""
     user: """Document:\n{ocr_text}\n\nQuestion: {question}"""
   } -> answer: text
   answer

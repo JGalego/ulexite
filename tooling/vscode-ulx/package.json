@@ -1,0 +1,31 @@
+{
+  "name": "ulexite",
+  "displayName": "Ulexite",
+  "description": "Syntax highlighting for Ulexite (.ulx) — the conversation-first language for LLM interactions",
+  "version": "0.0.1",
+  "publisher": "ulexite",
+  "license": "Apache-2.0",
+  "engines": {
+    "vscode": "^1.75.0"
+  },
+  "categories": [
+    "Programming Languages"
+  ],
+  "contributes": {
+    "languages": [
+      {
+        "id": "ulexite",
+        "aliases": ["Ulexite", "ulx"],
+        "extensions": [".ulx"],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "ulexite",
+        "scopeName": "source.ulexite",
+        "path": "./syntaxes/ulx.tmLanguage.json"
+      }
+    ]
+  }
+}
