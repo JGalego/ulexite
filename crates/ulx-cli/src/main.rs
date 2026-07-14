@@ -15,9 +15,11 @@
 //! Also implemented: `plan` (§10.5 — a static, execution-free capability ->
 //! provider resolution plus a rough token/cost estimate off a small
 //! illustrative pricing table; see `plan.rs`'s module docs for exactly how
-//! approximate that estimate is).
+//! approximate that estimate is), `fmt` (§20.10 — an AST-based
+//! pretty-printer; see `ulx_syntax::fmt` for the important caveat that it
+//! does not preserve comments).
 //!
-//! Not implemented: `fmt`/`doc`/`repl` (§20). See
+//! Not implemented: `doc`/`repl` (§20). See
 //! `docs/spec/25-future-directions.md`.
 
 mod diagnostics;
@@ -157,6 +159,16 @@ enum Command {
         #[arg(default_value = "ulexite.toml")]
         file: PathBuf,
     },
+    /// Reformat a .ulx file to canonical style (§20.10). An AST-based
+    /// pretty-printer, NOT a lossless/comment-preserving formatter —
+    /// comments are dropped (see `ulx_syntax::fmt` module docs).
+    Fmt {
+        file: PathBuf,
+        /// Don't write anything; exit non-zero if the file isn't already
+        /// in canonical form (mirrors `cargo fmt --check`/`gofmt -l`).
+        #[arg(long)]
+        check: bool,
+    },
 }
 
 fn main() {
@@ -211,6 +223,7 @@ fn main() {
         Command::Trace { run_id, output } => cmd_trace(&run_id, output),
         Command::Init { name, dir } => cmd_init(&name, &dir),
         Command::Manifest { file } => cmd_manifest(&file),
+        Command::Fmt { file, check } => cmd_fmt(&file, check),
     };
     if !ok {
         std::process::exit(1);
@@ -241,6 +254,58 @@ fn cmd_parse(file: &PathBuf) -> bool {
             }
             false
         }
+    }
+}
+
+fn cmd_fmt(file: &PathBuf, check: bool) -> bool {
+    let src = match std::fs::read_to_string(file) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("error: could not read {}: {e}", file.display());
+            return false;
+        }
+    };
+    let name = file.display().to_string();
+    let program = match ulx_syntax::parse_source(&src) {
+        Ok(p) => p,
+        Err(errors) => {
+            for e in &errors {
+                diagnostics::report_parse_error(&name, &src, e);
+            }
+            return false;
+        }
+    };
+    let formatted = ulx_syntax::format_program(&program);
+
+    // Safety net: the printer should always produce reparseable output; if
+    // it doesn't, that's a formatter bug, not something to silently write
+    // over the user's file.
+    if let Err(errors) = ulx_syntax::parse_source(&formatted) {
+        eprintln!(
+            "error: internal formatter error: reformatted output for {} does not parse",
+            file.display()
+        );
+        for e in &errors {
+            diagnostics::report_parse_error(&name, &formatted, e);
+        }
+        return false;
+    }
+
+    if check {
+        if formatted == src {
+            true
+        } else {
+            println!("would reformat {}", file.display());
+            false
+        }
+    } else if formatted == src {
+        true
+    } else if let Err(e) = std::fs::write(file, &formatted) {
+        eprintln!("error: could not write {}: {e}", file.display());
+        false
+    } else {
+        println!("formatted {}", file.display());
+        true
     }
 }
 
