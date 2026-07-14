@@ -5,7 +5,10 @@
 
 fn assert_rejected(src: &str, label: &str) {
     let result = ulx_syntax::parse_source(src);
-    assert!(result.is_err(), "expected `{label}` to fail to parse, but it succeeded: {result:?}");
+    assert!(
+        result.is_err(),
+        "expected `{label}` to fail to parse, but it succeeded: {result:?}"
+    );
 }
 
 #[test]
@@ -59,5 +62,8 @@ fn dataset_missing_type_is_rejected() {
 
 #[test]
 fn stray_top_level_token_is_rejected() {
-    assert_rejected("this is not a valid top-level form &&&", "garbage top-level input");
+    assert_rejected(
+        "this is not a valid top-level form &&&",
+        "garbage top-level input",
+    );
 }

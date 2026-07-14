@@ -1,0 +1,11 @@
+[package]
+name = "ulx-ir"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+ulx-ast = { workspace = true }
+
+[dev-dependencies]
+ulx-syntax = { workspace = true }

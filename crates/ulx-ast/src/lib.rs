@@ -193,7 +193,10 @@ pub enum MatchArmBody {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Pattern {
     /// `Pass`, `Fail(reason)`, `Score(_)` (§8)
-    Variant { name: String, bindings: Vec<String> },
+    Variant {
+        name: String,
+        bindings: Vec<String>,
+    },
     Wildcard,
 }
 

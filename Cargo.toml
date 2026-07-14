@@ -3,6 +3,9 @@ resolver = "2"
 members = [
     "crates/ulx-ast",
     "crates/ulx-syntax",
+    "crates/ulx-sema",
+    "crates/ulx-ir",
+    "crates/ulx-runtime",
     "crates/ulx-cli",
 ]
 
@@ -15,7 +18,15 @@ repository = "https://github.com/JGalego/ulexite"
 [workspace.dependencies]
 ulx-ast = { path = "crates/ulx-ast" }
 ulx-syntax = { path = "crates/ulx-syntax" }
+ulx-sema = { path = "crates/ulx-sema" }
+ulx-ir = { path = "crates/ulx-ir" }
+ulx-runtime = { path = "crates/ulx-runtime" }
 logos = "0.14"
 chumsky = "0.9"
 ariadne = "0.4"
 clap = { version = "4", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+sha2 = "0.10"
+

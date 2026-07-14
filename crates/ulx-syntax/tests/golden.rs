@@ -34,5 +34,8 @@ fn all_examples_parse() {
             }
         }
     }
-    assert!(checked >= 8, "expected at least 8 example files, found {checked}");
+    assert!(
+        checked >= 8,
+        "expected at least 8 example files, found {checked}"
+    );
 }

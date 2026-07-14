@@ -1,6 +1,10 @@
 // examples/multi_agent.ulx
 // See docs/spec/21-examples.md §21.5
 
+judge Quality(subject: text) -> Verdict {
+  rubric: """Is this report well-structured, accurate, and free of unsupported claims?"""
+}
+
 conversation ResearchAgent(topic: text) -> text {
   ask chat() { user: """Research key facts about {topic}.""" } -> notes: text
   notes

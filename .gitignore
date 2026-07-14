@@ -3,3 +3,6 @@
 .DS_Store
 *.vsix
 node_modules/
+
+# local ulx runtime state (cache/traces/run manifests, §12.5/§18) — never checked in
+.ulexite/

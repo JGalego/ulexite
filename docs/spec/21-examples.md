@@ -102,6 +102,10 @@ conversation AnsweredByRAG(question: text) -> text {
 
 ```
 // examples/multi_agent.ulx
+judge Quality(subject: text) -> Verdict {
+  rubric: """Is this report well-structured, accurate, and free of unsupported claims?"""
+}
+
 conversation ResearchAgent(topic: text) -> text {
   ask chat() { user: """Research key facts about {topic}.""" } -> notes: text
   notes

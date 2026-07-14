@@ -32,7 +32,9 @@ fn kw(word: &'static str) -> impl Parser<Token, (), Error = Err> + Clone {
     filter(move |t: &Token| matches!(t, Token::Ident(s) if s == word)).ignored()
 }
 
-fn spanned<T>(p: impl Parser<Token, T, Error = Err> + Clone) -> impl Parser<Token, Spanned<T>, Error = Err> + Clone {
+fn spanned<T>(
+    p: impl Parser<Token, T, Error = Err> + Clone,
+) -> impl Parser<Token, Spanned<T>, Error = Err> + Clone {
     p.map_with_span(|node, span| (node, span))
 }
 
@@ -210,10 +212,7 @@ pub fn program_pieces() -> (
         .then_ignore(just(Token::Lt))
         .then(type_expr.clone())
         .then_ignore(just(Token::Gt))
-        .then(
-            arg_list_p(expr.clone())
-                .delimited_by(just(Token::LParen), just(Token::RParen)),
-        )
+        .then(arg_list_p(expr.clone()).delimited_by(just(Token::LParen), just(Token::RParen)))
         .map(|((name, ty_arg), args)| Expr::GenericCall { name, ty_arg, args });
 
     let retry_expr = kw("retry")
@@ -249,26 +248,17 @@ pub fn program_pieces() -> (
 
     let judge_call = kw("judge")
         .ignore_then(ident_p())
-        .then(
-            arg_list_p(expr.clone())
-                .delimited_by(just(Token::LParen), just(Token::RParen)),
-        )
+        .then(arg_list_p(expr.clone()).delimited_by(just(Token::LParen), just(Token::RParen)))
         .map(|(name, args)| Expr::JudgeCall { name, args });
 
     let validator_call = kw("validator")
         .ignore_then(ident_p())
-        .then(
-            arg_list_p(expr.clone())
-                .delimited_by(just(Token::LParen), just(Token::RParen)),
-        )
+        .then(arg_list_p(expr.clone()).delimited_by(just(Token::LParen), just(Token::RParen)))
         .map(|(name, args)| Expr::ValidatorCall { name, args });
 
     let ask_expr = kw("ask")
         .ignore_then(ident_p())
-        .then(
-            arg_list_p(expr.clone())
-                .delimited_by(just(Token::LParen), just(Token::RParen)),
-        )
+        .then(arg_list_p(expr.clone()).delimited_by(just(Token::LParen), just(Token::RParen)))
         .then(block.clone())
         .map(|((capability, args), body)| Expr::AskExpr {
             capability,
@@ -316,26 +306,24 @@ pub fn program_pieces() -> (
             .delimited_by(just(Token::LBracket), just(Token::RBracket))
             .map(Postfix::Index),
     ));
-    let postfix = primary
-        .then(postfix_op.repeated())
-        .foldl(|base, op| {
-            let span = base.1.start..base.1.end;
-            let node = match op {
-                Postfix::Field(field) => Expr::FieldAccess {
-                    base: Box::new(base),
-                    field,
-                },
-                Postfix::Call(args) => Expr::Call {
-                    callee: Box::new(base),
-                    args,
-                },
-                Postfix::Index(index) => Expr::Index {
-                    base: Box::new(base),
-                    index: Box::new(index),
-                },
-            };
-            (node, span)
-        });
+    let postfix = primary.then(postfix_op.repeated()).foldl(|base, op| {
+        let span = base.1.start..base.1.end;
+        let node = match op {
+            Postfix::Field(field) => Expr::FieldAccess {
+                base: Box::new(base),
+                field,
+            },
+            Postfix::Call(args) => Expr::Call {
+                callee: Box::new(base),
+                args,
+            },
+            Postfix::Index(index) => Expr::Index {
+                base: Box::new(base),
+                index: Box::new(index),
+            },
+        };
+        (node, span)
+    });
 
     // ---- unary
     let unary = choice((
@@ -406,7 +394,10 @@ pub fn program_pieces() -> (
     expr.define(or_expr);
 
     // ---- statements
-    let role = choice((kw("system").to(MessageRole::System), kw("user").to(MessageRole::User)));
+    let role = choice((
+        kw("system").to(MessageRole::System),
+        kw("user").to(MessageRole::User),
+    ));
     let message_stmt = role
         .then_ignore(just(Token::Colon))
         .then(spanned(text_block))
@@ -436,13 +427,15 @@ pub fn program_pieces() -> (
         .then_ignore(just(Token::Arrow))
         .then(ident_p())
         .then(just(Token::Colon).ignore_then(type_expr.clone()).or_not())
-        .map(|(((capability, args, body), bind_name), bind_ty)| Stmt::Ask {
-            capability,
-            args,
-            body,
-            bind_name,
-            bind_ty,
-        });
+        .map(
+            |(((capability, args, body), bind_name), bind_ty)| Stmt::Ask {
+                capability,
+                args,
+                body,
+                bind_name,
+                bind_ty,
+            },
+        );
 
     let pattern = choice((
         just(Token::Ident("_".to_string())).to(Pattern::Wildcard),
@@ -492,7 +485,9 @@ pub fn program_pieces() -> (
         .then(block.clone())
         .map(|(cond, body)| Stmt::While { cond, body });
 
-    let break_stmt = kw("break").ignore_then(expr.clone().or_not()).map(Stmt::Break);
+    let break_stmt = kw("break")
+        .ignore_then(expr.clone().or_not())
+        .map(Stmt::Break);
 
     let expr_stmt = expr.clone().map(Stmt::Expr);
 
@@ -545,10 +540,7 @@ fn ask_expr_stmt_head(
 ) -> impl Parser<Token, (String, Vec<Arg>, Block), Error = Err> + Clone {
     kw("ask")
         .ignore_then(ident_p())
-        .then(
-            arg_list_p(expr)
-                .delimited_by(just(Token::LParen), just(Token::RParen)),
-        )
+        .then(arg_list_p(expr).delimited_by(just(Token::LParen), just(Token::RParen)))
         .then(block)
         .map(|((capability, args), body)| (capability, args, body))
 }
@@ -660,9 +652,7 @@ pub fn program_p() -> impl Parser<Token, Program, Error = Err> + Clone {
         other => Err(Simple::expected_input_found(span, Vec::new(), Some(other))),
     });
 
-    let field_assign = ident_p()
-        .then_ignore(just(Token::Colon))
-        .then(expr.clone());
+    let field_assign = ident_p().then_ignore(just(Token::Colon)).then(expr.clone());
 
     let rubric_decl = |head: &'static str| {
         kw(head)
@@ -707,9 +697,7 @@ pub fn program_p() -> impl Parser<Token, Program, Error = Err> + Clone {
         .ignore_then(ident_p())
         .then_ignore(just(Token::Colon))
         .then(type_expr.clone())
-        .then(
-            dataset_source.delimited_by(just(Token::LBrace), just(Token::RBrace)),
-        )
+        .then(dataset_source.delimited_by(just(Token::LBrace), just(Token::RBrace)))
         .map(|((name, ty), source)| {
             TopDecl::Dataset(DatasetDecl {
                 doc: None,
@@ -760,7 +748,9 @@ pub fn program_p() -> impl Parser<Token, Program, Error = Err> + Clone {
                 judge,
                 threshold,
             }),
-        kw("assert").ignore_then(expr.clone()).map(BenchmarkStmt::Assert),
+        kw("assert")
+            .ignore_then(expr.clone())
+            .map(BenchmarkStmt::Assert),
         kw("snapshot")
             .ignore_then(expr.clone())
             .then_ignore(kw("as"))
@@ -806,26 +796,21 @@ pub fn program_p() -> impl Parser<Token, Program, Error = Err> + Clone {
         benchmark_decl,
     )));
 
-    let import_or_decl = import_p()
-        .map(Item::Import)
-        .or(top_decl.map(Item::Decl));
+    let import_or_decl = import_p().map(Item::Import).or(top_decl.map(Item::Decl));
 
-    import_or_decl
-        .repeated()
-        .then_ignore(end())
-        .map(|items| {
-            let mut program = Program {
-                imports: Vec::new(),
-                decls: Vec::new(),
-            };
-            for item in items {
-                match item {
-                    Item::Import(i) => program.imports.push(i),
-                    Item::Decl(d) => program.decls.push(d),
-                }
+    import_or_decl.repeated().then_ignore(end()).map(|items| {
+        let mut program = Program {
+            imports: Vec::new(),
+            decls: Vec::new(),
+        };
+        for item in items {
+            match item {
+                Item::Import(i) => program.imports.push(i),
+                Item::Decl(d) => program.decls.push(d),
             }
-            program
-        })
+        }
+        program
+    })
 }
 
 enum Item {
@@ -835,11 +820,9 @@ enum Item {
 
 /// Lex + parse a complete `.ulx` source file into a `Program`.
 pub fn parse_source(src: &str) -> PResult<Program> {
-    let tokens = lexer::lex(src).map_err(|offset| {
-        vec![Simple::custom(offset..offset + 1, "unrecognized character")]
-    })?;
+    let tokens = lexer::lex(src)
+        .map_err(|offset| vec![Simple::custom(offset..offset + 1, "unrecognized character")])?;
     let eoi = src.len()..src.len();
     let stream = chumsky::Stream::from_iter(eoi, tokens.into_iter());
     program_p().parse(stream)
 }
-

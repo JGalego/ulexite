@@ -1,0 +1,71 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  rust:
+    name: Rust workspace (fmt, clippy, build, test)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        run: rustup component add rustfmt clippy
+
+      - name: Cache cargo registry and build artifacts
+        uses: Swatinem/rust-cache@v2
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+      - name: Clippy (deny warnings)
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: Build workspace
+        run: cargo build --workspace --verbose
+
+      - name: Test workspace
+        run: cargo test --workspace --verbose
+
+  vscode-extension:
+    name: VS Code extension (JSON validity)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate package.json, language-configuration.json, and the TextMate grammar
+        run: |
+          set -e
+          for f in tooling/vscode-ulx/package.json \
+                   tooling/vscode-ulx/language-configuration.json \
+                   tooling/vscode-ulx/syntaxes/ulx.tmLanguage.json; do
+            echo "validating $f"
+            node -e "JSON.parse(require('fs').readFileSync('$f', 'utf8'))"
+          done
+
+  spec-examples:
+    name: Spec examples parse, type-check, and lower
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache cargo registry and build artifacts
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build ulx CLI
+        run: cargo build -p ulx-cli
+
+      - name: Check every example under examples/
+        run: |
+          set -e
+          for f in examples/*.ulx; do
+            echo "checking $f"
+            ./target/debug/ulx check "$f"
+          done

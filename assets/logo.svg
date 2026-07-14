@@ -1,0 +1,46 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 240" width="240" height="240" role="img" aria-label="Ulexite logo: a cluster of crystal shards dispersing light like a prism">
+  <title>Ulexite</title>
+  <defs>
+    <linearGradient id="shard1" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#7dd3fc"/>
+      <stop offset="100%" stop-color="#0ea5e9"/>
+    </linearGradient>
+    <linearGradient id="shard2" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#67e8f9"/>
+      <stop offset="100%" stop-color="#4f46e5"/>
+    </linearGradient>
+    <linearGradient id="shard3" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#e9d5ff"/>
+      <stop offset="45%" stop-color="#c084fc"/>
+      <stop offset="100%" stop-color="#9333ea"/>
+    </linearGradient>
+    <linearGradient id="shard4" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#a5b4fc"/>
+      <stop offset="100%" stop-color="#4338ca"/>
+    </linearGradient>
+    <linearGradient id="shard5" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#93c5fd"/>
+      <stop offset="100%" stop-color="#2563eb"/>
+    </linearGradient>
+  </defs>
+
+  <!-- shard 1 -->
+  <polygon points="24,84 40,70 56,84 56,156 40,170 24,156" fill="url(#shard1)" stroke="#ffffff" stroke-opacity="0.25" stroke-width="1.5"/>
+  <line x1="40" y1="76" x2="40" y2="164" stroke="#ffffff" stroke-opacity="0.35" stroke-width="1"/>
+
+  <!-- shard 2 -->
+  <polygon points="54,58 72,42 90,58 90,166 72,182 54,166" fill="url(#shard2)" stroke="#ffffff" stroke-opacity="0.25" stroke-width="1.5"/>
+  <line x1="72" y1="48" x2="72" y2="176" stroke="#ffffff" stroke-opacity="0.35" stroke-width="1"/>
+
+  <!-- shard 3 (center, tallest) -->
+  <polygon points="84,36 104,18 124,36 124,178 104,196 84,178" fill="url(#shard3)" stroke="#ffffff" stroke-opacity="0.3" stroke-width="1.5"/>
+  <line x1="104" y1="26" x2="104" y2="188" stroke="#ffffff" stroke-opacity="0.45" stroke-width="1.2"/>
+
+  <!-- shard 4 -->
+  <polygon points="118,62 136,46 154,62 154,162 136,178 118,162" fill="url(#shard4)" stroke="#ffffff" stroke-opacity="0.25" stroke-width="1.5"/>
+  <line x1="136" y1="52" x2="136" y2="172" stroke="#ffffff" stroke-opacity="0.35" stroke-width="1"/>
+
+  <!-- shard 5 -->
+  <polygon points="151,89 166,76 181,89 181,149 166,162 151,149" fill="url(#shard5)" stroke="#ffffff" stroke-opacity="0.25" stroke-width="1.5"/>
+  <line x1="166" y1="82" x2="166" y2="156" stroke="#ffffff" stroke-opacity="0.35" stroke-width="1"/>
+</svg>
