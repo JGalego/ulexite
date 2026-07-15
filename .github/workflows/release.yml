@@ -48,6 +48,13 @@ jobs:
           - os: macos-latest
             target: aarch64-apple-darwin
             archive_ext: tar.gz
+            # macos-latest's default Xcode ships Apple's newer linker
+            # (ld-prime), which has a known assertion-failure bug on long
+            # Rust-mangled symbol names ("makeSymbolStringInPlace ...
+            # name.size() <= maxLength") -- macos-13's older Xcode default
+            # (used by x86_64-apple-darwin above) isn't affected. Forcing
+            # the classic linker is the documented workaround.
+            rustflags: "-C link-arg=-ld_classic"
           - os: windows-latest
             target: x86_64-pc-windows-msvc
             archive_ext: zip
@@ -76,6 +83,8 @@ jobs:
           key: ${{ matrix.target }}
 
       - name: Build ulx
+        env:
+          RUSTFLAGS: ${{ matrix.rustflags }}
         run: cargo build --release --locked -p ulx-cli --target ${{ matrix.target }}
 
       # Asset names deliberately don't embed the version: this is what lets
