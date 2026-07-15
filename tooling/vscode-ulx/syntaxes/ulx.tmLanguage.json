@@ -15,6 +15,7 @@
     { "include": "#row-ref" },
     { "include": "#type-or-variant" },
     { "include": "#function-call" },
+    { "include": "#field-key" },
     { "include": "#operators" },
     { "include": "#punctuation" }
   ],
@@ -64,6 +65,11 @@
     "function-call": {
       "match": "\\b([a-z_][A-Za-z0-9_]*)(?=\\s*\\()",
       "name": "entity.name.function.ulexite"
+    },
+    "field-key": {
+      "comment": "A record/provider/rubric field name or named-arg label — `vendor: \"...\"`, `rubric: \"\"\"...\"\"\"`, `ask chat(temperature: 0.7)` — any lowercase identifier immediately followed by `:` (but not `::` or the `->` of an assistant/ask bind, which #message-roles and #operators already claim).",
+      "match": "\\b([a-z_][A-Za-z0-9_]*)\\b(?=\\s*:(?!:))",
+      "name": "support.type.property-name.ulexite"
     },
     "number": {
       "match": "\\b[0-9]+(\\.[0-9]+)?\\b",

@@ -28,10 +28,11 @@ Or just symlink/copy this folder (after `npm install && npm run compile`, so `ou
 ## What it highlights
 
 - Line (`//`) and doc (`///`) comments, block comments (`/* */`)
-- Declaration keywords (`conversation`, `judge`, `validator`, `dataset`, `type`, `benchmark`, `import`)
+- Declaration keywords (`conversation`, `judge`, `validator`, `dataset`, `type`, `provider`, `benchmark`, `import`)
 - Control keywords (`with`, `ask`, `match`, `retry`, `escalate`, `for`, `while`, `if`, `else`, ...)
 - Message roles (`system`, `user`, `assistant`)
 - The fourteen artifact-type keywords (`text`, `image`, `pdf`, ...)
 - Triple-quoted text blocks, with `{interpolation}` spans highlighted as embedded code
 - Capitalized identifiers as type/variant names (`Verdict`, `Pass`, `Fail`, ...)
 - Function/capability calls, numbers, operators, punctuation
+- Field/property names and named-arg labels (`vendor:`, `rubric:`, `ask chat(temperature: 0.7)`) — anything shaped like `identifier:`
