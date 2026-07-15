@@ -42,18 +42,30 @@ jobs:
             archive_ext: tar.gz
             linker_pkg: gcc-aarch64-linux-gnu
             linker_env: aarch64-linux-gnu-gcc
-          - os: macos-13
+          # Both Darwin targets build on macos-latest (Apple Silicon),
+          # cross-compiling x86_64-apple-darwin from there via `--target`
+          # rather than using a separate Intel runner (macos-13) --
+          # verified stuck for 10+ hours with zero runner ever picking up
+          # its job (every other matrix entry, including the other Darwin
+          # target on macos-latest, completed in ~2 minutes), consistent
+          # with macos-13 having been deprecated/pulled from the pool.
+          # Apple Silicon hosts have always been able to cross-link
+          # x86_64-apple-darwin (the same toolchain path universal2
+          # binaries use), so this needs no other change.
+          - os: macos-latest
             target: x86_64-apple-darwin
             archive_ext: tar.gz
+            rustflags: "-C link-arg=-ld_classic"
           - os: macos-latest
             target: aarch64-apple-darwin
             archive_ext: tar.gz
             # macos-latest's default Xcode ships Apple's newer linker
             # (ld-prime), which has a known assertion-failure bug on long
             # Rust-mangled symbol names ("makeSymbolStringInPlace ...
-            # name.size() <= maxLength") -- macos-13's older Xcode default
-            # (used by x86_64-apple-darwin above) isn't affected. Forcing
-            # the classic linker is the documented workaround.
+            # name.size() <= maxLength"). Forcing the classic linker is the
+            # documented workaround -- needed for both Darwin targets now
+            # that both build here (macos-13's older Xcode default wasn't
+            # affected, but macos-13 is no longer in use, see above).
             rustflags: "-C link-arg=-ld_classic"
           - os: windows-latest
             target: x86_64-pc-windows-msvc
@@ -140,7 +152,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "22"
           cache: npm
           cache-dependency-path: tooling/vscode-ulx/package-lock.json
 
@@ -191,6 +203,10 @@ jobs:
             echo "OVSX_PAT not set -- skipping Open VSX publish (the .vsix release asset still works via 'code --install-extension')"
             exit 0
           fi
+          # First publish needs the "ulexite" namespace to exist under the
+          # account OVSX_PAT belongs to -- create it if missing (harmless,
+          # already-exists no-op on every release after the first).
+          npx ovsx create-namespace ulexite -p "$OVSX_PAT" || true
           npx ovsx publish ulexite.vsix -p "$OVSX_PAT"
 
   release:
