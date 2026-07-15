@@ -1,8 +1,28 @@
 // examples/pdf_qa.ulx
 // See docs/spec/21-examples.md §21.3
+//
+// Same vendor split as summarize.ulx: `vision` (the OCR fallback) on
+// Anthropic, `chat` on Groq. Self-contained, no ulexite.toml needed —
+// export ANTHROPIC_API_KEY/GROQ_API_KEY to run it for real. Note:
+// `pdf.extract_text`/`pdf.to_images` are always the same canned stdlib
+// placeholder today regardless of provider (§15.5 isn't implemented for
+// real yet), so `text_layer.length > 0` is always true and the `vision`
+// branch never actually executes — declared/pinned here for when it does.
 
 import "pdf" as pdf
 import "vision" as vision
+
+provider Anthropic {
+  vendor: "anthropic"
+  api_key_env: "ANTHROPIC_API_KEY"
+  vision: "claude-haiku-4-5-20251001"
+}
+
+provider Groq {
+  vendor: "groq"
+  api_key_env: "GROQ_API_KEY"
+  chat: "llama-3.3-70b-versatile"
+}
 
 conversation PdfQA(doc: pdf, question: text) -> text {
   with {
@@ -10,9 +30,9 @@ conversation PdfQA(doc: pdf, question: text) -> text {
     page_images  = pdf.to_images(doc)
   }
   ocr_text = if text_layer.length > 0 { text_layer } else {
-    ask vision(page_images) { user: """Transcribe all text in these pages.""" }
+    ask vision(page_images, provider: "Anthropic") { user: """Transcribe all text in these pages.""" }
   }
-  ask chat() {
+  ask chat(provider: "Groq") {
     system: """Answer strictly using the provided document text."""
     user: """Document:\n{ocr_text}\n\nQuestion: {question}"""
   } -> answer: text

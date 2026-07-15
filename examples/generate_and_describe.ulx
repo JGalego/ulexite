@@ -1,16 +1,31 @@
 // examples/generate_and_describe.ulx
 // See docs/spec/21-examples.md §21.11
 //
-// Exercises generate_image -> vision end to end: generate an image from a
-// text prompt, then describe the image the model just generated. Against
-// the mock provider (the default) both capabilities return a canned
-// placeholder; against a real vendor the generated image is written to a
-// local temp file (no artifact store yet, §24 Limitations) and that same
-// path is fed straight back into `vision`. Try it for real:
+// generate_image -> vision, each pinned to a different vendor via
+// `provider: "name"` — genuinely cross-vendor: OpenAI generates the image
+// (generate_image is openai_compatible-only, §24.10), Anthropic describes
+// it back. The generated image is written to a local file (no artifact
+// store yet, §24 Limitations) and that same path is fed straight into
+// Anthropic's vision call, with no special-casing for the fact that the
+// image was just synthesized rather than supplied by the caller.
+// Self-contained, no ulexite.toml needed — export
+// OPENAI_API_KEY/ANTHROPIC_API_KEY to run it for real:
 //   ulx run examples/generate_and_describe.ulx GenerateAndDescribe --arg prompt="a lighthouse at sunset"
 
+provider OpenAI {
+  vendor: "openai"
+  api_key_env: "OPENAI_API_KEY"
+  generate_image: "gpt-image-1"
+}
+
+provider Anthropic {
+  vendor: "anthropic"
+  api_key_env: "ANTHROPIC_API_KEY"
+  vision: "claude-haiku-4-5-20251001"
+}
+
 conversation GenerateAndDescribe(prompt: text) -> text {
-  ask generate_image() { user: """{prompt}""" } -> picture: image
-  ask vision(picture) { user: """Describe what you generated in one sentence.""" } -> description: text
+  ask generate_image(provider: "OpenAI") { user: """{prompt}""" } -> picture: image
+  ask vision(picture, provider: "Anthropic") { user: """Describe what you generated in one sentence.""" } -> description: text
   description
 }

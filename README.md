@@ -34,13 +34,25 @@ cargo install --git https://github.com/JGalego/ulexite ulx-cli --locked
 
 ## Try it
 
+Scaffold a package and run it against a real provider — `ulx init` leaves
+`ulexite.toml`'s `[providers.*]` empty, so add one:
+
 ```sh
 ulx init my-first-package /tmp/my-first-package
-ulx check /tmp/my-first-package/main.ulx
-ulx run /tmp/my-first-package/main.ulx Hello --arg name=world --mock
+cd /tmp/my-first-package
+ulx check main.ulx
+cat >> ulexite.toml <<'EOF'
+
+[providers.anthropic]
+vendor = "anthropic"
+api_key_env = "ANTHROPIC_API_KEY"
+chat = "claude-haiku-4-5-20251001"
+EOF
+export ANTHROPIC_API_KEY=sk-ant-...
+ulx run main.ulx Hello --arg name=world
 ```
 
-Or drive a shipped example against a real provider:
+Or drive a shipped example:
 
 ```sh
 cd examples
@@ -49,7 +61,7 @@ cp ulexite.example.toml ulexite.toml
 ulx run translate.ulx Translate --arg source=hello --arg target_lang=fr
 ```
 
-Human-approval suspend/resume round trip (this one forces a judge escalation, so it stays on `--mock`):
+Human-approval suspend/resume round trip. Forcing a real judge to escalate isn't reliable on demand, so this one uses the deterministic offline provider (`--mock`) instead:
 
 ```sh
 ulx run translate.ulx Translate --arg source="MOCK_JUDGE_ESCALATE please" --arg target_lang=fr --run-id demo --mock
@@ -175,17 +187,7 @@ Start at [docs/spec/00-index.md](docs/spec/00-index.md) for the full table of co
 
 ## Example programs
 
-The `.ulx` programs referenced by the spec live in [`examples/`](examples/) and all run against the mock provider by default (`cargo test` covers this end to end). Three exercise real-vendor capabilities:
-
-```sh
-cd examples
-export OPENAI_API_KEY=sk-...
-cp ulexite.example.toml ulexite.toml
-
-ulx run rag.ulx Caption --arg photo=fixtures/sample.jpg                                      # vision
-ulx run voice_memo.ulx VoiceMemoReply --arg recording=fixtures/sample.wav                     # transcribe + speak
-ulx run generate_and_describe.ulx GenerateAndDescribe --arg prompt="a lighthouse at sunset"   # generate_image + vision
-```
+The `.ulx` programs referenced by the spec live in [`examples/`](examples/) — every one `ulx check`s with no configuration at all, and `cargo test` replays them offline end to end. Several (`voice_memo.ulx`, `rag.ulx`, `summarize.ulx`, `pdf_qa.ulx`, `generate_and_describe.ulx`) declare their own `provider` blocks and mix real vendors per capability out of the box — just export the API key(s) they need. See [`examples/README.md`](examples/README.md) for the full index and exact commands.
 
 ## Contributing / CI
 

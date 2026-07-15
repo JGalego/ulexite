@@ -1,5 +1,13 @@
 // examples/rag.ulx
 // See docs/spec/21-examples.md §21.4
+//
+// Three capabilities, three vendors, each pinned via `provider: "name"`
+// (§12.4, same self-contained pattern as voice_memo.ulx): `vision` needs
+// Anthropic/openai_compatible/gemini/ollama/azure_openai (not Groq — it
+// has no vision API); `embed` needs openai_compatible/gemini/cohere/
+// ollama/azure_openai (not Groq or Anthropic — neither embeds); `chat`
+// works everywhere, so it goes to Groq for speed. No ulexite.toml needed;
+// export ANTHROPIC_API_KEY/OPENAI_API_KEY/GROQ_API_KEY and drop --mock.
 
 import "vector" as vector
 import "embedding" as embedding
@@ -8,15 +16,33 @@ dataset KnowledgeBase: [{doc_id: text, chunk: text, embedding: embedding<1536>}]
   from "kb/chunks.jsonl"
 }
 
+provider Anthropic {
+  vendor: "anthropic"
+  api_key_env: "ANTHROPIC_API_KEY"
+  vision: "claude-haiku-4-5-20251001"
+}
+
+provider OpenAI {
+  vendor: "openai"
+  api_key_env: "OPENAI_API_KEY"
+  embed: "text-embedding-3-small"
+}
+
+provider Groq {
+  vendor: "groq"
+  api_key_env: "GROQ_API_KEY"
+  chat: "llama-3.3-70b-versatile"
+}
+
 conversation Caption(photo: image) -> text {
-  ask vision(photo) { user: """Describe this image in one sentence.""" } -> caption: text
+  ask vision(photo, provider: "Anthropic") { user: """Describe this image in one sentence.""" } -> caption: text
   caption
 }
 
 conversation AnsweredByRAG(question: text) -> text {
-  q_embedding = embedding.of(question, model: capability(embed))
+  q_embedding = embedding.of(question, model: capability(embed), provider: "OpenAI")
   top_chunks  = vector.nearest(query: q_embedding, index: KnowledgeBase, k: 5)
-  ask chat() {
+  ask chat(provider: "Groq") {
     system: """Answer only from the provided context; say 'I don't know' if the context is insufficient."""
     user: """Context:\n{top_chunks}\n\nQuestion: {question}"""
   } -> answer: text

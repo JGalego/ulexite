@@ -1,12 +1,30 @@
 // examples/summarize.ulx
 // See docs/spec/21-examples.md §21.2
+//
+// `vision`'s pinned to Anthropic — of the vendors that implement vision,
+// it's the only one that accepts a `.pdf` reference directly (§24.10);
+// everyone else rejects it. `chat` goes to Groq. Self-contained, no
+// ulexite.toml needed (§12.4, same pattern as voice_memo.ulx) — export
+// ANTHROPIC_API_KEY/GROQ_API_KEY to run it for real.
+
+provider Anthropic {
+  vendor: "anthropic"
+  api_key_env: "ANTHROPIC_API_KEY"
+  vision: "claude-haiku-4-5-20251001"
+}
+
+provider Groq {
+  vendor: "groq"
+  api_key_env: "GROQ_API_KEY"
+  chat: "llama-3.3-70b-versatile"
+}
 
 conversation Summarize(doc: pdf) -> text {
   with {
-    outline  = ask vision(doc) { user: """Extract a section outline.""" }
-    keyfacts = ask vision(doc) { user: """List the five most important facts.""" }
+    outline  = ask vision(doc, provider: "Anthropic") { user: """Extract a section outline.""" }
+    keyfacts = ask vision(doc, provider: "Anthropic") { user: """List the five most important facts.""" }
   }
-  ask chat() {
+  ask chat(provider: "Groq") {
     system: """You are a technical writer."""
     user: """Using this outline: {outline}\nAnd these facts: {keyfacts}\nWrite a one-page summary."""
   } -> summary: text
