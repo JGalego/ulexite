@@ -87,9 +87,92 @@ it (§16, narrower-than-spec scope).
 against its own inline mock-vendor provider to demonstrate the `provider {
 ... }` declaration mechanism itself, not a real vendor call.
 
+## Demos
+
+Recorded with [VHS](https://github.com/charmbracelet/vhs) (tape scripts in
+[`demos/`](demos)) against real vendors — genuine output, not staged, so
+exact wording will differ if you regenerate them (`vhs demos/<name>.tape`
+from the repo root). Two are honest, not flattering: `pdf_qa.ulx` shows
+today's `pdf.extract_text` placeholder limitation, and `eval_translate.ulx`
+shows `ulx bench` failing outright on a mid-run judge escalation rather
+than suspending — both noted above and left in on purpose.
+
+<details>
+<summary><code>translate.ulx</code> — judge-checked retry with human escalation</summary>
+
+![translate.ulx demo](demos/translate.gif)
+</details>
+
+<details>
+<summary><code>summarize.ulx</code> — parallel <code>with</code>-block extraction, vision on Anthropic + chat on Groq</summary>
+
+![summarize.ulx demo](demos/summarize.gif)
+</details>
+
+<details>
+<summary><code>pdf_qa.ulx</code> — OCR fallback (shows the current pdf.extract_text placeholder limitation)</summary>
+
+![pdf_qa.ulx demo](demos/pdf_qa.gif)
+</details>
+
+<details>
+<summary><code>rag.ulx</code> — captioning + RAG, three capabilities across three vendors</summary>
+
+![rag.ulx demo](demos/rag.gif)
+</details>
+
+<details>
+<summary><code>multi_agent.ulx</code> — nested conversations handing off, judge-gated</summary>
+
+![multi_agent.ulx demo](demos/multi_agent.gif)
+</details>
+
+<details>
+<summary><code>batch.ulx</code> — sequential <code>for</code> loop over a dataset</summary>
+
+![batch.ulx demo](demos/batch.gif)
+</details>
+
+<details>
+<summary><code>eval_translate.ulx</code> — benchmark (shows <code>ulx bench</code> failing on a mid-run judge escalation)</summary>
+
+![eval_translate.ulx demo](demos/eval_translate.gif)
+</details>
+
+<details>
+<summary><code>approval.ulx</code> — suspend/resume checkpoint</summary>
+
+![approval.ulx demo](demos/approval.gif)
+</details>
+
+<details>
+<summary><code>voice_memo.ulx</code> — transcribe → chat → speak across Groq + OpenAI</summary>
+
+![voice_memo.ulx demo](demos/voice_memo.gif)
+</details>
+
+<details>
+<summary><code>generate_and_describe.ulx</code> — generate_image (OpenAI) → vision (Anthropic), cross-vendor</summary>
+
+![generate_and_describe.ulx demo](demos/generate_and_describe.gif)
+</details>
+
+<details>
+<summary><code>custom_provider.ulx</code> — declaring a provider directly in source</summary>
+
+![custom_provider.ulx demo](demos/custom_provider.gif)
+</details>
+
+<details>
+<summary><code>prompt_from_file.ulx</code> — prompt text loaded from disk</summary>
+
+![prompt_from_file.ulx demo](demos/prompt_from_file.gif)
+</details>
+
 ## Supporting data
 
 - [`fixtures/`](fixtures) — sample inputs (`sample.pdf`, `sample.jpg`, `sample.wav`, `translations.jsonl`) used by the examples and by `eval_translate.ulx`'s dataset.
 - [`kb/`](kb) — `chunks.jsonl`, the knowledge base `rag.ulx` queries.
 - [`tickets/`](tickets) — `backlog.jsonl`, the dataset `batch.ulx` iterates over.
 - [`prompts/`](prompts) — the on-disk prompt files `prompt_from_file.ulx` loads.
+- [`demos/`](demos) — the VHS `.tape` scripts that recorded the GIFs above.

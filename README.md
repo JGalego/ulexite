@@ -183,7 +183,7 @@ If two registered providers serve the same capability and nothing disambiguates 
 
 A `provider` block can also be declared directly in `.ulx` source — standalone, or layered on a `ulexite.toml` entry with `from`:
 
-```json
+```
 provider Local {
   vendor: "openai_compatible"
   base_url: "http://localhost:8000/v1"
