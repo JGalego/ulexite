@@ -17,32 +17,31 @@ Ulexite is a programming language for conversational AI interactions. Its primar
 
 ## Install
 
-**Prebuilt binaries** — detects your OS/architecture automatically and installs both `ulx` (the CLI) and `ulx-lsp` (the language server, so an editor extension works immediately with no separate step):
+**📦 Prebuilt binaries** — detects your OS/architecture automatically and installs both `ulx` (the CLI) and `ulx-lsp` (the language server, so an editor extension works immediately with no separate step):
 
 ```sh
-# Linux / macOS (x86_64 or arm64)
+# 🐧 Linux / 🍎 macOS (x86_64 or arm64)
 curl -fsSL https://raw.githubusercontent.com/JGalego/ulexite/main/scripts/install.sh | sh
 
-# Windows (x86_64), in PowerShell
+# 🪟 Windows (x86_64), in PowerShell
 irm https://raw.githubusercontent.com/JGalego/ulexite/main/scripts/install.ps1 | iex
 ```
 
-**From source** (needs Rust):
+**🦀 From source** (needs Rust):
 
 ```sh
 cargo install --git https://github.com/JGalego/ulexite ulx-cli --locked
 cargo install --git https://github.com/JGalego/ulexite ulx-lsp --locked   # only needed for editor support
 ```
 
-**VS Code / VSCodium / Cursor / Windsurf extension** — syntax highlighting plus hover, go-to-definition, document symbols, and completion via `ulx-lsp` (installed above):
+**🧩 VS Code / VSCodium / Cursor / Windsurf extension** — syntax highlighting plus hover, go-to-definition, document symbols, and completion via `ulx-lsp` (installed above):
 
 - Search the Marketplace/Open VSX for **"Ulexite"** and install, or
 - Grab the `.vsix` from the [latest release](https://github.com/JGalego/ulexite/releases/latest) and run `code --install-extension ulexite-*.vsix` (substitute `code` for `cursor`/`windsurf`/`codium` as needed).
 
 ## Try it
 
-Scaffold a package and run it against a real provider — `ulx init` leaves
-`ulexite.toml`'s `[providers.*]` empty, so add one:
+Scaffold a package and run it against a real provider — `ulx init` leaves `ulexite.toml`'s `[providers.*]` empty, so add one:
 
 ```sh
 ulx init my-first-package /tmp/my-first-package
@@ -59,13 +58,13 @@ export ANTHROPIC_API_KEY=sk-ant-...
 ulx run main.ulx Hello --arg name=world
 ```
 
-Or drive a shipped example:
+Or drive a shipped example — `voice_memo.ulx` declares its own `provider` blocks right in the source (§21.10), so no `ulexite.toml` is needed:
 
 ```sh
 cd examples
+export GROQ_API_KEY=gsk_...
 export OPENAI_API_KEY=sk-...
-cp ulexite.example.toml ulexite.toml
-ulx run translate.ulx Translate --arg source=hello --arg target_lang=fr
+ulx run voice_memo.ulx VoiceMemoReply --arg recording=fixtures/sample.wav
 ```
 
 Human-approval suspend/resume round trip. Forcing a real judge to escalate isn't reliable on demand, so this one uses the deterministic offline provider (`--mock`) instead:
@@ -74,6 +73,62 @@ Human-approval suspend/resume round trip. Forcing a real judge to escalate isn't
 ulx run translate.ulx Translate --arg source="MOCK_JUDGE_ESCALATE please" --arg target_lang=fr --run-id demo --mock
 ulx approve demo --value "human said: ship it"   # reuses the run's --mock automatically
 ulx trace demo
+```
+
+Sample output — `ulx run` suspends on the judge's `Escalate`, `ulx approve` resumes and completes it, both as a dialogue transcript followed by a metadata footer:
+
+```text
+🧭 system: You are a professional translator.
+
+🧑 user: Translate to fr: MOCK_JUDGE_ESCALATE please
+
+🤖 assistant: [mock:chat] response to -> system: You are a professional translator. | user: Translate to fr: MOCK_JUDGE_ESCALATE please
+
+⚖️  judge Fluency: Escalate
+
+🙋 escalate human_approval: judge could not decide (suspended)
+
+suspended: waiting on `human_approval` — judge could not decide
+────────────────────────────────────────────
+run id        demo
+status        suspended
+capabilities  chat, judge, escalate
+provider      mock — chat, judge
+resume with: ulx approve demo --value <text>   (or: ulx deny demo)
+```
+
+```text
+$ ulx approve demo --value "human said: ship it"
+🧭 system: You are a professional translator.
+
+🧑 user: Translate to fr: MOCK_JUDGE_ESCALATE please
+
+🤖 assistant: [mock:chat] response to -> system: You are a professional translator. | user: Translate to fr: MOCK_JUDGE_ESCALATE please
+
+⚖️  judge Fluency: Escalate
+
+🙋 escalate human_approval: judge could not decide => human said: ship it
+
+human said: ship it
+────────────────────────────────────────────
+run id        demo
+status        ok
+capabilities  chat, judge, escalate
+provider      mock — chat, judge
+```
+
+Colors show in a real terminal (disable with `NO_COLOR=1`); `ulx trace demo` replays every record from the log instead — one line per capability call, oldest first, `[miss]`/`[hit]`/`[err ]` marking cache status:
+
+```text
+#0   [miss] chat       [mock:chat] response to -> system: You are a professional translator. | user: Translate to fr: MOCK_...
+#1   [miss] judge      Escalate
+#2   [err ] escalate   suspended
+#0   [hit ] chat       [mock:chat] response to -> system: You are a professional translator. | user: Translate to fr: MOCK_...
+#1   [hit ] judge      Escalate
+#2   [err ] escalate   suspended
+#0   [hit ] chat       [mock:chat] response to -> system: You are a professional translator. | user: Translate to fr: MOCK_...
+#1   [hit ] judge      Escalate
+#2   [hit ] escalate   human said: ship it
 ```
 
 Or answer it live at the terminal instead, with `--interactive`:
@@ -128,7 +183,7 @@ If two registered providers serve the same capability and nothing disambiguates 
 
 A `provider` block can also be declared directly in `.ulx` source — standalone, or layered on a `ulexite.toml` entry with `from`:
 
-```
+```json
 provider Local {
   vendor: "openai_compatible"
   base_url: "http://localhost:8000/v1"
@@ -157,9 +212,38 @@ See [`examples/custom_provider.ulx`](examples/custom_provider.ulx) for a runnabl
 
 ```sh
 cd examples
-run_id=$(ulx run translate.ulx Translate --arg source=hello --arg target_lang=fr --mock --output json | jq -r .run_id)
+export GROQ_API_KEY=gsk_...
+export OPENAI_API_KEY=sk-...
+run_id=$(ulx run voice_memo.ulx VoiceMemoReply --arg recording=fixtures/sample.wav --output json | jq -r .run_id)
 ulx trace "$run_id" --output mermaid
+ulx trace "$run_id" --output jsonl
 ulx trace "$run_id" --output html > trace.html
+```
+
+`voice_memo.ulx` declares its own `provider` blocks (§21.10), so no `ulexite.toml` is needed — it pins `transcribe`/`chat` to Groq and `speak` to OpenAI right in the source, one real vendor call per capability.
+
+Sample `mermaid` output:
+
+```mermaid
+sequenceDiagram
+    participant Program
+    participant transcribe as transcribe
+    participant chat as chat
+    participant speak as speak
+    Program->>+transcribe: #0 transcribe
+    transcribe-->>-Program: [miss] Hey! This is a quick voice memo about the quarterly report. Can you send me a o...
+    Program->>+chat: #1 chat
+    chat-->>-Program: [miss] I've gone ahead and prepared a brief summary, which I'll send over to you shortl...
+    Program->>+speak: #2 speak
+    speak-->>-Program: [miss] .ulexite/artifacts/5e/d29d0f8cb4c24c.mp3
+```
+
+Sample `jsonl` output — one record per line, oldest first:
+
+```json
+{"cache_hit":false,"capability":"transcribe","error":null,"input":[],"kind":"effect","output":" Hey! This is a quick voice memo about the quarterly report. Can you send me a one-line summary before the meeting?","seq":0,"timestamp_ms":1784128850492}
+{"cache_hit":false,"capability":"chat","error":null,"input":[{"role":"system","text":"You write a one-sentence spoken reply to a voice memo."},{"role":"user","text":"Voice memo transcript:\n Hey! This is a quick voice memo about the quarterly report. Can you send me a one-line summary before the meeting?"}],"kind":"effect","output":"I've gone ahead and prepared a brief summary, which I'll send over to you shortly, outlining our key quarterly metrics and performance highlights.","seq":1,"timestamp_ms":1784128850854}
+{"cache_hit":false,"capability":"speak","error":null,"input":[{"role":"user","text":"I've gone ahead and prepared a brief summary, which I'll send over to you shortly, outlining our key quarterly metrics and performance highlights."}],"kind":"effect","output":".ulexite/artifacts/5e/d29d0f8cb4c24c.mp3","seq":2,"timestamp_ms":1784128853144}
 ```
 
 `ulx run` also takes `--no-cache`, which skips the cache *read* for `ask`/`judge` calls (forcing a fresh live call every time) without touching `escalate`'s own cache entry — useful when iterating on a prompt/rubric under the same `--run-id`/args, where a stale cache hit would otherwise hide the change.

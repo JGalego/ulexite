@@ -34,6 +34,7 @@ ulexite = "^0.1"
 vendor         = "openai"
 api_key_env    = "OPENAI_API_KEY"
 chat           = "gpt-4o-mini"
+judge          = "gpt-4o-mini"
 vision         = "gpt-4o-mini"
 embed          = "text-embedding-3-small"
 transcribe     = "whisper-1"
@@ -58,6 +59,7 @@ base_url    = "https://my-resource.openai.azure.com"
 api_key_env = "AZURE_OPENAI_API_KEY"
 api_version = "2024-06-01"
 chat        = "my-gpt4o-deployment"
+judge       = "my-gpt4o-deployment"
 vision      = "my-gpt4o-deployment"
 embed       = "my-embedding-deployment"
 
@@ -66,6 +68,7 @@ embed       = "my-embedding-deployment"
 vendor      = "anthropic"
 api_key_env = "ANTHROPIC_API_KEY"
 chat        = "claude-3-5-sonnet-20241022"
+judge       = "claude-3-5-sonnet-20241022"
 vision      = "claude-3-5-sonnet-20241022"
 
 # Gemini — chat/vision/embed; vision only reads local files today (no
@@ -74,6 +77,7 @@ vision      = "claude-3-5-sonnet-20241022"
 vendor      = "gemini"
 api_key_env = "GEMINI_API_KEY"
 chat        = "gemini-1.5-flash"
+judge       = "gemini-1.5-flash"
 vision      = "gemini-1.5-flash"
 embed       = "text-embedding-004"
 
@@ -82,6 +86,7 @@ embed       = "text-embedding-004"
 vendor      = "groq"
 api_key_env = "GROQ_API_KEY"
 chat        = "llama-3.3-70b-versatile"
+judge       = "llama-3.3-70b-versatile"
 transcribe  = "whisper-large-v3"
 
 # Cohere — chat (v2) + embed; no vision API to speak of.
@@ -89,6 +94,7 @@ transcribe  = "whisper-large-v3"
 vendor      = "cohere"
 api_key_env = "COHERE_API_KEY"
 chat        = "command-r"
+judge       = "command-r"
 embed       = "embed-english-v3.0"
 
 # Ollama — local, no API key. `vision` needs a multimodal model (e.g.
@@ -97,6 +103,7 @@ embed       = "embed-english-v3.0"
 [providers.ollama]
 vendor = "ollama"
 chat   = "llama3"
+judge  = "llama3"
 vision = "llava"
 embed  = "nomic-embed-text"
 
@@ -107,6 +114,7 @@ embed  = "nomic-embed-text"
 vendor   = "openai_compatible"
 base_url = "http://localhost:8000/v1"
 chat     = "meta-llama/Llama-3-8b"
+judge    = "meta-llama/Llama-3-8b"
 
 # The deterministic offline default — rarely declared explicitly since
 # it's already what runs with no ulexite.toml at all; shown here only for

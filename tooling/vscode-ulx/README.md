@@ -1,17 +1,22 @@
 # Ulexite VS Code extension
 
-TextMate-grammar syntax highlighting (§20.10) plus a `vscode-languageclient` client for `ulx-lsp` (§20.2's language server — see [`docs/spec/20-ide-integration.md`](../../docs/spec/20-ide-integration.md)): diagnostics, hover, go-to-definition, document symbols, and completion for `.ulx` files.
+TextMate-grammar syntax highlighting plus a `vscode-languageclient` client for `ulx-lsp` (the language server): hover, go-to-definition, document symbols, and completion for `.ulx` files.
 
-## Build the language server
+## Get the language server
 
-The extension doesn't bundle `ulx-lsp` — build it once from the repo root and either put it on `PATH` or point the extension at it:
+The extension doesn't bundle `ulx-lsp` — it execs the binary by name off `PATH`. The easiest way to get it is the same install as the CLI, which installs both together:
 
 ```sh
-cargo build --release -p ulx-lsp
-# binary lands at target/release/ulx-lsp
+# Linux / macOS (x86_64 or arm64)
+curl -fsSL https://raw.githubusercontent.com/JGalego/ulexite/main/scripts/install.sh | sh
+
+# Windows (x86_64), in PowerShell
+irm https://raw.githubusercontent.com/JGalego/ulexite/main/scripts/install.ps1 | iex
 ```
 
-If it's not on `PATH`, set the `ulexite.serverPath` setting (in VS Code's settings UI, or `.vscode/settings.json`) to the built binary's full path.
+Building from source works too: `cargo build --release -p ulx-lsp` (binary lands at `target/release/ulx-lsp`).
+
+If it's not on `PATH`, set the `ulexite.serverPath` setting (in VS Code's settings UI, or `.vscode/settings.json`) to the binary's full path.
 
 ## Try it locally
 
@@ -19,8 +24,8 @@ If it's not on `PATH`, set the `ulexite.serverPath` setting (in VS Code's settin
 cd tooling/vscode-ulx
 npm install
 npm run compile
-npx --yes @vscode/vsce package   # produces ulexite-0.0.1.vsix
-code --install-extension ulexite-0.0.1.vsix
+npx --yes @vscode/vsce package   # produces ulexite-<version>.vsix
+code --install-extension ulexite-*.vsix
 ```
 
 Or just symlink/copy this folder (after `npm install && npm run compile`, so `out/` exists) into your VS Code extensions directory (`~/.vscode/extensions/ulexite-dev`) and reload the window.
