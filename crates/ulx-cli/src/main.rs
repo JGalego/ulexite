@@ -87,6 +87,15 @@ enum Command {
         /// after the process has exited).
         #[arg(long)]
         interactive: bool,
+        /// Skip the cache for `ask`/`judge` calls, forcing a fresh live
+        /// call every time instead of reusing a prior identical result —
+        /// useful when iterating on a prompt/rubric under the same
+        /// `--run-id`/args, where a stale cache hit would otherwise hide
+        /// the change. Never bypasses `escalate`'s own cache entry, since
+        /// that's the persistence mechanism `ulx approve`/`ulx
+        /// deny`/`--interactive` rely on, not a cost optimization.
+        #[arg(long)]
+        no_cache: bool,
     },
     /// Run a `benchmark` declaration to completion (§16): loads its
     /// `dataset:`, runs the benchmark body once per row, and prints a
@@ -195,6 +204,7 @@ fn main() {
             mock,
             output,
             interactive,
+            no_cache,
         } => cmd_run(
             &file,
             &conversation,
@@ -204,6 +214,7 @@ fn main() {
             mock,
             output,
             interactive,
+            no_cache,
         ),
         Command::Bench {
             file,
@@ -356,17 +367,19 @@ fn build_context<'a>(
     providers: ProviderRegistry,
     file: &std::path::Path,
     run_id: &str,
+    no_cache: bool,
 ) -> std::io::Result<RunContext<'a>> {
     let cache = Cache::new(manifest::cache_dir())?;
     let trace = TraceWriter::create(manifest::traces_dir(), run_id)?;
-    Ok(RunContext::new(
+    let ctx = RunContext::new(
         ir,
         providers,
         cache,
         trace,
         run_id.to_string(),
         manifest::base_dir_of(file),
-    ))
+    );
+    Ok(if no_cache { ctx.without_cache() } else { ctx })
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -379,6 +392,7 @@ fn cmd_run(
     force_mock: bool,
     output: OutputFormat,
     interactive: bool,
+    no_cache: bool,
 ) -> bool {
     let Some(loaded) = pipeline::load(file) else {
         return false;
@@ -417,6 +431,7 @@ fn cmd_run(
             &run_id,
             selected_providers,
             force_mock,
+            no_cache,
         );
     }
 
@@ -432,7 +447,7 @@ fn cmd_run(
             return false;
         }
     };
-    let ctx = match build_context(&loaded.ir, providers, file, &run_id) {
+    let ctx = match build_context(&loaded.ir, providers, file, &run_id, no_cache) {
         Ok(c) => c,
         Err(e) => {
             eprintln!("error: could not set up run context: {e}");
@@ -464,6 +479,7 @@ fn run_interactive(
     run_id: &str,
     selected_providers: &[String],
     force_mock: bool,
+    no_cache: bool,
 ) -> bool {
     loop {
         let providers = match providers::resolve_providers(
@@ -478,7 +494,7 @@ fn run_interactive(
                 return false;
             }
         };
-        let ctx = match build_context(&loaded.ir, providers, file, run_id) {
+        let ctx = match build_context(&loaded.ir, providers, file, run_id, no_cache) {
             Ok(c) => c,
             Err(e) => {
                 eprintln!("error: could not set up run context: {e}");
@@ -710,7 +726,7 @@ fn cmd_bench(
             return false;
         }
     };
-    let ctx = match build_context(&loaded.ir, providers, file, &run_id) {
+    let ctx = match build_context(&loaded.ir, providers, file, &run_id, false) {
         Ok(c) => c,
         Err(e) => {
             eprintln!("error: could not set up run context: {e}");
@@ -807,7 +823,8 @@ fn resume(
             return false;
         }
     };
-    let probe_ctx = match build_context(&loaded.ir, probe_providers, &manifest.file, run_id) {
+    let probe_ctx = match build_context(&loaded.ir, probe_providers, &manifest.file, run_id, false)
+    {
         Ok(c) => c,
         Err(e) => {
             eprintln!("error: could not set up run context: {e}");
@@ -843,7 +860,7 @@ fn resume(
             return false;
         }
     };
-    let ctx = match build_context(&loaded.ir, providers, &manifest.file, run_id) {
+    let ctx = match build_context(&loaded.ir, providers, &manifest.file, run_id, false) {
         Ok(c) => c,
         Err(e) => {
             eprintln!("error: could not set up run context: {e}");
@@ -919,7 +936,7 @@ fn cmd_replay(run_id: &str, output: OutputFormat) -> bool {
         Ok(p) => p,
         Err(_) => ProviderRegistry::with_mock(),
     };
-    let ctx = match build_context(&loaded.ir, providers, &manifest.file, run_id) {
+    let ctx = match build_context(&loaded.ir, providers, &manifest.file, run_id, false) {
         Ok(c) => c.replaying(),
         Err(e) => {
             eprintln!("error: could not set up run context: {e}");

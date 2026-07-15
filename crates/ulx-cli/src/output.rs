@@ -187,7 +187,49 @@ pub(crate) fn truncate(s: &str, max_chars: usize) -> String {
     }
 }
 
+/// Collapses a raw trace down to one entry per effect for the human-facing
+/// diagram renders (`mermaid`/`html`) — a suspended run's `escalate(...)`
+/// resume (`ulx approve`/`ulx deny`/`ulx run --interactive`) replays the
+/// *entire* conversation from the top (§10.7), so the raw trace log
+/// contains a full second pass of `[hit]` records for every step already
+/// answered, plus whatever changed (typically the escalate itself, now
+/// resolved instead of suspended). Rendered verbatim, that reads as the
+/// same steps happening twice, which tells a confusing story rather than
+/// the true one. Since a later record for the same `cache_key` is always
+/// at least as informative as an earlier one — a hit reproduces the same
+/// result, or turns a prior suspension into its resolved value — keeping
+/// only the *last* record per `cache_key` (in first-appearance order)
+/// gives a clean, accurate single-pass diagram. Records with no
+/// `cache_key` (there are none today, but nothing guarantees that forever)
+/// are never collapsed into each other.
+///
+/// `ulx trace`'s plain-text table and `--output jsonl`/`json` deliberately
+/// do NOT go through this — those exist for audit/debugging, where "every
+/// attempt, exactly as it happened" is the point (`trace.rs`'s "single
+/// source of truth" doc comment), not a story to simplify.
+fn dedup_for_diagram(records: &[TraceRecord]) -> Vec<TraceRecord> {
+    let mut order: Vec<String> = Vec::new();
+    let mut latest: std::collections::HashMap<String, TraceRecord> =
+        std::collections::HashMap::new();
+    for (i, r) in records.iter().enumerate() {
+        let key = r
+            .cache_key
+            .clone()
+            .unwrap_or_else(|| format!("__no_cache_key_seq_{i}"));
+        if !latest.contains_key(&key) {
+            order.push(key.clone());
+        }
+        latest.insert(key, r.clone());
+    }
+    order
+        .into_iter()
+        .map(|k| latest.remove(&k).expect("just inserted"))
+        .collect()
+}
+
 fn render_trace_mermaid(records: &[TraceRecord]) -> String {
+    let records = dedup_for_diagram(records);
+    let records = records.as_slice();
     let mut participants: Vec<&str> = Vec::new();
     for r in records {
         let label = r.capability.as_deref().unwrap_or(r.kind.as_str());
@@ -300,6 +342,9 @@ fn render_trace_html(records: &[TraceRecord]) -> String {
         .map(|r| r.run_id.as_str())
         .unwrap_or("unknown");
 
+    let records = dedup_for_diagram(records);
+    let records = records.as_slice();
+
     let mut body = String::new();
     for r in records {
         let status = status_of(r);
@@ -359,6 +404,20 @@ mod tests {
             output,
             error: error.map(str::to_string),
             timestamp_ms: 0,
+        }
+    }
+
+    fn record_with_key(
+        seq: u64,
+        capability: &str,
+        cache_key: &str,
+        cache_hit: bool,
+        output: Option<Value>,
+        error: Option<&str>,
+    ) -> TraceRecord {
+        TraceRecord {
+            cache_key: Some(cache_key.to_string()),
+            ..record(seq, capability, cache_hit, output, error)
         }
     }
 
@@ -447,6 +506,31 @@ mod tests {
         // the embedded literal `\n` in the value text must be folded to a
         // space, not left raw (a raw newline would break the diagram).
         assert!(out.contains("line one line two"));
+    }
+
+    #[test]
+    fn render_trace_mermaid_collapses_a_suspend_then_resume_replay() {
+        // Pass 1: chat + judge run for real, then escalate suspends.
+        // Pass 2 (the resume replay): chat + judge hit cache (same key,
+        // same output), escalate now hits with the recorded decision.
+        let records = vec![
+            record_with_key(0, "chat", "k_chat", false, Some(Value::Text("hi".into())), None),
+            record_with_key(1, "judge", "k_judge", false, Some(Value::Verdict(Verdict::Escalate)), None),
+            record_with_key(2, "escalate", "k_escalate", false, None, Some("suspended")),
+            record_with_key(0, "chat", "k_chat", true, Some(Value::Text("hi".into())), None),
+            record_with_key(1, "judge", "k_judge", true, Some(Value::Verdict(Verdict::Escalate)), None),
+            record_with_key(2, "escalate", "k_escalate", true, Some(Value::Text("approved".into())), None),
+        ];
+        let out = render_trace(OutputFormat::Mermaid, &records);
+
+        // Each participant's arrow pair appears exactly once...
+        assert_eq!(out.matches("Program->>+chat:").count(), 1);
+        assert_eq!(out.matches("Program->>+judge:").count(), 1);
+        assert_eq!(out.matches("Program->>+escalate:").count(), 1);
+        // ...and escalate's surviving record is the resolved hit, not the
+        // stale suspended error from the first pass.
+        assert!(out.contains("[hit] approved"));
+        assert!(!out.contains("suspended"));
     }
 
     #[test]

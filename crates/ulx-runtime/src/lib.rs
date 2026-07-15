@@ -54,6 +54,18 @@ pub struct RunContext<'a> {
     /// Strict replay (§10.4, §18.3): every effect must be a cache hit; a
     /// miss is a hard error rather than a live provider call.
     pub replay_only: bool,
+    /// Skips the cache *read* for `ask`/`judge` calls (`invoke_cached`,
+    /// `interp.rs`), forcing a fresh live call every time instead of
+    /// reusing a stale prior result — the CLI's `--no-cache`. Results are
+    /// still written to the cache afterward as normal, so repeated
+    /// identical calls within one run (e.g. inside a loop) stay
+    /// consistent, and the trace/replay log is unaffected. Deliberately
+    /// does NOT apply to `escalate`'s own cache lookup (`eval_escalate`) —
+    /// that cache entry is the only persistence mechanism `ulx
+    /// approve`/`ulx deny`/`--interactive` have for a human's decision,
+    /// not a "don't waste an API call" optimization, so bypassing it would
+    /// break resume rather than just cost more.
+    pub no_cache: bool,
     seq: AtomicU64,
 }
 
@@ -74,12 +86,18 @@ impl<'a> RunContext<'a> {
             run_id,
             base_dir,
             replay_only: false,
+            no_cache: false,
             seq: AtomicU64::new(0),
         }
     }
 
     pub fn replaying(mut self) -> Self {
         self.replay_only = true;
+        self
+    }
+
+    pub fn without_cache(mut self) -> Self {
+        self.no_cache = true;
         self
     }
 

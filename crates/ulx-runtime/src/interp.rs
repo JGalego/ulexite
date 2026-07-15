@@ -995,10 +995,12 @@ fn invoke_cached(
     key: &str,
     call: impl FnOnce() -> Result<Value, RuntimeError>,
 ) -> Result<Value, RuntimeError> {
-    if let Some(v) = ctx.cache.get(key) {
-        ctx.trace
-            .record("effect", Some(capability), Some(key), true, Some(&v), None);
-        return Ok(v);
+    if !ctx.no_cache {
+        if let Some(v) = ctx.cache.get(key) {
+            ctx.trace
+                .record("effect", Some(capability), Some(key), true, Some(&v), None);
+            return Ok(v);
+        }
     }
     if ctx.replay_only {
         return Err(RuntimeError::ReplayMiss(format!(
