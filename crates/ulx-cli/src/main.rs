@@ -35,7 +35,10 @@ use std::path::{Path, PathBuf};
 
 use clap::{Parser, Subcommand};
 use output::{OutputFormat, RunOutcome};
-use ulx_runtime::{Cache, ProviderRegistry, RunContext, RuntimeError, TraceWriter, Value};
+use ulx_runtime::{
+    Cache, ProviderRegistry, RecordCallback, RunContext, RuntimeError, TraceRecord, TraceWriter,
+    Value,
+};
 
 #[derive(Parser)]
 #[command(name = "ulx", about = "Ulexite language CLI", version)]
@@ -432,15 +435,26 @@ fn default_run_id(
 /// registry resolution itself (`providers::resolve_providers`, needing the
 /// CLI's `--provider`/`--mock` flags and the loaded `provider_decls`) is the
 /// caller's job, so `cmd_replay` can special-case its own fallback path.
+///
+/// `on_record`, when given, streams the run's dialogue live (see
+/// `dialogue_printer`) — `None` for callers that must not print anything
+/// (`cmd_bench`'s own PASS/FAIL report, `resume`'s discovery-only probe
+/// context) or that render some other way (`--output json`/`jsonl`/
+/// `mermaid`/`html`, which only ever read the whole trace back after the
+/// fact).
 fn build_context<'a>(
     ir: &'a ulx_ir::IrProgram,
     providers: ProviderRegistry,
     file: &std::path::Path,
     run_id: &str,
     no_cache: bool,
+    on_record: Option<RecordCallback>,
 ) -> std::io::Result<RunContext<'a>> {
     let cache = Cache::new(manifest::cache_dir())?;
-    let trace = TraceWriter::create(manifest::traces_dir(), run_id)?;
+    let mut trace = TraceWriter::create(manifest::traces_dir(), run_id)?;
+    if let Some(cb) = on_record {
+        trace = trace.with_on_record(cb);
+    }
     let ctx = RunContext::new(
         ir,
         providers,
@@ -450,6 +464,38 @@ fn build_context<'a>(
         manifest::base_dir_of(file),
     );
     Ok(if no_cache { ctx.without_cache() } else { ctx })
+}
+
+/// Builds `build_context`'s `on_record` for `--output text`/`plain` —
+/// prints each `DialogueTurn` a trace record expands to (`output::
+/// render_record_live`) the moment that record is written, i.e. as each
+/// `ask`/`judge`/`escalate` call actually completes, rather than `execute`
+/// only being able to render the transcript after `run_conversation`
+/// returns in full. `None` for every other format, which reads the trace
+/// back whole instead. `Text`'s blank line between turns is reproduced by
+/// printing each record's block with a trailing blank line; `Plain` prints
+/// with no spacing at all, matching `render_dialogue_plain`'s fully-joined
+/// form (`execute` adds back the one separator blank line `Plain` needs
+/// before the final value/status, since none of the per-record prints put
+/// one there).
+fn dialogue_printer(output: OutputFormat) -> Option<RecordCallback> {
+    let plain = match output {
+        OutputFormat::Text => false,
+        OutputFormat::Plain => true,
+        _ => return None,
+    };
+    let color = !plain && use_color();
+    Some(Box::new(move |r: &TraceRecord| {
+        let s = output::render_record_live(r, plain, color);
+        if s.is_empty() {
+            return;
+        }
+        if plain {
+            println!("{s}");
+        } else {
+            println!("{s}\n");
+        }
+    }))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -521,7 +567,14 @@ fn cmd_run(
             return false;
         }
     };
-    let ctx = match build_context(&loaded.ir, providers, file, &run_id, no_cache) {
+    let ctx = match build_context(
+        &loaded.ir,
+        providers,
+        file,
+        &run_id,
+        no_cache,
+        dialogue_printer(output),
+    ) {
         Ok(c) => c,
         Err(e) => {
             eprintln!("error: could not set up run context: {e}");
@@ -568,7 +621,14 @@ fn run_interactive(
                 return false;
             }
         };
-        let ctx = match build_context(&loaded.ir, providers, file, run_id, no_cache) {
+        let ctx = match build_context(
+            &loaded.ir,
+            providers,
+            file,
+            run_id,
+            no_cache,
+            dialogue_printer(OutputFormat::Plain),
+        ) {
             Ok(c) => c,
             Err(e) => {
                 eprintln!("error: could not set up run context: {e}");
@@ -579,9 +639,8 @@ fn run_interactive(
             Ok(value) => {
                 let records =
                     ulx_runtime::read_trace(manifest::traces_dir(), run_id).unwrap_or_default();
-                let transcript = output::render_dialogue_plain(&records);
-                if !transcript.is_empty() {
-                    println!("{transcript}\n");
+                if !output::dialogue_turns(&records).is_empty() {
+                    println!();
                 }
                 println!("{value}");
                 eprintln!(
@@ -717,18 +776,24 @@ fn cmd_plan(
 
 /// `Text` (the default) and `Plain` both print the run's dialogue
 /// transcript (the `system`/`user`/`assistant`/`judge`/`escalate` turns
-/// `output::dialogue_turns` reconstructs from the trace `run_conversation`
-/// just wrote — a translate call reads back as a conversation, not a bare
-/// final value) followed by the same final-value/suspended/error lines
-/// `ulx` printed before `--output`/the dialogue transcript existed —
-/// `Plain` differs only in using `render_dialogue_plain` (no emoji, no
-/// color, no blank-line spacing) instead of `render_dialogue_text`. Every
-/// other format is rendered by `output.rs`: `Json` embeds the same
-/// dialogue as a `messages` array alongside `run_id`/`status`/`value`;
-/// `Jsonl`/`Mermaid`/`Html` render the whole trace. All of them re-read the
-/// trace file `run_conversation` just finished writing — a cheap local
-/// read, and it keeps this feature entirely CLI-side with no
-/// `ulx-runtime` changes.
+/// `output::dialogue_turns`/`render_record_live` reconstruct from the
+/// trace `run_conversation` writes — a translate call reads back as a
+/// conversation, not a bare final value) followed by the same final-value/
+/// suspended/error lines `ulx` printed before `--output`/the dialogue
+/// transcript existed. The transcript itself is streamed live, turn by
+/// turn, as each capability call actually completes — via `on_record`
+/// (`dialogue_printer`), attached to the `RunContext`'s `TraceWriter`
+/// before this function is ever called — rather than read back and
+/// printed in one block after `run_conversation` returns; `execute` only
+/// re-reads the trace file afterward for the metadata footer, which needs
+/// the whole run to compute (every capability/provider it touched).
+/// `Plain` differs from `Text` only in what `dialogue_printer` streamed
+/// (no emoji, no color, no blank-line spacing) — see its doc comment for
+/// why only `Plain` needs one blank line added back here. Every other
+/// format is rendered by `output.rs`: `Json` embeds the same dialogue as a
+/// `messages` array alongside `run_id`/`status`/`value`; `Jsonl`/
+/// `Mermaid`/`Html` render the whole trace — all read back from the trace
+/// file after the fact, same as before.
 fn execute(
     ctx: &RunContext,
     conversation: &str,
@@ -741,12 +806,8 @@ fn execute(
 
     if let OutputFormat::Text | OutputFormat::Plain = output {
         let color = output == OutputFormat::Text && use_color();
-        let transcript = match output {
-            OutputFormat::Text => output::render_dialogue_text(&records, color),
-            _ => output::render_dialogue_plain(&records),
-        };
-        if !transcript.is_empty() {
-            println!("{transcript}\n");
+        if output == OutputFormat::Plain && !output::dialogue_turns(&records).is_empty() {
+            println!();
         }
         return match result {
             Ok(value) => {
@@ -835,7 +896,7 @@ fn cmd_bench(
             return false;
         }
     };
-    let ctx = match build_context(&loaded.ir, providers, file, &run_id, false) {
+    let ctx = match build_context(&loaded.ir, providers, file, &run_id, false, None) {
         Ok(c) => c,
         Err(e) => {
             eprintln!("error: could not set up run context: {e}");
@@ -932,8 +993,14 @@ fn resume(
             return false;
         }
     };
-    let probe_ctx = match build_context(&loaded.ir, probe_providers, &manifest.file, run_id, false)
-    {
+    let probe_ctx = match build_context(
+        &loaded.ir,
+        probe_providers,
+        &manifest.file,
+        run_id,
+        false,
+        None,
+    ) {
         Ok(c) => c,
         Err(e) => {
             eprintln!("error: could not set up run context: {e}");
@@ -969,7 +1036,14 @@ fn resume(
             return false;
         }
     };
-    let ctx = match build_context(&loaded.ir, providers, &manifest.file, run_id, false) {
+    let ctx = match build_context(
+        &loaded.ir,
+        providers,
+        &manifest.file,
+        run_id,
+        false,
+        dialogue_printer(output),
+    ) {
         Ok(c) => c,
         Err(e) => {
             eprintln!("error: could not set up run context: {e}");
@@ -1052,7 +1126,14 @@ fn cmd_replay(run_id: &str, output: OutputFormat) -> bool {
         Ok(p) => p,
         Err(_) => ProviderRegistry::with_mock(),
     };
-    let ctx = match build_context(&loaded.ir, providers, &manifest.file, run_id, false) {
+    let ctx = match build_context(
+        &loaded.ir,
+        providers,
+        &manifest.file,
+        run_id,
+        false,
+        dialogue_printer(output),
+    ) {
         Ok(c) => c.replaying(),
         Err(e) => {
             eprintln!("error: could not set up run context: {e}");

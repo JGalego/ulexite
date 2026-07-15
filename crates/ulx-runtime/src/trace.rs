@@ -67,11 +67,20 @@ fn validate_run_id(run_id: &str) -> std::io::Result<()> {
     Ok(())
 }
 
+/// Fires once per trace record, right after it's durably appended — lets a
+/// caller (`ulx-cli`'s `--output text`/`plain`) stream a run's dialogue as
+/// it actually happens instead of only being able to read it back after
+/// `run_conversation` returns. A `with` block's branches call `record`
+/// concurrently from separate OS threads, so this must be safe to call
+/// from any of them.
+pub type RecordCallback = Box<dyn Fn(&TraceRecord) + Send + Sync>;
+
 pub struct TraceWriter {
     run_id: String,
     path: PathBuf,
     file: Mutex<std::fs::File>,
     seq: Mutex<u64>,
+    on_record: Option<RecordCallback>,
 }
 
 impl TraceWriter {
@@ -88,7 +97,18 @@ impl TraceWriter {
             path,
             file: Mutex::new(file),
             seq: Mutex::new(0),
+            on_record: None,
         })
+    }
+
+    /// Attaches a live callback, fired with each newly-written record (see
+    /// `RecordCallback`) — builder-style, like `RunContext::replaying`/
+    /// `without_cache`, so a caller that doesn't want streaming (`ulx
+    /// trace`, `--output json`/`jsonl`/`mermaid`/`html`, a resume's
+    /// discovery-only probe context) pays nothing extra.
+    pub fn with_on_record(mut self, cb: RecordCallback) -> Self {
+        self.on_record = Some(cb);
+        self
     }
 
     pub fn path(&self) -> &Path {
@@ -139,6 +159,11 @@ impl TraceWriter {
         let mut file = self.file.lock().unwrap_or_else(|p| p.into_inner());
         let _ = writeln!(file, "{line}");
         let _ = file.flush();
+        drop(file);
+
+        if let Some(cb) = &self.on_record {
+            cb(&record);
+        }
         seq
     }
 }

@@ -5,13 +5,18 @@
 //! the `jsonl`/`mermaid`/`html` formats, which need the whole trace rather
 //! than just the final value).
 //!
-//! `Text`'s final-value/suspended/error handling is the pre-existing
-//! default and stays inline in `main.rs` — but its transcript (and
-//! `Json`'s `messages` field) are rendered here via `dialogue_turns`,
-//! which turns the run's trace back into the `system`/`user`/`assistant`/
-//! `judge <name>`/`escalate <target>` conversation it actually was, rather
-//! than the flat `{capability, output}` shape the trace log stores
-//! internally — a translate call reads as a dialogue, not a log dump.
+//! `Text`/`Plain`'s final-value/suspended/error handling is the
+//! pre-existing default and stays inline in `main.rs`; their transcript
+//! streams live via `render_record_live` as `run_conversation` actually
+//! executes (`main.rs`'s `dialogue_printer`), rather than being rendered
+//! from the trace only after the fact. `dialogue_turns` (batch, with
+//! suspend/resume dedup) is what everything that genuinely can only read a
+//! trace back afterward uses instead — `Json`'s `messages` field, `ulx
+//! trace --output plain`. Both turn the run's trace back into the
+//! `system`/`user`/`assistant`/`judge <name>`/`escalate <target>`
+//! conversation it actually was, rather than the flat `{capability,
+//! output}` shape the trace log stores internally — a translate call reads
+//! as a dialogue, not a log dump.
 
 use serde_json::{json, Value as Json};
 
@@ -280,6 +285,91 @@ pub struct DialogueTurn {
     pub status: &'static str,
 }
 
+/// The turn(s) one trace record expands to — a `chat`/`vision` effect
+/// expands to its `system`/`user` input turns plus the `assistant` reply,
+/// since the trace log stores a whole exchange as one record but a
+/// dialogue reads as several turns. Factored out of `dialogue_turns` so
+/// `render_record_live` can render a single just-completed record without
+/// needing (or being able to apply) `dedup_for_diagram`'s cross-record
+/// collapsing.
+fn turns_for_record(r: &TraceRecord) -> Vec<DialogueTurn> {
+    let status = status_of(r);
+    let mut turns = Vec::new();
+    match r.kind.as_str() {
+        "call" => {
+            let name = r.capability.as_deref().unwrap_or("?");
+            let args = r
+                .input
+                .iter()
+                .map(|m| format!("{}: {}", m.role, truncate(&m.text, 40)))
+                .collect::<Vec<_>>()
+                .join(", ");
+            turns.push(DialogueTurn {
+                role: "call".to_string(),
+                text: format!("{name}({args})"),
+                status,
+            });
+        }
+        "effect" => match r.capability.as_deref() {
+            Some("chat") | Some("vision") => {
+                for m in &r.input {
+                    turns.push(DialogueTurn {
+                        role: m.role.clone(),
+                        text: m.text.clone(),
+                        status: "sent",
+                    });
+                }
+                turns.push(DialogueTurn {
+                    role: "assistant".to_string(),
+                    text: output_text_of(r),
+                    status,
+                });
+            }
+            Some("judge") => {
+                // `eval_rubric_call`'s judge branch records
+                // `[{role: "subject", ...}, {role: "rubric <Name>", ...}]`.
+                let judge_name = r
+                    .input
+                    .get(1)
+                    .map(|m| m.role.trim_start_matches("rubric ").to_string())
+                    .unwrap_or_default();
+                turns.push(DialogueTurn {
+                    role: format!("judge {judge_name}").trim().to_string(),
+                    text: output_text_of(r),
+                    status,
+                });
+            }
+            Some("escalate") => {
+                let (target, reason) = r
+                    .input
+                    .first()
+                    .map(|m| (m.role.clone(), m.text.clone()))
+                    .unwrap_or_default();
+                let text = if status == "err" {
+                    format!("{reason} (suspended)")
+                } else {
+                    format!("{reason} => {}", output_text_of(r))
+                };
+                turns.push(DialogueTurn {
+                    role: format!("escalate {target}"),
+                    text,
+                    status,
+                });
+            }
+            Some(other) => {
+                turns.push(DialogueTurn {
+                    role: other.to_string(),
+                    text: output_text_of(r),
+                    status,
+                });
+            }
+            None => {}
+        },
+        _ => {}
+    }
+    turns
+}
+
 /// Turns a run's trace back into the dialogue it actually was — the
 /// opposite direction of `eval_ask`/`eval_escalate` flattening a
 /// `system:`/`user:`/`judge`/`escalate` program into the trace log's flat
@@ -288,84 +378,10 @@ pub struct DialogueTurn {
 /// without it, `ulx approve`'s full-conversation replay would print every
 /// earlier turn twice.
 pub fn dialogue_turns(records: &[TraceRecord]) -> Vec<DialogueTurn> {
-    let records = dedup_for_diagram(records);
-    let mut turns = Vec::new();
-    for r in &records {
-        let status = status_of(r);
-        match r.kind.as_str() {
-            "call" => {
-                let name = r.capability.as_deref().unwrap_or("?");
-                let args = r
-                    .input
-                    .iter()
-                    .map(|m| format!("{}: {}", m.role, truncate(&m.text, 40)))
-                    .collect::<Vec<_>>()
-                    .join(", ");
-                turns.push(DialogueTurn {
-                    role: "call".to_string(),
-                    text: format!("{name}({args})"),
-                    status,
-                });
-            }
-            "effect" => match r.capability.as_deref() {
-                Some("chat") | Some("vision") => {
-                    for m in &r.input {
-                        turns.push(DialogueTurn {
-                            role: m.role.clone(),
-                            text: m.text.clone(),
-                            status: "sent",
-                        });
-                    }
-                    turns.push(DialogueTurn {
-                        role: "assistant".to_string(),
-                        text: output_text_of(r),
-                        status,
-                    });
-                }
-                Some("judge") => {
-                    // `eval_rubric_call`'s judge branch records
-                    // `[{role: "subject", ...}, {role: "rubric <Name>", ...}]`.
-                    let judge_name = r
-                        .input
-                        .get(1)
-                        .map(|m| m.role.trim_start_matches("rubric ").to_string())
-                        .unwrap_or_default();
-                    turns.push(DialogueTurn {
-                        role: format!("judge {judge_name}").trim().to_string(),
-                        text: output_text_of(r),
-                        status,
-                    });
-                }
-                Some("escalate") => {
-                    let (target, reason) = r
-                        .input
-                        .first()
-                        .map(|m| (m.role.clone(), m.text.clone()))
-                        .unwrap_or_default();
-                    let text = if status == "err" {
-                        format!("{reason} (suspended)")
-                    } else {
-                        format!("{reason} => {}", output_text_of(r))
-                    };
-                    turns.push(DialogueTurn {
-                        role: format!("escalate {target}"),
-                        text,
-                        status,
-                    });
-                }
-                Some(other) => {
-                    turns.push(DialogueTurn {
-                        role: other.to_string(),
-                        text: output_text_of(r),
-                        status,
-                    });
-                }
-                None => {}
-            },
-            _ => {}
-        }
-    }
-    turns
+    dedup_for_diagram(records)
+        .iter()
+        .flat_map(turns_for_record)
+        .collect()
 }
 
 const ANSI_RESET: &str = "\x1b[0m";
@@ -403,41 +419,68 @@ fn role_style(role: &str, status: &str) -> (&'static str, &'static str) {
     }
 }
 
-/// Transcript for `ulx run`'s default `Text` output: one paragraph per
-/// `DialogueTurn` (a blank line between turns, so `system`/`user`/
-/// `assistant`/`judge`/... read as separate speakers, not a run-on log),
-/// each prefixed with a role emoji and — only when `color` is true —
-/// bold+colored by `role_style`. `color` should be
+/// One `DialogueTurn`, `Text`-style: a role emoji, and — only when `color`
+/// is true — bold+colored by `role_style`. `color` should be
 /// `stdout().is_terminal() && NO_COLOR is unset`: piping into `jq`/a file/
 /// another program must get plain text, never raw escape codes.
-pub fn render_dialogue_text(records: &[TraceRecord], color: bool) -> String {
-    dialogue_turns(records)
-        .into_iter()
-        .map(|t| {
-            let (emoji, ansi) = role_style(&t.role, t.status);
-            if color {
-                format!(
-                    "{emoji} {ANSI_BOLD}{ansi}{}:{ANSI_RESET} {}",
-                    t.role, t.text
-                )
-            } else {
-                format!("{emoji} {}: {}", t.role, t.text)
-            }
-        })
-        .collect::<Vec<_>>()
-        .join("\n\n")
+fn format_turn_text(t: &DialogueTurn, color: bool) -> String {
+    let (emoji, ansi) = role_style(&t.role, t.status);
+    if color {
+        format!(
+            "{emoji} {ANSI_BOLD}{ansi}{}:{ANSI_RESET} {}",
+            t.role, t.text
+        )
+    } else {
+        format!("{emoji} {}: {}", t.role, t.text)
+    }
 }
 
-/// The `Plain` counterpart to `render_dialogue_text`: the same turns, in
-/// the same order, but no emoji, no color, and no blank-line spacing —
-/// one `role: text` line per turn, for scripts/logs that want the
-/// dialogue with none of `Text`'s decoration.
+/// One `DialogueTurn`, `Plain`-style: no emoji, no color — `role: text`.
+fn format_turn_plain(t: &DialogueTurn) -> String {
+    format!("{}: {}", t.role, t.text)
+}
+
+/// The batch-rendered `Plain` transcript: every turn, in order, no emoji,
+/// no color, no blank-line spacing — one `role: text` line per turn.
+/// `ulx run`/`approve`/`deny`/`replay` no longer call this for their own
+/// live transcript (that streams instead — `main.rs`'s `dialogue_printer`,
+/// via `render_record_live` below) but it's still how `ulx trace --output
+/// plain` renders a whole trace read back after the fact, where there's no
+/// live execution to stream during.
 pub fn render_dialogue_plain(records: &[TraceRecord]) -> String {
     dialogue_turns(records)
         .into_iter()
-        .map(|t| format!("{}: {}", t.role, t.text))
+        .map(|t| format_turn_plain(&t))
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+/// Renders one just-completed trace record as its dialogue turn(s), in the
+/// same shape `render_dialogue_plain`/`dialogue_turns` batch-render after
+/// the fact — used by `main.rs`'s live printer (`dialogue_printer`)
+/// so a run's turns appear as each capability call actually finishes,
+/// rather than all at once after the whole conversation completes.
+/// Deliberately skips `dedup_for_diagram`: within one process's single
+/// `run_conversation` call, each source line only ever executes once (a
+/// retry loop's repeats are genuinely distinct turns) — the cross-
+/// invocation replay duplication `dedup_for_diagram` collapses only shows
+/// up when re-reading a trace *file* that spans more than one `ulx`
+/// invocation (`ulx approve` resuming a suspended `ulx run`), which is
+/// exactly the batch/after-the-fact case this function isn't used for.
+/// Empty string for a record that maps to no turn (nothing to print).
+pub fn render_record_live(r: &TraceRecord, plain: bool, color: bool) -> String {
+    let sep = if plain { "\n" } else { "\n\n" };
+    turns_for_record(r)
+        .iter()
+        .map(|t| {
+            if plain {
+                format_turn_plain(t)
+            } else {
+                format_turn_text(t, color)
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(sep)
 }
 
 /// One provider's distinct `(capability, model)` pairs used in a run.
@@ -985,5 +1028,66 @@ mod tests {
     #[test]
     fn truncate_leaves_short_strings_untouched() {
         assert_eq!(truncate("short", 100), "short");
+    }
+
+    #[test]
+    fn render_record_live_matches_the_batch_render_for_a_single_record() {
+        let mut r = record(0, "chat", false, Some(Value::Text("Bonjour".into())), None);
+        r.input = vec![
+            ulx_runtime::provider::Message {
+                role: "system".to_string(),
+                text: "You are a translator.".to_string(),
+            },
+            ulx_runtime::provider::Message {
+                role: "user".to_string(),
+                text: "Translate: hello".to_string(),
+            },
+        ];
+        // Plain: a lone record has nothing for `dedup_for_diagram` to
+        // collapse, so the live (per-record) and batch (whole-trace)
+        // renders must agree exactly.
+        assert_eq!(
+            render_record_live(&r, true, false),
+            render_dialogue_plain(std::slice::from_ref(&r))
+        );
+        // Text: same parity, with color off (color output is exercised by
+        // `format_turn_text` through this same call).
+        let live = render_record_live(&r, false, false);
+        assert!(live.contains("🧭 system: You are a translator."));
+        assert!(live.contains("🧑 user: Translate: hello"));
+        assert!(live.contains("🤖 assistant: Bonjour"));
+        // Text mode separates the record's own turns with a blank line —
+        // system/user/assistant, so two separators.
+        assert_eq!(live.matches("\n\n").count(), 2);
+    }
+
+    #[test]
+    fn render_record_live_is_empty_for_a_record_with_no_dialogue_turn() {
+        // A "call" or "effect" record maps cleanly to a turn; anything else
+        // (e.g. a capability-less effect) has nothing to stream — the live
+        // printer (`main.rs`'s `dialogue_printer`) relies on this to skip
+        // printing rather than emit a stray blank line.
+        let r = TraceRecord {
+            capability: None,
+            ..record(0, "chat", false, None, None)
+        };
+        assert_eq!(render_record_live(&r, false, false), "");
+        assert_eq!(render_record_live(&r, true, false), "");
+    }
+
+    #[test]
+    fn render_record_live_renders_a_judge_verdict_as_one_turn() {
+        let mut r = record(1, "judge", false, Some(Value::Verdict(Verdict::Pass)), None);
+        r.input = vec![
+            ulx_runtime::provider::Message {
+                role: "subject".to_string(),
+                text: "Bonjour".to_string(),
+            },
+            ulx_runtime::provider::Message {
+                role: "rubric Fluency".to_string(),
+                text: "Is this fluent?".to_string(),
+            },
+        ];
+        assert_eq!(render_record_live(&r, true, false), "judge Fluency: Pass");
     }
 }

@@ -34,7 +34,7 @@ pub use provider::{
     build_provider, MockProvider, Provider, ProviderBuildError, ProviderRegistry, ProviderSpec,
     ResolveError,
 };
-pub use trace::{read_trace, TraceRecord, TraceWriter};
+pub use trace::{read_trace, RecordCallback, TraceRecord, TraceWriter};
 pub use value::Value;
 
 use std::collections::BTreeMap;
