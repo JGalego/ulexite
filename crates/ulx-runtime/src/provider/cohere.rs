@@ -124,6 +124,7 @@ impl Provider for CohereProvider {
         match capability {
             "chat" => self.chat(request),
             "embed" => self.embed(request),
+            "judge" => super::judge::judge_via_chat(request, |req| self.chat(req)),
             other => Err(ProviderError::UnsupportedCapability(other.to_string())),
         }
     }
@@ -187,5 +188,23 @@ mod tests {
             result,
             Value::List(vec![Value::Float(0.1), Value::Float(0.2)])
         );
+    }
+
+    #[test]
+    fn judge_happy_path_returns_a_verdict() {
+        let transport = ScriptedTransport::new(vec![ScriptedTransport::ok(
+            200,
+            json!({"message": {"content": [{"type": "text", "text": "PASS"}]}, "finish_reason": "COMPLETE"}),
+        )]);
+        let p = CohereProvider::with_transport(
+            "judge",
+            DEFAULT_BASE_URL,
+            "test-key",
+            "command-r",
+            BTreeMap::new(),
+            Box::new(transport),
+        );
+        let result = p.invoke("judge", &invocation()).unwrap();
+        assert_eq!(result, Value::Verdict(crate::value::Verdict::Pass));
     }
 }

@@ -145,6 +145,7 @@ impl Provider for OllamaProvider {
             "chat" => self.chat(request),
             "vision" => self.vision(request),
             "embed" => self.embed(request),
+            "judge" => super::judge::judge_via_chat(request, |req| self.chat(req)),
             other => Err(ProviderError::UnsupportedCapability(other.to_string())),
         }
     }
@@ -207,6 +208,23 @@ mod tests {
             result,
             Value::List(vec![Value::Float(0.4), Value::Float(0.6)])
         );
+    }
+
+    #[test]
+    fn judge_happy_path_returns_a_verdict() {
+        let transport = ScriptedTransport::new(vec![ScriptedTransport::ok(
+            200,
+            json!({"message": {"role": "assistant", "content": "PASS"}, "done": true}),
+        )]);
+        let p = OllamaProvider::with_transport(
+            "judge",
+            DEFAULT_BASE_URL,
+            "llama3",
+            BTreeMap::new(),
+            Box::new(transport),
+        );
+        let result = p.invoke("judge", &invocation()).unwrap();
+        assert_eq!(result, Value::Verdict(crate::value::Verdict::Pass));
     }
 
     #[test]

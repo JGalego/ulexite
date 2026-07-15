@@ -198,6 +198,7 @@ impl Provider for GeminiProvider {
             "chat" => self.chat(request),
             "vision" => self.vision(request),
             "embed" => self.embed(request),
+            "judge" => super::judge::judge_via_chat(request, |req| self.chat(req)),
             other => Err(ProviderError::UnsupportedCapability(other.to_string())),
         }
     }
@@ -290,6 +291,24 @@ mod tests {
         let result = p.invoke("vision", &invocation).unwrap();
         std::fs::remove_file(&path).ok();
         assert_eq!(result, Value::Text("a cat".to_string()));
+    }
+
+    #[test]
+    fn judge_happy_path_returns_a_verdict() {
+        let transport = ScriptedTransport::new(vec![ScriptedTransport::ok(
+            200,
+            json!({"candidates": [{"content": {"parts": [{"text": "SCORE: 0.9"}]}, "finishReason": "STOP"}]}),
+        )]);
+        let p = GeminiProvider::with_transport(
+            "judge",
+            DEFAULT_BASE_URL,
+            "test-key",
+            "gemini-1.5-flash",
+            BTreeMap::new(),
+            Box::new(transport),
+        );
+        let result = p.invoke("judge", &invocation()).unwrap();
+        assert_eq!(result, Value::Verdict(crate::value::Verdict::Score(0.9)));
     }
 
     #[test]

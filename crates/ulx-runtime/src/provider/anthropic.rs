@@ -187,6 +187,7 @@ impl Provider for AnthropicProvider {
         match capability {
             "chat" => self.chat(request),
             "vision" => self.vision(request),
+            "judge" => super::judge::judge_via_chat(request, |req| self.chat(req)),
             other => Err(ProviderError::UnsupportedCapability(other.to_string())),
         }
     }
@@ -433,5 +434,33 @@ mod tests {
         assert!(p.supports("chat"));
         assert!(!p.supports("vision"));
         assert!(!p.supports("embed"));
+    }
+
+    #[test]
+    fn judge_happy_path_returns_a_verdict() {
+        let transport = ScriptedTransport::new(vec![ScriptedTransport::ok(
+            200,
+            json!({"content": [{"type": "text", "text": "PASS"}], "stop_reason": "end_turn"}),
+        )]);
+        let p = AnthropicProvider::with_transport(
+            "judge",
+            "https://api.anthropic.com/v1",
+            "sk-ant-test",
+            "claude-3-5-sonnet-20241022",
+            BTreeMap::new(),
+            Box::new(transport),
+        );
+        let invocation = Invocation {
+            messages: vec![],
+            args: BTreeMap::from([
+                ("subject".to_string(), Value::Text("le chat".to_string())),
+                (
+                    "rubric".to_string(),
+                    Value::Text("Is this French for cat?".to_string()),
+                ),
+            ]),
+        };
+        let result = p.invoke("judge", &invocation).unwrap();
+        assert_eq!(result, Value::Verdict(crate::value::Verdict::Pass));
     }
 }

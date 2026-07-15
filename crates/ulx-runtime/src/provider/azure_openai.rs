@@ -140,6 +140,7 @@ impl Provider for AzureOpenAiProvider {
             "chat" => self.chat(request),
             "vision" => self.vision(request),
             "embed" => self.embed(request),
+            "judge" => super::judge::judge_via_chat(request, |req| self.chat(req)),
             other => Err(ProviderError::UnsupportedCapability(other.to_string())),
         }
     }
@@ -238,5 +239,27 @@ mod tests {
         let p = provider(transport);
         assert!(p.supports("chat"));
         assert!(!p.supports("embed"));
+    }
+
+    #[test]
+    fn judge_happy_path_returns_a_verdict() {
+        let transport = ScriptedTransport::new(vec![ScriptedTransport::ok(
+            200,
+            json!({"choices": [{"message": {"content": "FAIL: too literal"}, "finish_reason": "stop"}]}),
+        )]);
+        let p = AzureOpenAiProvider::with_transport(
+            "judge",
+            "https://my-resource.openai.azure.com",
+            "my-judge-deployment",
+            "test-key",
+            "2024-06-01",
+            BTreeMap::new(),
+            Box::new(transport),
+        );
+        let result = p.invoke("judge", &invocation()).unwrap();
+        assert_eq!(
+            result,
+            Value::Verdict(crate::value::Verdict::Fail("too literal".to_string()))
+        );
     }
 }

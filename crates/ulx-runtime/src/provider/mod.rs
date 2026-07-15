@@ -5,9 +5,12 @@
 //! trying the language without an API key) gets real, reproducible
 //! behavior. Real HTTP-backed adapters cover `chat` (every vendor),
 //! `embed` (`openai_compat`, `gemini`, `cohere`, `ollama`), `vision`
-//! (`openai_compat`, `anthropic`, `gemini`, `ollama`, `azure_openai`), and
-//! `transcribe`/`speak`/`generate_image` (`openai_compat` only) — see
-//! `docs/spec/24-limitations.md` for exactly what's still mock-only.
+//! (`openai_compat`, `anthropic`, `gemini`, `ollama`, `azure_openai`),
+//! `transcribe`/`speak`/`generate_image` (`openai_compat` only), and now
+//! `judge` (every vendor with a `chat` path, via the shared `judge` module
+//! — a judge call is just a rubric-evaluation chat completion, parsed into
+//! a `Verdict`) — see `docs/spec/24-limitations.md` for exactly what's
+//! still mock-only.
 //!
 //! Adding a brand-new provider needs no compiler/grammar/IR change (§12.4):
 //! implement `Provider` in a new module and add it to `factory::build_provider`.
@@ -28,6 +31,7 @@ mod azure_openai;
 mod cohere;
 mod factory;
 mod gemini;
+mod judge;
 mod mock;
 mod ollama;
 mod openai_compat;

@@ -3,8 +3,10 @@
 //! (and users kicking the tyres without an API key) get reproducible
 //! results, not a simulation of "real" model quality. This is the only
 //! provider that covers all seven capabilities (`chat`, `vision`, `embed`,
-//! `transcribe`, `speak`, `generate_image`, `judge`) — real vendor adapters
-//! only cover `chat`/`embed` for now (see the `provider` module doc).
+//! `transcribe`, `speak`, `generate_image`, `judge`) unconditionally — real
+//! vendor adapters now cover `judge` too (via the shared `judge` module,
+//! see the `provider` module doc), but `transcribe`/`speak`/`generate_image`
+//! remain `openai_compat`-only.
 
 use crate::value::{Value, Verdict};
 

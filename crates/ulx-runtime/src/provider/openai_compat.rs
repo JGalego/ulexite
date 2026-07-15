@@ -250,6 +250,7 @@ impl Provider for OpenAiCompatibleProvider {
             "transcribe" => self.transcribe(request),
             "speak" => self.speak(request),
             "generate_image" => self.generate_image(request),
+            "judge" => super::judge::judge_via_chat(request, |req| self.chat(req)),
             other => Err(ProviderError::UnsupportedCapability(other.to_string())),
         }
     }
@@ -514,5 +515,25 @@ mod tests {
         assert!(p.supports("chat"));
         assert!(!p.supports("embed"));
         assert!(!p.supports("transcribe"));
+    }
+
+    #[test]
+    fn judge_happy_path_returns_a_verdict() {
+        let transport = ScriptedTransport::new(vec![ScriptedTransport::ok(
+            200,
+            json!({"choices": [{"message": {"content": "ESCALATE"}, "finish_reason": "stop"}]}),
+        )]);
+        let p = OpenAiCompatibleProvider::with_transport(
+            "openai",
+            "judge",
+            "https://api.openai.com/v1",
+            Some("sk-test".to_string()),
+            "gpt-4o-mini",
+            BTreeMap::new(),
+            Box::new(transport),
+            test_artifact_root(),
+        );
+        let result = p.invoke("judge", &chat_invocation()).unwrap();
+        assert_eq!(result, Value::Verdict(crate::value::Verdict::Escalate));
     }
 }
