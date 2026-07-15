@@ -182,7 +182,7 @@ cd examples
 export OPENAI_API_KEY=sk-...
 cp ulexite.example.toml ulexite.toml
 
-ulx run rag.ulx Caption --arg photo=fixtures/sample.png                                      # vision
+ulx run rag.ulx Caption --arg photo=fixtures/sample.jpg                                      # vision
 ulx run voice_memo.ulx VoiceMemoReply --arg recording=fixtures/sample.wav                     # transcribe + speak
 ulx run generate_and_describe.ulx GenerateAndDescribe --arg prompt="a lighthouse at sunset"   # generate_image + vision
 ```

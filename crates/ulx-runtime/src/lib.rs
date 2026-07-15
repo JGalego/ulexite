@@ -12,6 +12,7 @@
 //! what is). See `docs/spec/24-limitations.md` for the rest of the honest
 //! accounting.
 
+pub mod artifact_validate;
 pub mod cache;
 mod dataset;
 mod env;
@@ -23,6 +24,7 @@ pub mod trace;
 mod validator;
 pub mod value;
 
+pub use artifact_validate::validate_artifact_arg;
 pub use cache::Cache;
 pub use error::RuntimeError;
 pub use interp::{

@@ -3,9 +3,14 @@
 //! for binary outputs (`speak`'s audio, `generate_image`'s image), which
 //! writes into the real content-addressed `crate::cache::ArtifactStore`
 //! (§11.2/§12.7). There is no artifact-*loading* mechanism anywhere else in
-//! the runtime today — a CLI `--arg doc=photo.jpg` becomes a bare
-//! `Value::Text("photo.jpg")` (`crates/ulx-cli/src/main.rs`) that nothing
-//! reads or decodes — so the input side stays deliberately narrow rather
+//! the runtime today — a CLI `--arg doc=photo.jpg` is still a bare
+//! `Value::Text("photo.jpg")` (`crates/ulx-cli/src/main.rs`) that this
+//! module reads and decodes only at the HTTP-call boundary, not something
+//! the interpreter or `Value` type carries a decoded representation of.
+//! `crate::artifact_validate` does sniff that string's magic bytes against
+//! the parameter's declared artifact type before a run starts, so a
+//! mismatched file is rejected early — but that's a content check, not a
+//! loading mechanism, so the input side stays deliberately narrow rather
 //! than a general artifact/blob system: image formats (jpg/png/gif/webp)
 //! plus, for Anthropic only, PDF (`resolve_document`, consumed by
 //! `anthropic.rs`'s `document` content block) — read directly off disk at

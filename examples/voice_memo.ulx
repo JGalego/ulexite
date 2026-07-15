@@ -1,19 +1,36 @@
 // examples/voice_memo.ulx
 // See docs/spec/21-examples.md §21.10
 //
-// Exercises transcribe -> chat -> speak end to end. Against the mock
-// provider (the default) every capability returns a canned placeholder, so
-// this always completes; against a real vendor (§`Configuring providers`
-// in README.md) it actually transcribes `recording`, drafts a one-sentence
-// reply, and synthesizes it back to audio. Try it with the real fixture:
+// Exercises transcribe -> chat -> speak end to end, each pinned to a
+// different vendor via the reserved `provider: "name"` arg (§12.4) —
+// Groq's hosted Whisper is a fast `transcribe`, but Groq doesn't implement
+// `speak` at all, so this also demonstrates mixing providers per
+// capability within one conversation. Both `provider` decls below are
+// self-contained (no ulexite.toml needed, same as custom_provider.ulx,
+// §21.12): against the mock provider (the default) every capability
+// returns a canned placeholder, so this always completes offline; export
+// GROQ_API_KEY/OPENAI_API_KEY and drop --mock to run it for real:
 //   ulx run examples/voice_memo.ulx VoiceMemoReply --arg recording=examples/fixtures/sample.wav
 
+provider Groq {
+  vendor: "groq"
+  api_key_env: "GROQ_API_KEY"
+  chat: "llama-3.3-70b-versatile"
+  transcribe: "whisper-large-v3"
+}
+
+provider OpenAI {
+  vendor: "openai"
+  api_key_env: "OPENAI_API_KEY"
+  speak: "tts-1"
+}
+
 conversation VoiceMemoReply(recording: audio) -> audio {
-  ask transcribe(recording) { } -> transcript: text
-  ask chat() {
+  ask transcribe(recording, provider: "Groq") { } -> transcript: text
+  ask chat(provider: "Groq") {
     system: """You write a one-sentence spoken reply to a voice memo."""
     user: """Voice memo transcript:\n{transcript}"""
   } -> reply_text: text
-  ask speak() { user: """{reply_text}""" } -> reply_audio: audio
+  ask speak(provider: "OpenAI") { user: """{reply_text}""" } -> reply_audio: audio
   reply_audio
 }

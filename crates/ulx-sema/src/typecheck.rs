@@ -515,6 +515,16 @@ fn check_ask_call(capability: &str, args: &[Arg], span: &Span, scope: &mut Scope
         return;
     };
     for a in args {
+        // Only the positional content argument (`ask vision(doc)`,
+        // `ask transcribe(recording)`) carries the artifact this check is
+        // about — a named arg like `provider: "groq"` or `model: "..."` is
+        // metadata, whatever type its literal value happens to infer to
+        // (a plain string infers as `Text`, which isn't necessarily one of
+        // `spec.accepts` for capabilities like `transcribe`/`generate_image`
+        // that don't accept `Text` at all).
+        if a.name.is_some() {
+            continue;
+        }
         if let InferredType::Known(TypeExpr::Artifact(at)) = infer_expr_type(&a.value, scope) {
             if !spec.accepts.contains(&at) {
                 ctx.diags.push(Diagnostic::error(

@@ -398,4 +398,15 @@ impl ArtifactType {
     pub fn from_keyword(s: &str) -> Option<Self> {
         Self::ALL.iter().find(|(kw, _)| *kw == s).map(|(_, ty)| *ty)
     }
+
+    /// The keyword this variant was declared with (the inverse of
+    /// `from_keyword`) — used in diagnostics that need to name a
+    /// parameter's declared type back to the user.
+    pub fn keyword(self) -> &'static str {
+        Self::ALL
+            .iter()
+            .find(|(_, ty)| *ty == self)
+            .map(|(kw, _)| *kw)
+            .expect("every ArtifactType variant has an ALL entry")
+    }
 }

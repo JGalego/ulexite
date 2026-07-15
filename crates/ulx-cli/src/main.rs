@@ -345,6 +345,32 @@ fn parse_args(raw: &[String]) -> Result<BTreeMap<String, String>, String> {
     Ok(out)
 }
 
+/// Checks every `--arg` bound to a parameter declared with a content-sniffable
+/// artifact type (`pdf`/`image`/`audio`/`video`, §9.2) against the file it
+/// actually names, so e.g. a `doc: pdf` parameter fed a PNG fails fast with a
+/// clear message instead of running to completion (or failing much later at
+/// the provider boundary). Unknown conversation names are left for the
+/// runtime's own error to report — this only validates params it can find.
+fn validate_run_args(
+    ir: &ulx_ir::IrProgram,
+    conversation: &str,
+    args: &BTreeMap<String, String>,
+) -> Result<(), String> {
+    let Some(conv) = ir.conversations.iter().find(|c| c.name == conversation) else {
+        return Ok(());
+    };
+    for (name, ty) in &conv.params {
+        let ulx_ast::TypeExpr::Artifact(kind) = ty else {
+            continue;
+        };
+        if let Some(value) = args.get(name) {
+            ulx_runtime::validate_artifact_arg(*kind, value)
+                .map_err(|e| format!("--arg {name}: {e}"))?;
+        }
+    }
+    Ok(())
+}
+
 /// Whether the dialogue transcript (`Text` output) should include ANSI
 /// color: only when stdout is an actual terminal, and the user hasn't set
 /// `NO_COLOR` (https://no-color.org) — piping into `jq`, a file, or
@@ -417,6 +443,10 @@ fn cmd_run(
             return false;
         }
     };
+    if let Err(e) = validate_run_args(&loaded.ir, conversation, &args) {
+        eprintln!("error: {e}");
+        return false;
+    }
     let run_id = run_id.unwrap_or_else(|| default_run_id(file, conversation, &args));
 
     if let Err(e) = manifest::save(
