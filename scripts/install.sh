@@ -8,7 +8,12 @@
 #   ULX_VERSION     release tag to install, e.g. "v0.1.0" (default: latest)
 #   ULX_INSTALL_DIR directory to install the binary into (default: see below)
 
-set -euo pipefail
+# POSIX `sh` (e.g. dash on Debian/Ubuntu/WSL) doesn't support `pipefail`, and
+# the documented `curl | sh` invocation feeds this script to `sh` directly,
+# bypassing the `#!/usr/bin/env bash` shebang above entirely. Nothing in this
+# script relies on a multi-command pipeline's exit code, so plain `-eu` is
+# both sufficient and portable to every `sh` this is meant to run under.
+set -eu
 
 REPO="JGalego/ulexite"
 VERSION="${ULX_VERSION:-latest}"

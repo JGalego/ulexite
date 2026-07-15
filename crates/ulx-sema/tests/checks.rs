@@ -657,8 +657,10 @@ fn missing_prompt_file_is_a_clear_diagnostic() {
 
 #[test]
 fn with_block_sibling_reference_through_a_loaded_file_is_still_rejected() {
-    let base =
-        std::env::temp_dir().join(format!("ulexite-sema-file-with-sibling-{}", std::process::id()));
+    let base = std::env::temp_dir().join(format!(
+        "ulexite-sema-file-with-sibling-{}",
+        std::process::id()
+    ));
     std::fs::create_dir_all(&base).unwrap();
     // References `{outline}`, a sibling `with`-binding — §9.7 forbids this
     // regardless of whether the referencing text is inline or file-sourced.

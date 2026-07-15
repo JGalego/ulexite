@@ -32,7 +32,9 @@ ci: fmt-check clippy build test
 install:
     cargo install --path crates/ulx-cli --locked
 
-# `ulx check` every example under examples/.
+# `ulx check` every example under examples/ — mirrored as raw commands in
+# .github/workflows/ci.yml's `spec-examples` job (not invoked directly,
+# same reasoning as `ci` above); keep the two in sync by hand.
 check-examples:
     #!/usr/bin/env bash
     set -euo pipefail

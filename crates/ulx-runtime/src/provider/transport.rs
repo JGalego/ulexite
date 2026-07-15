@@ -218,6 +218,7 @@ fn retry_with_backoff(
     headers: &[(String, String)],
     body: RequestBody,
     accept: ResponseKind,
+    retry_on_timeout: bool,
 ) -> Result<HttpResponse, ProviderError> {
     let mut attempt = 1;
     loop {
@@ -230,6 +231,15 @@ fn retry_with_backoff(
                 }
                 std::thread::sleep(backoff_delay(attempt, resp.retry_after));
             }
+            // A timeout means the client gave up waiting for a response,
+            // not that the vendor never received/finished the request --
+            // for a non-idempotent, billed side effect (an image/audio
+            // generation call) blindly retrying risks paying for it twice.
+            // `retry_on_timeout` lets a caller opt out of retrying that
+            // specific case while still retrying genuine pre-completion
+            // failures (429/5xx, and transport-level errors that happen
+            // before the server could have processed anything).
+            Err(ProviderError::Timeout) if !retry_on_timeout => return Err(ProviderError::Timeout),
             Err(e @ (ProviderError::Timeout | ProviderError::Failed(_))) => {
                 if attempt >= MAX_ATTEMPTS {
                     return Err(e);
@@ -269,6 +279,36 @@ pub fn send_json_with_retry(
         headers,
         RequestBody::Json(body.clone()),
         ResponseKind::Json,
+        true,
+    )?
+    .body
+    {
+        BodyOrBytes::Json(v) => Ok(v),
+        BodyOrBytes::Bytes(_) => Err(ProviderError::Failed(
+            "expected a JSON response, got bytes".to_string(),
+        )),
+    }
+}
+
+/// Like `send_json_with_retry`, but never retries a client-side timeout —
+/// for calls whose side effect (e.g. `generate_image`) is billed and
+/// non-idempotent, where the vendor may have already completed (and
+/// charged for) the request even though the response didn't arrive in
+/// time. Still retries 429/5xx and other transport-level failures, which
+/// happen before the vendor could have completed anything.
+pub fn send_json_with_retry_no_timeout_retry(
+    transport: &dyn Transport,
+    url: &str,
+    headers: &[(String, String)],
+    body: &serde_json::Value,
+) -> Result<serde_json::Value, ProviderError> {
+    match retry_with_backoff(
+        transport,
+        url,
+        headers,
+        RequestBody::Json(body.clone()),
+        ResponseKind::Json,
+        false,
     )?
     .body
     {
@@ -292,6 +332,7 @@ pub fn send_multipart_with_retry(
         headers,
         RequestBody::Multipart { fields, file },
         ResponseKind::Json,
+        true,
     )?
     .body
     {
@@ -302,7 +343,12 @@ pub fn send_multipart_with_retry(
     }
 }
 
-pub fn send_json_expect_bytes_with_retry(
+/// Every current caller (`speak`'s TTS output) is a billed, non-idempotent
+/// effect where a client-side timeout doesn't mean the vendor didn't
+/// synthesize (and charge for) the audio, so this only ever runs with
+/// `retry_on_timeout: false` — see `send_json_with_retry_no_timeout_retry`
+/// for the same reasoning applied to `generate_image`.
+pub fn send_json_expect_bytes_with_retry_no_timeout_retry(
     transport: &dyn Transport,
     url: &str,
     headers: &[(String, String)],
@@ -314,6 +360,7 @@ pub fn send_json_expect_bytes_with_retry(
         headers,
         RequestBody::Json(body.clone()),
         ResponseKind::Bytes,
+        false,
     )?
     .body
     {
@@ -355,7 +402,14 @@ impl CircuitBreakerTransport {
     }
 
     fn is_open(&self) -> bool {
-        let mut opened_at = self.opened_at.lock().unwrap();
+        // `unwrap_or_else(PoisonError::into_inner)`, not `.unwrap()`: a
+        // `with`-block branch that panics while this lock happens to be
+        // held must not poison the breaker for every other concurrent
+        // branch/subsequent call sharing this same provider instance —
+        // `eval_parallel` already turns that branch's panic into an
+        // ordinary error rather than aborting the process, so the breaker
+        // needs to keep working for everyone else.
+        let mut opened_at = self.opened_at.lock().unwrap_or_else(|p| p.into_inner());
         match *opened_at {
             Some(at) if at.elapsed() < self.cooldown => true,
             Some(_) => {
@@ -370,11 +424,11 @@ impl CircuitBreakerTransport {
     fn record_result(&self, healthy: bool) {
         if healthy {
             self.failures.store(0, Ordering::SeqCst);
-            *self.opened_at.lock().unwrap() = None;
+            *self.opened_at.lock().unwrap_or_else(|p| p.into_inner()) = None;
         } else {
             let failures = self.failures.fetch_add(1, Ordering::SeqCst) + 1;
             if failures >= self.threshold {
-                *self.opened_at.lock().unwrap() = Some(Instant::now());
+                *self.opened_at.lock().unwrap_or_else(|p| p.into_inner()) = Some(Instant::now());
             }
         }
     }

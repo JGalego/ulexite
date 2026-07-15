@@ -21,6 +21,7 @@
 //! memoized) but would need real continuation capture to extend to
 //! genuinely unbounded/infinite imperative loops before a suspend point.
 
+use std::cell::{Cell, RefCell};
 use std::collections::BTreeMap;
 
 use ulx_ast::{BinaryOp, MessageRole, UnaryOp};
@@ -33,7 +34,42 @@ use crate::provider::{Invocation, Message, ProviderError};
 use crate::value::{DraftOutcome, Value, Verdict};
 use crate::{stdlib, Args, RunContext};
 
+thread_local! {
+    /// The chain of `with`-block branch indices from the run's root down
+    /// to whichever branch is currently executing on *this* thread — empty
+    /// at the top level. `eval_parallel` extends it (by one more index)
+    /// for each spawned branch; `std::thread::scope`'s `spawn` always
+    /// starts a genuine new OS thread, so a freshly spawned branch's copy
+    /// of this thread-local starts back at its default (empty `Vec`) and
+    /// has to be explicitly seeded with its parent's path plus its own
+    /// index right away (see `eval_parallel`) — it is never inherited
+    /// automatically.
+    static ESCALATE_PATH: RefCell<Vec<usize>> = const { RefCell::new(Vec::new()) };
+    /// How many `escalate` calls *this thread* has evaluated so far along
+    /// its current path — disambiguates repeated escalates reached
+    /// sequentially (e.g. across `retry` iterations) within one branch,
+    /// the same role the old run-wide sequence counter played before a
+    /// `with` block's parallel branches could race for the next value.
+    static ESCALATE_LOCAL_SEQ: Cell<u64> = const { Cell::new(0) };
+}
+
 pub fn run_conversation(ctx: &RunContext, name: &str, args: Args) -> Result<Value, RuntimeError> {
+    // `run_conversation` is the one entry point for a fresh top-level run
+    // (the CLI's original run, its `--interactive` resume loop, and
+    // `approve`/`deny`'s probe-then-resume passes all call it directly —
+    // never recursively from within the interpreter itself, since a
+    // program calling another conversation goes through
+    // `eval_conversation_call` instead). Resetting here, rather than
+    // relying on a fresh OS thread/process to start these thread-locals at
+    // their defaults, matters because a single process can legitimately
+    // call `run_conversation` more than once on the *same* thread (both
+    // ends of `--interactive`'s suspend/resume loop, and this crate's own
+    // tests) — without an explicit reset, the second call would inherit
+    // the first call's already-advanced counters and compute different
+    // `escalate` cache keys than the first call recorded.
+    ESCALATE_PATH.with(|p| p.borrow_mut().clear());
+    ESCALATE_LOCAL_SEQ.with(|c| c.set(0));
+
     let conv = ctx
         .program
         .conversations
@@ -589,20 +625,52 @@ fn eval_parallel(
     members: &[(String, IrExpr)],
     env: &mut Env,
 ) -> Result<Value, RuntimeError> {
+    // Read once, synchronously, on this (single) thread before spawning
+    // anything -- so every branch below is seeded from the same parent
+    // path regardless of how the branches themselves get scheduled.
+    let parent_path = ESCALATE_PATH.with(|p| p.borrow().clone());
     let results: Vec<(String, Result<Value, RuntimeError>)> = std::thread::scope(|scope| {
-        let handles: Vec<_> = members
+        // Paired with its own name up front, since a panicking closure
+        // never gets to return `(name.clone(), r)` itself -- the name has
+        // to survive independently of the join outcome.
+        let handles: Vec<(
+            String,
+            std::thread::ScopedJoinHandle<Result<Value, RuntimeError>>,
+        )> = members
             .iter()
-            .map(|(name, expr)| {
+            .enumerate()
+            .map(|(branch_index, (name, expr))| {
                 let mut local_env = env.clone();
-                scope.spawn(move || {
-                    let r = eval_expr(ctx, expr, &mut local_env);
-                    (name.clone(), r)
-                })
+                let mut branch_path = parent_path.clone();
+                branch_path.push(branch_index);
+                let handle = scope.spawn(move || {
+                    ESCALATE_PATH.with(|p| *p.borrow_mut() = branch_path);
+                    eval_expr(ctx, expr, &mut local_env)
+                });
+                (name.clone(), handle)
             })
             .collect();
         handles
             .into_iter()
-            .map(|h| h.join().expect("with-block worker thread panicked"))
+            .map(|(name, h)| {
+                let r = h.join().unwrap_or_else(|payload| {
+                    // A panic here (a bug in this interpreter, or in a
+                    // provider adapter it calls into) must not abort the
+                    // whole `ulx` process -- surface it as an ordinary
+                    // error instead, consistent with this crate's own
+                    // claim that a failure "surfaces as an unsettled
+                    // `Draft<T>`, not a crash."
+                    let msg = payload
+                        .downcast_ref::<&str>()
+                        .map(|s| s.to_string())
+                        .or_else(|| payload.downcast_ref::<String>().cloned())
+                        .unwrap_or_else(|| "unknown panic payload".to_string());
+                    Err(RuntimeError::Panicked(format!(
+                        "with-block member `{name}` panicked: {msg}"
+                    )))
+                });
+                (name, r)
+            })
             .collect()
     });
 
@@ -903,13 +971,28 @@ fn eval_escalate(
     // Unlike `ask`/`judge`/`validator` calls (which *should* cache-hit
     // across unrelated runs when their inputs coincide, per §10.3), a human
     // decision belongs to one specific run's specific suspend point —
-    // mixing in `run_id` (in addition to the per-context sequence number,
-    // which disambiguates multiple escalate call sites within one run)
-    // keeps two different runs that happen to reach an identically-worded
-    // escalation from silently sharing a decision.
-    let seq = ctx.next_seq();
+    // mixing in `run_id` (in addition to this thread's `with`-block branch
+    // path plus a local sequence number, which together disambiguate
+    // multiple escalate call sites within one run — see `ESCALATE_PATH`'s
+    // docs for why this isn't a single run-wide counter) keeps two
+    // different runs that happen to reach an identically-worded escalation
+    // from silently sharing a decision.
+    let disambiguator = ESCALATE_PATH.with(|p| {
+        let path = p.borrow();
+        let local_seq = ESCALATE_LOCAL_SEQ.with(|c| {
+            let v = c.get();
+            c.set(v + 1);
+            v
+        });
+        let path_str = path
+            .iter()
+            .map(usize::to_string)
+            .collect::<Vec<_>>()
+            .join(".");
+        format!("{path_str}#{local_seq}")
+    });
     let refs: Vec<&Value> = evaluated.values().collect();
-    let key = cache_key("escalate", target, &refs, &[&ctx.run_id, &seq.to_string()]);
+    let key = cache_key("escalate", target, &refs, &[&ctx.run_id, &disambiguator]);
 
     if let Some(decision) = ctx.cache.get(&key) {
         ctx.trace.record(

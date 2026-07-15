@@ -193,7 +193,16 @@ mod tests {
     #[test]
     fn pdf_extension_is_rejected_by_resolve_image_with_a_clear_message() {
         let dir = std::env::temp_dir();
-        let path = dir.join(format!("ulexite-test-{}.pdf", std::process::id()));
+        // A name distinct from `resolve_document_reads_and_base64_encodes_a_local_pdf`'s
+        // below -- both used the same `ulexite-test-{pid}.pdf` path, and
+        // since `cargo test` runs test functions concurrently on separate
+        // threads within one process (same pid), the two raced on the
+        // same file (one's `remove_file` could fire mid-read of the
+        // other's `write`), flaking under `--workspace`/full-suite runs.
+        let path = dir.join(format!(
+            "ulexite-test-resolve-image-rejects-pdf-{}.pdf",
+            std::process::id()
+        ));
         std::fs::write(&path, b"%PDF-1.4").unwrap();
         let err = resolve_image(path.to_str().unwrap()).unwrap_err();
         std::fs::remove_file(&path).ok();
@@ -222,7 +231,10 @@ mod tests {
     #[test]
     fn resolve_document_reads_and_base64_encodes_a_local_pdf() {
         let dir = std::env::temp_dir();
-        let path = dir.join(format!("ulexite-test-{}.pdf", std::process::id()));
+        let path = dir.join(format!(
+            "ulexite-test-resolve-document-pdf-{}.pdf",
+            std::process::id()
+        ));
         std::fs::write(&path, b"%PDF-1.4 fake").unwrap();
         let result = resolve_document(path.to_str().unwrap()).unwrap();
         std::fs::remove_file(&path).ok();

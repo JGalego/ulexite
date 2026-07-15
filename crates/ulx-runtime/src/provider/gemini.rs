@@ -1,7 +1,10 @@
 //! Google Gemini's REST API — `generateContent`/`embedContent`, with the
-//! API key passed as a query parameter rather than a header, `role: "model"`
-//! instead of `"assistant"`, and safety blocks surfaced via
-//! `promptFeedback`/`finishReason` rather than an HTTP error.
+//! API key passed via the `x-goog-api-key` header (Gemini also accepts it
+//! as a `?key=` query parameter, but a header keeps it out of any URL that
+//! might get logged, included in a transport-level error message, or
+//! written into a trace file), `role: "model"` instead of `"assistant"`,
+//! and safety blocks surfaced via `promptFeedback`/`finishReason` rather
+//! than an HTTP error.
 
 use std::collections::BTreeMap;
 
@@ -45,6 +48,10 @@ impl GeminiProvider {
 
     fn chat(&self, request: &Invocation) -> Result<Value, ProviderError> {
         self.chat_or_vision(request, None)
+    }
+
+    fn auth_headers(&self) -> [(String, String); 1] {
+        [("x-goog-api-key".to_string(), self.api_key.clone())]
     }
 
     /// Gemini's `inline_data` image part only takes raw base64 bytes, not
@@ -123,11 +130,9 @@ impl GeminiProvider {
             body["generationConfig"] = serde_json::Value::Object(generation_config);
         }
 
-        let url = format!(
-            "{}/models/{model}:generateContent?key={}",
-            self.base_url, self.api_key
-        );
-        let resp = send_json_with_retry(self.transport.as_ref(), &url, &[], &body)?;
+        let url = format!("{}/models/{model}:generateContent", self.base_url);
+        let resp =
+            send_json_with_retry(self.transport.as_ref(), &url, &self.auth_headers(), &body)?;
 
         if let Some(reason) = resp
             .get("promptFeedback")
@@ -164,11 +169,9 @@ impl GeminiProvider {
             .unwrap_or("");
         let body = json!({"content": {"parts": [{"text": text}]}});
 
-        let url = format!(
-            "{}/models/{model}:embedContent?key={}",
-            self.base_url, self.api_key
-        );
-        let resp = send_json_with_retry(self.transport.as_ref(), &url, &[], &body)?;
+        let url = format!("{}/models/{model}:embedContent", self.base_url);
+        let resp =
+            send_json_with_retry(self.transport.as_ref(), &url, &self.auth_headers(), &body)?;
 
         let values = resp
             .get("embedding")

@@ -276,6 +276,159 @@ fn with_block_runs_members_concurrently_and_binds_both() {
     );
 }
 
+/// Two `escalate` calls in different `with`-block branches, with the exact
+/// same `target`/`reason`, race each other across separate OS threads
+/// (`eval_parallel`). Their cache keys must still come out distinct *and*
+/// deterministic (the same pair, every time, regardless of which branch's
+/// thread happens to run first) — otherwise a human's decision recorded
+/// against one branch's suspend point could get silently applied to the
+/// other on a later `ulx approve`/`ulx deny` (a different process, hence a
+/// fresh, independently-scheduled race). Repeating this many times over
+/// fresh run ids is the only way to catch a race regression here: a buggy
+/// shared-counter scheme wouldn't fail every time, just often enough to be
+/// a real bug in production.
+#[test]
+fn parallel_with_block_escalates_get_distinct_deterministic_cache_keys() {
+    let tmp = tempfile::tempdir().unwrap();
+    let src = r#"
+        conversation RaceEscalate() -> text {
+          with {
+            left  = escalate(human_approval, reason: "same reason")
+            right = escalate(human_approval, reason: "same reason")
+          }
+          left
+        }
+    "#;
+    let program = setup(src, &tmp);
+    // One reused run id (so `run_id` — itself part of the cache key — is
+    // held constant across iterations): each of the 20 re-executions below
+    // appends exactly 2 more "escalate" trace records (nothing ever gets
+    // cached, since nothing calls `approve`, so every iteration suspends
+    // again the same way), and every one of those 20 pairs must match the
+    // very first pair *by branch identity*, not just by count.
+    let run_id = "race_escalate";
+    for i in 0..20 {
+        let ctx = make_ctx(&program, &tmp, run_id);
+        let _ = ulx_runtime::run_conversation(&ctx, "RaceEscalate", BTreeMap::new());
+
+        let trace = ulx_runtime::read_trace(tmp.path().join("traces"), run_id).unwrap();
+        let keys: Vec<String> = trace
+            .iter()
+            .filter(|r| r.capability.as_deref() == Some("escalate"))
+            .filter_map(|r| r.cache_key.clone())
+            .collect();
+        assert_eq!(
+            keys.len(),
+            2 * (i + 1),
+            "each iteration should append exactly 2 more escalate records: {trace:#?}"
+        );
+        // Which branch's write to the shared trace file lands first is its
+        // own harmless race (log line ordering, not cache-key
+        // correctness) -- sort each iteration's pair before comparing so
+        // this test isn't sensitive to it.
+        let mut this_pair = [keys[2 * i].clone(), keys[2 * i + 1].clone()];
+        this_pair.sort();
+        assert_ne!(
+            this_pair[0], this_pair[1],
+            "two different with-block branches must never share an escalate cache key"
+        );
+        let mut first_pair = [keys[0].clone(), keys[1].clone()];
+        first_pair.sort();
+        assert_eq!(
+            this_pair, first_pair,
+            "branch->cache-key assignment must be deterministic across re-executions, \
+             not dependent on with-block thread scheduling (iteration {i})"
+        );
+    }
+}
+
+/// A fake `Provider` whose only purpose is panicking, to check that a
+/// `with`-block branch's panic surfaces as an ordinary `RuntimeError`
+/// instead of tearing down the whole process (`eval_parallel`'s
+/// `h.join().unwrap_or_else(...)`), and that the *other*, well-behaved
+/// branch still completes normally rather than getting dragged down with
+/// it.
+struct PanickyProvider;
+
+impl ulx_runtime::Provider for PanickyProvider {
+    fn id(&self) -> &str {
+        "panicky"
+    }
+    fn supports(&self, capability: &str) -> bool {
+        capability == "chat"
+    }
+    fn invoke(
+        &self,
+        _capability: &str,
+        _request: &ulx_runtime::provider::Invocation,
+    ) -> Result<Value, ulx_runtime::provider::ProviderError> {
+        panic!("boom")
+    }
+}
+
+#[test]
+fn with_block_panic_in_one_branch_does_not_abort_the_process_or_the_other_branch() {
+    let tmp = tempfile::tempdir().unwrap();
+    let src = r#"
+        conversation PanicOneBranch(doc: pdf) -> text {
+          with {
+            bad  = ask chat(provider: "panicky") { user: """boom""" }
+            good = ask vision(doc) { user: """Describe this.""" }
+          }
+          good
+        }
+    "#;
+    let program = setup(src, &tmp);
+
+    let cache = Cache::new(tmp.path().join("cache")).unwrap();
+    let trace = TraceWriter::create(tmp.path().join("traces"), "run_panic").unwrap();
+    let mut registry = ProviderRegistry::with_mock();
+    registry.register("panicky", Box::new(PanickyProvider));
+    let ctx = RunContext::new(
+        &program,
+        registry,
+        cache,
+        trace,
+        "run_panic".to_string(),
+        tmp.path().to_path_buf(),
+    );
+
+    let mut args = BTreeMap::new();
+    args.insert("doc".to_string(), Value::Text("doc-bytes".to_string()));
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        ulx_runtime::run_conversation(&ctx, "PanicOneBranch", args)
+    }));
+
+    let result = match result {
+        Ok(r) => r,
+        Err(_) => panic!(
+            "a with-block branch's panic must not unwind past run_conversation \
+             into the caller's thread"
+        ),
+    };
+    match result {
+        Err(RuntimeError::Panicked(msg)) => {
+            assert!(
+                msg.contains("bad"),
+                "error should name the panicking branch: {msg}"
+            )
+        }
+        other => panic!("expected RuntimeError::Panicked, got {other:?}"),
+    }
+
+    // The well-behaved branch still ran to completion despite its sibling
+    // panicking on a different thread.
+    let trace = ulx_runtime::read_trace(tmp.path().join("traces"), "run_panic").unwrap();
+    let vision_calls = trace
+        .iter()
+        .filter(|r| r.capability.as_deref() == Some("vision"))
+        .count();
+    assert_eq!(
+        vision_calls, 1,
+        "the non-panicking with-block branch should still have executed: {trace:#?}"
+    );
+}
+
 #[test]
 fn dataset_and_vector_nearest_work_end_to_end() {
     let tmp = tempfile::tempdir().unwrap();

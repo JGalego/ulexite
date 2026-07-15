@@ -72,8 +72,9 @@ ulx run translate.ulx Translate --arg source="MOCK_JUDGE_ESCALATE please" --arg 
 | [`ulx-sema`](crates/ulx-sema) | Name/import resolution, artifact-type checking, `Verdict` exhaustiveness, `with`-block independence checking |
 | [`ulx-ir`](crates/ulx-ir) | Lowers the AST to a pure/effect IR, desugars message literals, dead-binding elimination |
 | [`ulx-runtime`](crates/ulx-runtime) | Interpreter: pluggable providers (mock + OpenAI/Groq/Anthropic/Gemini/Cohere/Ollama), content-addressed cache + trace log, real concurrent `with` execution, cache-backed suspend/resume for `escalate` |
-| [`ulx-cli`](crates/ulx-cli) | The `ulx` binary: `parse`, `check`, `run`, `approve`/`deny`, `replay`, `trace`, `init`, `manifest` |
-| [`vscode-ulx`](tooling/vscode-ulx) | TextMate grammar + language config for `.ulx` syntax highlighting in VS Code |
+| [`ulx-cli`](crates/ulx-cli) | The `ulx` binary: `parse`, `check`, `run`, `bench`, `plan`, `approve`/`deny`, `replay`, `trace`, `init`, `manifest`, `fmt` |
+| [`ulx-lsp`](crates/ulx-lsp) | Language server: hover, go-to-definition, document symbols, completion |
+| [`vscode-ulx`](tooling/vscode-ulx) | TextMate grammar + language config for `.ulx` syntax highlighting in VS Code, plus a client that launches `ulx-lsp` |
 
 ## Configuring providers
 
@@ -100,7 +101,7 @@ chat = "meta-llama/Llama-3-8b"
 | `vision` | openai_compatible, anthropic, gemini, ollama, azure_openai — image files (jpg/png/gif/webp); anthropic also accepts PDF |
 | `transcribe` / `speak` / `generate_image` | openai_compatible only (OpenAI directly; Groq for `transcribe`) |
 
-Every real HTTP call goes through retry-with-backoff plus a per-provider circuit breaker; a rate limit, timeout, or safety refusal surfaces as an unsettled `Draft<T>`, not a crash. Adding a new provider needs no compiler/grammar/IR change — see `crates/ulx-runtime/src/provider/`.
+Every real HTTP call goes through retry-with-backoff plus a per-provider circuit breaker; a rate limit, timeout, or safety refusal surfaces as an unsettled `Draft<T>`, not a crash. `generate_image`/`speak` never retry on a client-side timeout specifically (unlike every other capability) — the vendor may have already completed and billed for the image/audio even though the response didn't arrive in time, so retrying risks paying for it twice. Adding a new provider needs no compiler/grammar/IR change — see `crates/ulx-runtime/src/provider/`.
 
 If two registered providers serve the same capability and nothing disambiguates it, `ask` fails with a clear `Ambiguous` error rather than silently picking one. Disambiguate per call with `ask chat(provider: "anthropic") { ... }`, or for the whole run with `--provider name` (repeatable).
 
@@ -141,6 +142,8 @@ run_id=$(ulx run translate.ulx Translate --arg source=hello --arg target_lang=fr
 ulx trace "$run_id" --output mermaid
 ulx trace "$run_id" --output html > trace.html
 ```
+
+`ulx run` also takes `--no-cache`, which skips the cache *read* for `ask`/`judge` calls (forcing a fresh live call every time) without touching `escalate`'s own cache entry — useful when iterating on a prompt/rubric under the same `--run-id`/args, where a stale cache hit would otherwise hide the change.
 
 `jsonl`/`mermaid`/`html` always describe the whole trace, even via `run`/`approve`/`deny`/`replay`. Errors before a conversation starts running (unreadable file, ambiguous/unconfigured provider, bad `--arg`) are always plain text on stderr regardless of `--output`.
 

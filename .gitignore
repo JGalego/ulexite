@@ -11,3 +11,8 @@ tooling/vscode-ulx/out/
 # provider API keys (README's "Configuring providers") — real secrets belong
 # here, never in ulexite.toml; see .env.example / examples/.env.example
 .env
+
+# a personal copy of ulexite.example.toml (README's "Configuring providers")
+# with whichever real vendors you've enabled locally — never the shipped
+# template itself, so this stays local like .env
+examples/ulexite.toml

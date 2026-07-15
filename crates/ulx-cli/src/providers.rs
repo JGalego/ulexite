@@ -88,7 +88,14 @@ pub fn resolve_providers(
 ) -> Result<ProviderRegistry, String> {
     if force_mock {
         load_dotenv(&crate::manifest::base_dir_of(file))?;
-        return Ok(ProviderRegistry::with_mock());
+        let mut names: BTreeSet<&str> = provider_decls.iter().map(|d| d.name.as_str()).collect();
+        if !selected.is_empty() {
+            let selected_set: BTreeSet<&str> = selected.iter().map(String::as_str).collect();
+            names.retain(|name| selected_set.contains(name));
+        }
+        return Ok(ProviderRegistry::with_mock_named(
+            names.into_iter().map(str::to_string),
+        ));
     }
     let merged = merge_provider_configs(file, provider_decls, selected)?;
     build_registry(&merged)

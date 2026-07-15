@@ -22,7 +22,8 @@ use crate::value::Value;
 use super::artifact::{self, ImageSource};
 use super::openai_shape;
 use super::transport::{
-    send_json_expect_bytes_with_retry, send_json_with_retry, send_multipart_with_retry, Transport,
+    send_json_expect_bytes_with_retry_no_timeout_retry, send_json_with_retry,
+    send_json_with_retry_no_timeout_retry, send_multipart_with_retry, Transport,
 };
 use super::{resolve_f64, resolve_i64, resolve_model, Invocation, Provider, ProviderError};
 
@@ -177,7 +178,9 @@ impl OpenAiCompatibleProvider {
 
     /// `/audio/speech` (TTS): JSON request, raw audio bytes back — written
     /// into the content-addressed artifact store (§11.2), with the path
-    /// returned as the result.
+    /// returned as the result. Uses the no-timeout-retry variant: a client
+    /// timeout doesn't mean the vendor didn't synthesize (and bill for)
+    /// the audio, so retrying here risks paying for it twice.
     fn speak(&self, request: &Invocation) -> Result<Value, ProviderError> {
         let text = request
             .messages
@@ -194,7 +197,7 @@ impl OpenAiCompatibleProvider {
         let body = json!({"model": model, "input": text, "voice": voice});
 
         let url = format!("{}/audio/speech", self.base_url);
-        let bytes = send_json_expect_bytes_with_retry(
+        let bytes = send_json_expect_bytes_with_retry_no_timeout_retry(
             self.transport.as_ref(),
             &url,
             &self.json_headers(),
@@ -206,6 +209,17 @@ impl OpenAiCompatibleProvider {
     /// `/images/generations` (DALL-E-compatible): JSON in, base64 image
     /// out — written into the artifact store, path returned (same as
     /// `speak`).
+    ///
+    /// Deliberately omits `response_format`: OpenAI's current image model
+    /// (`gpt-image-1`, the only one many accounts have access to now that
+    /// `dall-e-3` is being retired) rejects that parameter outright with
+    /// `HTTP 400 Unknown parameter: 'response_format'` and always returns
+    /// `b64_json` regardless — verified directly against the live API.
+    /// Some other `openai_compatible` servers still speak the legacy
+    /// dall-e contract instead, where omitting `response_format` defaults
+    /// to a `url` — so this handles both response shapes rather than
+    /// assuming one. Also uses the no-timeout-retry variant, for the same
+    /// duplicate-billing reason as `speak` above.
     fn generate_image(&self, request: &Invocation) -> Result<Value, ProviderError> {
         let prompt = request
             .messages
@@ -214,23 +228,56 @@ impl OpenAiCompatibleProvider {
             .collect::<Vec<_>>()
             .join(" ");
         let model = resolve_model(&request.args, &self.model);
-        let body = json!({"model": model, "prompt": prompt, "response_format": "b64_json", "n": 1});
+        let body = json!({"model": model, "prompt": prompt, "n": 1});
 
         let url = format!("{}/images/generations", self.base_url);
-        let resp =
-            send_json_with_retry(self.transport.as_ref(), &url, &self.json_headers(), &body)?;
+        let resp = send_json_with_retry_no_timeout_retry(
+            self.transport.as_ref(),
+            &url,
+            &self.json_headers(),
+            &body,
+        )?;
 
-        let b64 = resp
-            .get("data")
-            .and_then(|d| d.get(0))
+        let entry = resp.get("data").and_then(|d| d.get(0));
+        let bytes = match entry
             .and_then(|d| d.get("b64_json"))
             .and_then(|b| b.as_str())
-            .ok_or_else(|| ProviderError::Failed("response had no `b64_json`".to_string()))?;
-        let bytes = base64::engine::general_purpose::STANDARD
-            .decode(b64)
-            .map_err(|e| ProviderError::Failed(format!("invalid base64 image data: {e}")))?;
+        {
+            Some(b64) => base64::engine::general_purpose::STANDARD
+                .decode(b64)
+                .map_err(|e| ProviderError::Failed(format!("invalid base64 image data: {e}")))?,
+            None => {
+                let image_url = entry
+                    .and_then(|d| d.get("url"))
+                    .and_then(|u| u.as_str())
+                    .ok_or_else(|| {
+                        ProviderError::Failed(
+                            "response had neither `b64_json` nor `url`".to_string(),
+                        )
+                    })?;
+                fetch_bytes(image_url)?
+            }
+        };
         artifact::write_artifact(&self.artifact_store()?, &bytes, "png")
     }
+}
+
+/// One-off `GET` for the temporary image URL a `url`-shaped
+/// `/images/generations` response points at — a different request shape
+/// (no body, no vendor auth headers, a host that isn't `self.base_url`)
+/// than everything else this adapter sends, so it doesn't go through the
+/// shared `Transport`/circuit-breaker plumbing built for vendor API calls.
+fn fetch_bytes(url: &str) -> Result<Vec<u8>, ProviderError> {
+    use std::io::Read;
+    let resp = ureq::get(url)
+        .timeout(std::time::Duration::from_secs(30))
+        .call()
+        .map_err(|e| ProviderError::Failed(format!("could not fetch generated image: {e}")))?;
+    let mut buf = Vec::new();
+    resp.into_reader()
+        .read_to_end(&mut buf)
+        .map_err(|e| ProviderError::Failed(format!("could not read generated image: {e}")))?;
+    Ok(buf)
 }
 
 impl Provider for OpenAiCompatibleProvider {
@@ -506,6 +553,75 @@ mod tests {
         );
         assert_eq!(std::fs::read(&path).unwrap(), png_bytes);
         std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn generate_image_request_never_sends_response_format() {
+        // gpt-image-1 (the only image model many OpenAI accounts have
+        // access to now that dall-e-3 is being retired) rejects this
+        // parameter outright with HTTP 400 "Unknown parameter:
+        // 'response_format'" -- verified against the live API.
+        // Distinct bytes from `generate_image_decodes_base64_to_an_artifact_file`'s
+        // `png_bytes` above: the artifact store is content-addressed, so
+        // identical bytes here would write to the exact same path and race
+        // with that other test's cleanup under parallel test execution.
+        let png_bytes = [0x89u8, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
+        let b64 = base64::engine::general_purpose::STANDARD.encode(png_bytes);
+        let transport = std::sync::Arc::new(ScriptedTransport::new(vec![ScriptedTransport::ok(
+            200,
+            json!({"data": [{"b64_json": b64}]}),
+        )]));
+        let p = OpenAiCompatibleProvider::with_transport(
+            "openai",
+            "chat",
+            "https://api.openai.com/v1",
+            Some("sk-test".to_string()),
+            "gpt-4o-mini",
+            BTreeMap::new(),
+            Box::new(transport.clone()),
+            test_artifact_root(),
+        );
+        let invocation = Invocation {
+            messages: vec![super::super::Message {
+                role: "user".to_string(),
+                text: "a cat".to_string(),
+            }],
+            args: BTreeMap::new(),
+        };
+        if let Value::Text(path) = p.invoke("generate_image", &invocation).unwrap() {
+            std::fs::remove_file(&path).ok();
+        }
+        let sent = transport.sent_bodies();
+        assert_eq!(sent.len(), 1);
+        assert!(
+            sent[0].get("response_format").is_none(),
+            "request must not send response_format: {}",
+            sent[0]
+        );
+    }
+
+    #[test]
+    fn generate_image_url_shaped_response_is_a_clear_error_not_a_panic() {
+        // A `url`-only response (the legacy dall-e-style default when
+        // `response_format` is omitted) requires a follow-up fetch of that
+        // URL; this test only exercises the "no b64_json, has url, url is
+        // unreachable" path, which must surface as a ProviderError rather
+        // than panicking -- a real fetch against a live URL isn't
+        // hermetic/offline-safe for this test suite.
+        let transport = ScriptedTransport::new(vec![ScriptedTransport::ok(
+            200,
+            json!({"data": [{"url": "http://127.0.0.1:1/nonexistent.png"}]}),
+        )]);
+        let p = provider(transport);
+        let invocation = Invocation {
+            messages: vec![super::super::Message {
+                role: "user".to_string(),
+                text: "a cat".to_string(),
+            }],
+            args: BTreeMap::new(),
+        };
+        let err = p.invoke("generate_image", &invocation).unwrap_err();
+        assert!(matches!(err, ProviderError::Failed(_)));
     }
 
     #[test]

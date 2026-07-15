@@ -27,6 +27,12 @@ pub enum RuntimeError {
     NotImplemented(String),
     Io(String),
     ReplayMiss(String),
+    /// A `with`-block branch (`eval_parallel`) panicked on its own worker
+    /// thread — surfaced as an ordinary error to the caller instead of
+    /// tearing down the whole process via `.join().unwrap()`/`.expect()`,
+    /// per this crate's own claim that a failure "surfaces as an unsettled
+    /// `Draft<T>`, not a crash" (README's "Configuring providers").
+    Panicked(String),
 }
 
 impl std::fmt::Display for RuntimeError {
@@ -51,6 +57,7 @@ impl std::fmt::Display for RuntimeError {
             RuntimeError::NotImplemented(msg) => write!(f, "not implemented: {msg}"),
             RuntimeError::Io(msg) => write!(f, "I/O error: {msg}"),
             RuntimeError::ReplayMiss(msg) => write!(f, "replay error: {msg}"),
+            RuntimeError::Panicked(msg) => write!(f, "internal error (with-block panic): {msg}"),
         }
     }
 }

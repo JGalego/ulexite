@@ -83,6 +83,10 @@ jobs:
       - name: Build ulx CLI
         run: cargo build -p ulx-cli
 
+      # Mirrors `just check-examples` (justfile) as raw commands, same as
+      # the `rust` job above mirrors `just ci` -- so CI doesn't depend on
+      # `just` being installed on the runner. Keep the two in sync by hand
+      # if this loop ever changes.
       - name: Check every example under examples/
         run: |
           set -e

@@ -37,13 +37,24 @@ pub use value::Value;
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU64, Ordering};
 
 use ulx_ir::IrProgram;
 
 /// Everything one conversation run needs, shared (read-only after
-/// construction, aside from the atomic effect counter) across the worker
-/// threads a `with` block spawns.
+/// construction) across the worker threads a `with` block spawns.
+///
+/// `escalate`'s call-site disambiguator (interp.rs's `eval_escalate`) used
+/// to live here as a single `AtomicU64` shared across every thread a
+/// `with` block spawns — but the sequence number a given `escalate` call
+/// received then depended on OS thread-scheduling order, which isn't
+/// reproducible between the original run and the separate process
+/// invocations `ulx approve`/`ulx deny`'s probe-then-resume passes make: a
+/// reordering could swap two parallel branches' cache keys and resolve
+/// one branch's suspend point with the other's recorded decision. It's
+/// now a thread-local, statically-determined branch path (interp.rs) —
+/// deterministic across every re-execution of the same program, since it
+/// depends only on which `with`-block branch a thread is running, not on
+/// scheduling.
 pub struct RunContext<'a> {
     pub program: &'a IrProgram,
     pub providers: ProviderRegistry,
@@ -66,7 +77,6 @@ pub struct RunContext<'a> {
     /// not a "don't waste an API call" optimization, so bypassing it would
     /// break resume rather than just cost more.
     pub no_cache: bool,
-    seq: AtomicU64,
 }
 
 impl<'a> RunContext<'a> {
@@ -87,7 +97,6 @@ impl<'a> RunContext<'a> {
             base_dir,
             replay_only: false,
             no_cache: false,
-            seq: AtomicU64::new(0),
         }
     }
 
@@ -99,10 +108,6 @@ impl<'a> RunContext<'a> {
     pub fn without_cache(mut self) -> Self {
         self.no_cache = true;
         self
-    }
-
-    pub(crate) fn next_seq(&self) -> u64 {
-        self.seq.fetch_add(1, Ordering::SeqCst)
     }
 }
 

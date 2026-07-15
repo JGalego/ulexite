@@ -37,7 +37,7 @@
       ]
     },
     "keywords-decl": {
-      "match": "\\b(conversation|judge|validator|dataset|type|benchmark|import)\\b",
+      "match": "\\b(conversation|judge|validator|dataset|type|provider|benchmark|import)\\b",
       "name": "keyword.other.declaration.ulexite"
     },
     "keywords-control": {

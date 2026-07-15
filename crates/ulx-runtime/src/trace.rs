@@ -24,6 +24,30 @@ pub struct TraceRecord {
     pub timestamp_ms: u128,
 }
 
+/// `run_id` always ends up as one path component under `traces_dir` —
+/// `traces_dir.join(format!("{run_id}.jsonl"))`. Without this check, a
+/// `run_id` containing `/`, `..`, or an absolute path (`Path::join`
+/// replaces the whole path when the joined component is itself absolute)
+/// lets a caller write or read a file anywhere on disk instead of under
+/// the intended trace directory.
+fn validate_run_id(run_id: &str) -> std::io::Result<()> {
+    if run_id.is_empty()
+        || run_id == "."
+        || run_id == ".."
+        || run_id.contains('/')
+        || run_id.contains('\\')
+        || run_id.contains('\0')
+    {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!(
+                "invalid run id `{run_id}` — must be a single path component (no `/`, `\\`, `..`, or empty)"
+            ),
+        ));
+    }
+    Ok(())
+}
+
 pub struct TraceWriter {
     run_id: String,
     path: PathBuf,
@@ -33,6 +57,7 @@ pub struct TraceWriter {
 
 impl TraceWriter {
     pub fn create(traces_dir: impl AsRef<Path>, run_id: &str) -> std::io::Result<Self> {
+        validate_run_id(run_id)?;
         std::fs::create_dir_all(&traces_dir)?;
         let path = traces_dir.as_ref().join(format!("{run_id}.jsonl"));
         let file = std::fs::OpenOptions::new()
@@ -61,7 +86,15 @@ impl TraceWriter {
         output: Option<&Value>,
         error: Option<&str>,
     ) -> u64 {
-        let mut seq_guard = self.seq.lock().unwrap();
+        // `unwrap_or_else(PoisonError::into_inner)` rather than `.unwrap()`:
+        // a `with`-block branch that panics while holding this lock (or
+        // the file lock below) must not poison it for every other
+        // branch/subsequent call in the process — `eval_parallel` already
+        // converts that branch's own panic into an ordinary
+        // `RuntimeError::Panicked` instead of aborting, so tracing for the
+        // *other* branches (and any later run in this same process, e.g.
+        // `--interactive`'s loop) must keep working.
+        let mut seq_guard = self.seq.lock().unwrap_or_else(|p| p.into_inner());
         let seq = *seq_guard;
         *seq_guard += 1;
         drop(seq_guard);
@@ -78,7 +111,7 @@ impl TraceWriter {
             timestamp_ms: now_ms(),
         };
         let line = serde_json::to_string(&record).expect("TraceRecord always serializes");
-        let mut file = self.file.lock().unwrap();
+        let mut file = self.file.lock().unwrap_or_else(|p| p.into_inner());
         let _ = writeln!(file, "{line}");
         let _ = file.flush();
         seq
@@ -93,6 +126,7 @@ fn now_ms() -> u128 {
 }
 
 pub fn read_trace(traces_dir: impl AsRef<Path>, run_id: &str) -> std::io::Result<Vec<TraceRecord>> {
+    validate_run_id(run_id)?;
     let path = traces_dir.as_ref().join(format!("{run_id}.jsonl"));
     let file = std::fs::File::open(path)?;
     let reader = std::io::BufReader::new(file);

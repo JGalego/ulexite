@@ -38,7 +38,7 @@ vision         = "gpt-4o-mini"
 embed          = "text-embedding-3-small"
 transcribe     = "whisper-1"
 speak          = "tts-1"
-generate_image = "dall-e-3"
+generate_image = "gpt-image-1"
 
 # Per-capability overrides look like this instead of a bare string:
 # [providers.openai.chat]

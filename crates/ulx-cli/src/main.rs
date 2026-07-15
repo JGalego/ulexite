@@ -38,7 +38,7 @@ use output::{OutputFormat, RunOutcome};
 use ulx_runtime::{Cache, ProviderRegistry, RunContext, RuntimeError, TraceWriter, Value};
 
 #[derive(Parser)]
-#[command(name = "ulx", about = "Ulexite language CLI")]
+#[command(name = "ulx", about = "Ulexite language CLI", version)]
 struct Cli {
     #[command(subcommand)]
     command: Command,
@@ -894,9 +894,16 @@ fn cmd_deny(
     output: OutputFormat,
 ) -> bool {
     let reason = note.unwrap_or("denied by human reviewer").to_string();
-    println!("run `{run_id}` denied: {reason}");
-    println!("note: v0.1 does not distinguish deny-and-abort from deny-with-value at the type level (§24) —");
-    println!("      the denial is recorded as the escalate's resolved value, same as an approval would be.");
+    // Only for `text`: every other `--output` format promises "one JSON
+    // object, always on stdout" (README's "Output formats") or a full
+    // trace rendering — these two lines would corrupt either contract
+    // (e.g. break a `... --output json | jq` pipeline) if printed
+    // unconditionally, the way `cmd_approve` correctly never does.
+    if output == OutputFormat::Text {
+        println!("run `{run_id}` denied: {reason}");
+        println!("note: v0.1 does not distinguish deny-and-abort from deny-with-value at the type level (§24) —");
+        println!("      the denial is recorded as the escalate's resolved value, same as an approval would be.");
+    }
     resume(
         run_id,
         Value::Verdict(ulx_runtime::value::Verdict::Fail(reason)),

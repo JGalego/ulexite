@@ -157,6 +157,29 @@ impl ProviderRegistry {
         r
     }
 
+    /// Like `with_mock`, but registers a separate `MockProvider` under each
+    /// given name instead of one anonymous `"mock"` entry — lets `--mock`
+    /// still resolve an explicitly named provider (e.g. a `.ulx` `provider
+    /// LocalAssistant { ... }` decl referenced via `ask
+    /// chat(provider: "LocalAssistant")`) instead of failing with "no
+    /// provider named `LocalAssistant` is registered" just because `--mock`
+    /// would otherwise replace the whole registry with a single unnamed
+    /// entry. Falls back to `with_mock`'s single anonymous entry when
+    /// `names` is empty, which is the common case for every other example
+    /// (no declared providers at all).
+    pub fn with_mock_named(names: impl IntoIterator<Item = String>) -> Self {
+        let mut r = Self::new();
+        let mut any = false;
+        for name in names {
+            r.register(name, Box::new(MockProvider::new()));
+            any = true;
+        }
+        if !any {
+            r.register("mock", Box::new(MockProvider::new()));
+        }
+        r
+    }
+
     pub fn register(&mut self, name: impl Into<String>, provider: Box<dyn Provider>) {
         self.providers.push((name.into(), provider));
     }

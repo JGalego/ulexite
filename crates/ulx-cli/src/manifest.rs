@@ -53,7 +53,31 @@ fn runs_dir() -> PathBuf {
     state_dir().join("runs")
 }
 
+/// `run_id` (whether auto-derived or given via `--run-id`/a positional
+/// `<RUN_ID>` argument) always ends up as one path component under
+/// `.ulexite/` — `dir.join(format!("{run_id}.json"))` and friends. Without
+/// this check, a `--run-id` containing `/`, `..`, or an absolute path
+/// (`Path::join` replaces the whole path when the joined component is
+/// itself absolute) lets `ulx run`/`approve`/`deny` write or read a file
+/// anywhere on disk instead of under `.ulexite/runs/`.
+fn validate_run_id(run_id: &str) -> Result<(), String> {
+    if run_id.is_empty()
+        || run_id == "."
+        || run_id == ".."
+        || run_id.contains('/')
+        || run_id.contains('\\')
+        || run_id.contains('\0')
+    {
+        return Err(format!(
+            "invalid run id `{run_id}` — must be a single path component (no `/`, `\\`, `..`, or empty)"
+        ));
+    }
+    Ok(())
+}
+
 pub fn save(run_id: &str, manifest: &RunManifest) -> std::io::Result<()> {
+    validate_run_id(run_id)
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidInput, e))?;
     let dir = runs_dir();
     std::fs::create_dir_all(&dir)?;
     let path = dir.join(format!("{run_id}.json"));
@@ -62,6 +86,8 @@ pub fn save(run_id: &str, manifest: &RunManifest) -> std::io::Result<()> {
 }
 
 pub fn load(run_id: &str) -> std::io::Result<RunManifest> {
+    validate_run_id(run_id)
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidInput, e))?;
     let path = runs_dir().join(format!("{run_id}.json"));
     let bytes = std::fs::read(path)?;
     serde_json::from_slice(&bytes)
