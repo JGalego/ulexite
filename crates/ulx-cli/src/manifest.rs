@@ -14,6 +14,20 @@ pub struct RunManifest {
     pub file: PathBuf,
     pub conversation: String,
     pub args: BTreeMap<String, String>,
+    /// The `--provider name` selection (if any) `ulx run` was invoked
+    /// with — persisted so `ulx approve`/`ulx deny`/`ulx replay` default to
+    /// re-resolving the *same* providers rather than erroring (an
+    /// otherwise-ambiguous capability) or silently resolving to something
+    /// different (a mismatched provider id breaks cache-key lookups and
+    /// can replay a live call against the wrong vendor entirely — see
+    /// `docs/spec/24-limitations.md` §24.11). `#[serde(default)]` so a
+    /// manifest written before this field existed still deserializes.
+    #[serde(default)]
+    pub selected_providers: Vec<String>,
+    /// The `--mock` flag `ulx run` was invoked with — same rationale as
+    /// `selected_providers` above.
+    #[serde(default)]
+    pub force_mock: bool,
 }
 
 pub fn state_dir() -> PathBuf {

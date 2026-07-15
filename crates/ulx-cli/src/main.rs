@@ -74,9 +74,19 @@ enum Command {
         mock: bool,
         /// Output format: `text` (default), `json`, `jsonl`, `mermaid`, or
         /// `html`. The latter three render the run's full trace, not just
-        /// its final value.
+        /// its final value. Ignored when `--interactive` is set, which
+        /// always reports in plain text.
         #[arg(long, value_enum, default_value = "text")]
         output: OutputFormat,
+        /// Prompt at the terminal for each `escalate(...)` suspension
+        /// instead of stopping and printing `ulx approve`/`ulx deny`
+        /// instructions — the synchronous alternative for a human sitting
+        /// at the terminal right now, rather than the asynchronous
+        /// suspend/resume flow §7.3/§10.7 otherwise describe (a human
+        /// answering later, possibly via a different interface, possibly
+        /// after the process has exited).
+        #[arg(long)]
+        interactive: bool,
     },
     /// Run a `benchmark` declaration to completion (§16): loads its
     /// `dataset:`, runs the benchmark body once per row, and prints a
@@ -184,6 +194,7 @@ fn main() {
             providers,
             mock,
             output,
+            interactive,
         } => cmd_run(
             &file,
             &conversation,
@@ -192,6 +203,7 @@ fn main() {
             &providers,
             mock,
             output,
+            interactive,
         ),
         Command::Bench {
             file,
@@ -366,6 +378,7 @@ fn cmd_run(
     selected_providers: &[String],
     force_mock: bool,
     output: OutputFormat,
+    interactive: bool,
 ) -> bool {
     let Some(loaded) = pipeline::load(file) else {
         return false;
@@ -385,9 +398,26 @@ fn cmd_run(
             file: file.to_path_buf(),
             conversation: conversation.to_string(),
             args: args.clone(),
+            selected_providers: selected_providers.to_vec(),
+            force_mock,
         },
     ) {
         eprintln!("warning: could not persist run manifest: {e}");
+    }
+
+    let value_args: BTreeMap<String, Value> =
+        args.into_iter().map(|(k, v)| (k, Value::Text(v))).collect();
+
+    if interactive {
+        return run_interactive(
+            &loaded,
+            file,
+            conversation,
+            &value_args,
+            &run_id,
+            selected_providers,
+            force_mock,
+        );
     }
 
     let providers = match providers::resolve_providers(
@@ -410,9 +440,135 @@ fn cmd_run(
         }
     };
 
-    let value_args: BTreeMap<String, Value> =
-        args.into_iter().map(|(k, v)| (k, Value::Text(v))).collect();
     execute(&ctx, conversation, value_args, &run_id, output)
+}
+
+/// The synchronous counterpart to `execute`/`resume`'s suspend-then-resume
+/// flow (§7.3, §10.7): instead of exiting with "suspended, resume with
+/// `ulx approve`", prompt right here at the terminal and keep going. Each
+/// iteration rebuilds a fresh `ProviderRegistry`/`RunContext` (neither is
+/// `Clone`) and replays the conversation from the top — the same
+/// probe-then-inject-into-cache mechanism `resume()` uses, since a
+/// suspension's cache key can only be discovered by actually running into
+/// it (see `resume`'s doc comment for why two separate contexts are
+/// needed even there). Always reports in plain text — `--output` is
+/// ignored, since a live terminal Q&A and a machine-readable trace dump
+/// don't compose cleanly, and text is the natural mode for a human
+/// answering questions in real time.
+#[allow(clippy::too_many_arguments)]
+fn run_interactive(
+    loaded: &pipeline::Loaded,
+    file: &Path,
+    conversation: &str,
+    args: &BTreeMap<String, Value>,
+    run_id: &str,
+    selected_providers: &[String],
+    force_mock: bool,
+) -> bool {
+    loop {
+        let providers = match providers::resolve_providers(
+            file,
+            &loaded.provider_decls,
+            selected_providers,
+            force_mock,
+        ) {
+            Ok(p) => p,
+            Err(e) => {
+                eprintln!("error: {e}");
+                return false;
+            }
+        };
+        let ctx = match build_context(&loaded.ir, providers, file, run_id) {
+            Ok(c) => c,
+            Err(e) => {
+                eprintln!("error: could not set up run context: {e}");
+                return false;
+            }
+        };
+        match ulx_runtime::run_conversation(&ctx, conversation, args.clone()) {
+            Ok(value) => {
+                println!("{value}");
+                eprintln!("run id: {run_id}");
+                return true;
+            }
+            Err(RuntimeError::Suspended {
+                cache_key,
+                reason,
+                target,
+            }) => match prompt_decision(&target, &reason) {
+                Some(decision) => {
+                    if let Err(e) = ctx.cache.put(&cache_key, &decision) {
+                        eprintln!("error: could not record decision: {e}");
+                        return false;
+                    }
+                    // Loop: rebuild fresh and replay now that the decision
+                    // is cached — may hit another `escalate` further along.
+                }
+                None => {
+                    println!("suspended: waiting on `{target}` — {reason}");
+                    println!("run id: {run_id}");
+                    println!(
+                        "resume with: ulx approve {run_id} --value <text>   (or: ulx deny {run_id})"
+                    );
+                    return false;
+                }
+            },
+            Err(e) => {
+                eprintln!("error: {e}");
+                return false;
+            }
+        }
+    }
+}
+
+/// Prompts at the terminal for a suspended run's decision. `None` means
+/// the user chose to leave it suspended for a later `ulx approve`/`ulx
+/// deny` rather than decide now.
+fn prompt_decision(target: &str, reason: &str) -> Option<Value> {
+    use std::io::Write;
+
+    println!("suspended: waiting on `{target}` — {reason}");
+    loop {
+        print!("[a]pprove, [d]eny, or [q]uit (leave suspended)? ");
+        let _ = std::io::stdout().flush();
+        let mut line = String::new();
+        if std::io::stdin().read_line(&mut line).is_err() || line.is_empty() {
+            // EOF (e.g. stdin isn't a terminal) — treat like "quit".
+            return None;
+        }
+        match line.trim().to_ascii_lowercase().as_str() {
+            "a" | "approve" => {
+                print!("value (default \"approved\"): ");
+                let _ = std::io::stdout().flush();
+                let mut value = String::new();
+                let _ = std::io::stdin().read_line(&mut value);
+                let value = value.trim();
+                let value = if value.is_empty() {
+                    "approved".to_string()
+                } else {
+                    value.to_string()
+                };
+                return Some(Value::Text(value));
+            }
+            "d" | "deny" => {
+                print!("note (optional): ");
+                let _ = std::io::stdout().flush();
+                let mut note = String::new();
+                let _ = std::io::stdin().read_line(&mut note);
+                let note = note.trim();
+                let reason = if note.is_empty() {
+                    "denied by human reviewer".to_string()
+                } else {
+                    note.to_string()
+                };
+                return Some(Value::Verdict(ulx_runtime::value::Verdict::Fail(reason)));
+            }
+            "q" | "quit" => return None,
+            other => {
+                println!("please answer a/d/q (got {other:?})");
+            }
+        }
+    }
 }
 
 /// Statically walks `conversation`'s compiled IR and reports every
@@ -616,6 +772,19 @@ fn resume(
         .map(|(k, v)| (k.clone(), Value::Text(v.clone())))
         .collect();
 
+    // Default to whatever `ulx run` originally used (persisted in the
+    // manifest, §24.11) so `approve`/`deny` need no flags at all in the
+    // common case — an explicit `--provider`/`--mock` on this command
+    // still overrides it, for the rare case that's deliberate (e.g.
+    // migrating a run to a provider config that didn't exist yet when it
+    // was started).
+    let (selected_providers, force_mock): (&[String], bool) =
+        if selected_providers.is_empty() && !force_mock {
+            (manifest.selected_providers.as_slice(), manifest.force_mock)
+        } else {
+            (selected_providers, force_mock)
+        };
+
     // Re-run once (cache-miss) to discover the pending escalate's exact
     // cache key, then record the decision under it and run again in a
     // *fresh* `RunContext` — this is the resume mechanism `ulx-runtime`'s
@@ -736,16 +905,20 @@ fn cmd_replay(run_id: &str, output: OutputFormat) -> bool {
     // `provider.invoke` call) — but cache keys are derived partly from
     // `provider.id()` (interp.rs), so replay still needs the *same*
     // provider ids the original run used to find matching cache entries.
-    // Resolve normally first; only if that fails because nothing is
-    // configured at all (meaning the original run could only have
-    // succeeded via `--mock` too, since without it an unconfigured run
-    // fails identically) fall back to the mock registry, whose `id()`s
-    // match what that original run must have used.
-    let providers =
-        match providers::resolve_providers(&manifest.file, &loaded.provider_decls, &[], false) {
-            Ok(p) => p,
-            Err(_) => ProviderRegistry::with_mock(),
-        };
+    // Resolve using the original run's persisted `--provider`/`--mock`
+    // selection (§24.11) first; only if that fails (nothing configured
+    // at all, or a named provider no longer exists) fall back to the mock
+    // registry, whose `id()`s match what an unconfigured/`--mock` original
+    // run must have used.
+    let providers = match providers::resolve_providers(
+        &manifest.file,
+        &loaded.provider_decls,
+        &manifest.selected_providers,
+        manifest.force_mock,
+    ) {
+        Ok(p) => p,
+        Err(_) => ProviderRegistry::with_mock(),
+    };
     let ctx = match build_context(&loaded.ir, providers, &manifest.file, run_id) {
         Ok(c) => c.replaying(),
         Err(e) => {

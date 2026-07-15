@@ -53,12 +53,18 @@ cp examples/ulexite.example.toml examples/ulexite.toml
 ulx run examples/translate.ulx Translate --arg source=hello --arg target_lang=fr
 ```
 
-...including a human-approval suspend/resume round trip (this one forces a deterministic judge escalation, so it stays on `--mock`):
+...including a human-approval suspend/resume round trip (this one forces a deterministic judge escalation, so it stays on `--mock`). `ulx approve`/`ulx deny` reuse whatever `--provider`/`--mock` the original `ulx run` used, so repeating `--mock` here is optional (shown for clarity) — only needed if you want to override it:
 
 ```sh
 ulx run examples/translate.ulx Translate --arg source="MOCK_JUDGE_ESCALATE please" --arg target_lang=fr --run-id demo --mock
-ulx approve demo --value "human said: ship it" --mock
+ulx approve demo --value "human said: ship it"
 ulx trace demo
+```
+
+Or answer the escalation right at the terminal instead of a separate `approve`/`deny` call, with `--interactive`:
+
+```sh
+ulx run examples/translate.ulx Translate --arg source="MOCK_JUDGE_ESCALATE please" --arg target_lang=fr --mock --interactive
 ```
 
 ## What's implemented
