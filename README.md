@@ -4,6 +4,7 @@
 <p><strong>Stop scripting prompts. Start writing conversations.</strong></p>
 <p>
 <a href="https://github.com/JGalego/ulexite/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/JGalego/ulexite/actions/workflows/ci.yml/badge.svg"></a>
+<a href="https://github.com/JGalego/ulexite/releases/latest"><img alt="Release" src="https://img.shields.io/github/v/release/JGalego/ulexite"></a>
 <a href="LICENSE"><img alt="License: Apache-2.0" src="https://img.shields.io/badge/license-Apache--2.0-blue.svg"></a>
 <a href="Cargo.toml"><img alt="Rust 2021" src="https://img.shields.io/badge/rust-2021-orange.svg"></a>
 <img alt="Status: experimental" src="https://img.shields.io/badge/status-experimental-yellow.svg">
@@ -16,7 +17,7 @@ Ulexite is a programming language for conversational AI interactions. Its primar
 
 ## Install
 
-**Prebuilt binary** — detects your OS/architecture automatically:
+**Prebuilt binaries** — detects your OS/architecture automatically and installs both `ulx` (the CLI) and `ulx-lsp` (the language server, so an editor extension works immediately with no separate step):
 
 ```sh
 # Linux / macOS (x86_64 or arm64)
@@ -30,7 +31,13 @@ irm https://raw.githubusercontent.com/JGalego/ulexite/main/scripts/install.ps1 |
 
 ```sh
 cargo install --git https://github.com/JGalego/ulexite ulx-cli --locked
+cargo install --git https://github.com/JGalego/ulexite ulx-lsp --locked   # only needed for editor support
 ```
+
+**VS Code / VSCodium / Cursor / Windsurf extension** — syntax highlighting plus hover, go-to-definition, document symbols, and completion via `ulx-lsp` (installed above):
+
+- Search the Marketplace/Open VSX for **"Ulexite"** and install, or
+- Grab the `.vsix` from the [latest release](https://github.com/JGalego/ulexite/releases/latest) and run `code --install-extension ulexite-*.vsix` (substitute `code` for `cursor`/`windsurf`/`codium` as needed).
 
 ## Try it
 

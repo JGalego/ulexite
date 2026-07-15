@@ -1,4 +1,8 @@
-# Installs a prebuilt `ulx.exe` (Windows) from GitHub Releases.
+# Installs prebuilt `ulx.exe` and `ulx-lsp.exe` (Windows) from GitHub
+# Releases. `ulx-lsp.exe` is what the Ulexite VS Code extension (and any
+# other LSP-capable editor) execs by name off PATH -- installing both here
+# means one command sets up both the CLI and everything the editor
+# extension needs.
 #
 # Usage:
 #   irm https://raw.githubusercontent.com/JGalego/ulexite/main/scripts/install.ps1 | iex
@@ -41,8 +45,9 @@ try {
 
     New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
     Copy-Item -Path (Join-Path $Work "ulx-$Target\ulx.exe") -Destination (Join-Path $InstallDir "ulx.exe") -Force
+    Copy-Item -Path (Join-Path $Work "ulx-$Target\ulx-lsp.exe") -Destination (Join-Path $InstallDir "ulx-lsp.exe") -Force
 
-    Write-Host "installed ulx.exe to $InstallDir"
+    Write-Host "installed ulx.exe and ulx-lsp.exe to $InstallDir"
 
     $pathDirs = $env:PATH -split ";"
     if ($pathDirs -notcontains $InstallDir) {
@@ -52,6 +57,7 @@ try {
     }
 
     Write-Host "done. try: ulx --help"
+    Write-Host "for editor support, install the Ulexite VS Code extension too - see the README"
 } finally {
     Remove-Item -Recurse -Force $Work -ErrorAction SilentlyContinue
 }

@@ -2,7 +2,7 @@
   "name": "ulexite",
   "displayName": "Ulexite",
   "description": "Syntax highlighting and language server support for Ulexite (.ulx) — the conversation-first language for LLM interactions",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "publisher": "ulexite",
   "license": "Apache-2.0",
   "repository": {
@@ -29,6 +29,8 @@
   "devDependencies": {
     "@types/node": "^26.1.1",
     "@types/vscode": "^1.91.0",
+    "@vscode/vsce": "^3.9.2",
+    "ovsx": "^1.0.2",
     "typescript": "^7.0.2"
   },
   "contributes": {
@@ -57,7 +59,7 @@
         "ulexite.serverPath": {
           "type": "string",
           "default": "ulx-lsp",
-          "description": "Path to the ulx-lsp language server binary. Defaults to 'ulx-lsp' resolved on PATH — build it with `cargo build --release -p ulx-lsp` and either put it on PATH or set this to its full path."
+          "description": "Path to the ulx-lsp language server binary. Defaults to 'ulx-lsp' resolved on PATH — installing ulx (see the root README's Install section) puts it there automatically. Set this to a full path only if you built/placed ulx-lsp somewhere else."
         }
       }
     }

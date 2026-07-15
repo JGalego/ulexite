@@ -1,5 +1,9 @@
 #!/usr/bin/env bash
-# Installs a prebuilt `ulx` binary (Linux/macOS) from GitHub Releases.
+# Installs prebuilt `ulx` and `ulx-lsp` binaries (Linux/macOS) from GitHub
+# Releases. `ulx-lsp` is what the Ulexite VS Code extension (and any other
+# LSP-capable editor) execs by name off PATH -- installing both here means
+# one command sets up both the CLI and everything the editor extension
+# needs.
 #
 # Usage:
 #   curl -fsSL https://raw.githubusercontent.com/JGalego/ulexite/main/scripts/install.sh | sh
@@ -74,8 +78,9 @@ tar xzf "$workdir/ulx.tar.gz" -C "$workdir"
 
 mkdir -p "$install_dir"
 install -m 755 "$workdir/ulx-${target}/ulx" "$install_dir/ulx"
+install -m 755 "$workdir/ulx-${target}/ulx-lsp" "$install_dir/ulx-lsp"
 
-say "installed ulx to ${install_dir}/ulx"
+say "installed ulx and ulx-lsp to ${install_dir}"
 
 case ":$PATH:" in
 *":$install_dir:"*) ;;
@@ -84,3 +89,4 @@ esac
 
 "$install_dir/ulx" --help >/dev/null 2>&1 || true
 say "done. try: ulx --help"
+say "for editor support, install the Ulexite VS Code extension too — see the README"

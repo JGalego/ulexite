@@ -82,10 +82,15 @@ jobs:
         with:
           key: ${{ matrix.target }}
 
-      - name: Build ulx
+      # Both binaries ship in the same archive: `ulx-lsp` is what the
+      # VS Code extension (and any other LSP-capable editor) execs by name
+      # off PATH (`ulexite.serverPath`'s default) -- bundling it with `ulx`
+      # means the one install command gets you both the CLI and everything
+      # the editor extension needs, no separate LSP install step.
+      - name: Build ulx and ulx-lsp
         env:
           RUSTFLAGS: ${{ matrix.rustflags }}
-        run: cargo build --release --locked -p ulx-cli --target ${{ matrix.target }}
+        run: cargo build --release --locked -p ulx-cli -p ulx-lsp --target ${{ matrix.target }}
 
       # Asset names deliberately don't embed the version: this is what lets
       # the README's install command use GitHub's stable
@@ -99,6 +104,7 @@ jobs:
           staging="ulx-${{ matrix.target }}"
           mkdir -p "$staging"
           cp "target/${{ matrix.target }}/release/ulx" "$staging/"
+          cp "target/${{ matrix.target }}/release/ulx-lsp" "$staging/"
           cp README.md LICENSE "$staging/"
           tar czf "${staging}.tar.gz" "$staging"
 
@@ -109,6 +115,7 @@ jobs:
           $staging = "ulx-${{ matrix.target }}"
           New-Item -ItemType Directory -Path $staging | Out-Null
           Copy-Item "target/${{ matrix.target }}/release/ulx.exe" "$staging/"
+          Copy-Item "target/${{ matrix.target }}/release/ulx-lsp.exe" "$staging/"
           Copy-Item README.md "$staging/"
           Copy-Item LICENSE "$staging/"
           Compress-Archive -Path $staging -DestinationPath "$staging.zip"
@@ -120,9 +127,75 @@ jobs:
           path: ulx-${{ matrix.target }}.${{ matrix.archive_ext }}
           if-no-files-found: error
 
+  vscode-extension:
+    name: Package VS Code extension
+    needs: check-version
+    if: always() && (needs.check-version.result == 'success' || needs.check-version.result == 'skipped')
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: tooling/vscode-ulx
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: tooling/vscode-ulx/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      # A single universal .vsix: the extension has no native code of its
+      # own (it execs `ulx-lsp` off PATH, per `ulexite.serverPath`'s
+      # default -- see the `build` job above for where that binary comes
+      # from), so there's nothing platform-specific to package per target.
+      - name: Package extension
+        run: npx vsce package -o ulexite.vsix
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ulexite-vscode-extension
+          path: tooling/vscode-ulx/ulexite.vsix
+          if-no-files-found: error
+
+      # Both publish steps check for their token *inside* the shell step
+      # rather than gating the step itself on `secrets.X != ''` in `if:`
+      # -- simpler to reason about, and means a fork/clone of this repo
+      # without these secrets configured still gets a green release (just
+      # skips Marketplace/Open VSX publishing, keeping the .vsix release
+      # asset above as the fallback install path). Add `VSCE_PAT`
+      # (https://marketplace.visualstudio.com/manage, a publisher PAT with
+      # Marketplace "Manage" scope) and/or `OVSX_PAT`
+      # (https://open-vsx.org, an access token for a namespace you own) as
+      # repo secrets to turn these on.
+      - name: Publish to VS Code Marketplace
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
+        run: |
+          if [ -z "${VSCE_PAT:-}" ]; then
+            echo "VSCE_PAT not set -- skipping Marketplace publish (the .vsix release asset still works via 'code --install-extension')"
+            exit 0
+          fi
+          npx vsce publish --packagePath ulexite.vsix
+
+      - name: Publish to Open VSX
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          OVSX_PAT: ${{ secrets.OVSX_PAT }}
+        run: |
+          if [ -z "${OVSX_PAT:-}" ]; then
+            echo "OVSX_PAT not set -- skipping Open VSX publish (the .vsix release asset still works via 'code --install-extension')"
+            exit 0
+          fi
+          npx ovsx publish ulexite.vsix -p "$OVSX_PAT"
+
   release:
     name: Publish GitHub Release
-    needs: build
+    needs: [build, vscode-extension]
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/v')
     steps:
