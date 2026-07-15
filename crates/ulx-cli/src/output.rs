@@ -514,12 +514,47 @@ mod tests {
         // Pass 2 (the resume replay): chat + judge hit cache (same key,
         // same output), escalate now hits with the recorded decision.
         let records = vec![
-            record_with_key(0, "chat", "k_chat", false, Some(Value::Text("hi".into())), None),
-            record_with_key(1, "judge", "k_judge", false, Some(Value::Verdict(Verdict::Escalate)), None),
+            record_with_key(
+                0,
+                "chat",
+                "k_chat",
+                false,
+                Some(Value::Text("hi".into())),
+                None,
+            ),
+            record_with_key(
+                1,
+                "judge",
+                "k_judge",
+                false,
+                Some(Value::Verdict(Verdict::Escalate)),
+                None,
+            ),
             record_with_key(2, "escalate", "k_escalate", false, None, Some("suspended")),
-            record_with_key(0, "chat", "k_chat", true, Some(Value::Text("hi".into())), None),
-            record_with_key(1, "judge", "k_judge", true, Some(Value::Verdict(Verdict::Escalate)), None),
-            record_with_key(2, "escalate", "k_escalate", true, Some(Value::Text("approved".into())), None),
+            record_with_key(
+                0,
+                "chat",
+                "k_chat",
+                true,
+                Some(Value::Text("hi".into())),
+                None,
+            ),
+            record_with_key(
+                1,
+                "judge",
+                "k_judge",
+                true,
+                Some(Value::Verdict(Verdict::Escalate)),
+                None,
+            ),
+            record_with_key(
+                2,
+                "escalate",
+                "k_escalate",
+                true,
+                Some(Value::Text("approved".into())),
+                None,
+            ),
         ];
         let out = render_trace(OutputFormat::Mermaid, &records);
 

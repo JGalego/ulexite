@@ -10,27 +10,23 @@
 </p>
 </div>
 
-Ulexite is a programming language for conversational AI interactions. Its primary abstraction is the `Conversation`, not the prompt, the model, or the agent. The runtime executes conversations involving humans, LLMs, tools, judges, datasets, and multimodal artifacts, with deterministic execution where possible, reproducible traces, and first-class testing.
+Ulexite is a programming language for conversational AI interactions. Its primary abstraction is the `Conversation`, not the prompt, the model, or the agent — with deterministic execution where possible, reproducible traces, and first-class testing.
 
-> **Why "Ulexite"?** Ulexite is a real mineral, nicknamed the "TV rock" — it naturally grows as a bundle of parallel, fiber-optic-like crystal fibers that pipe an image straight through the stone, undistorted, from one face to the other. That felt like the right name for a language whose whole job is carrying a conversation — through models, tools, judges, and retries — faithfully from one end to the other.
+> **Why "Ulexite"?** Ulexite is a real mineral, nicknamed the "TV rock" — it grows as a bundle of parallel fibers that pipe an image undistorted from one face of the stone to the other. Fitting for a language whose job is carrying a conversation faithfully from one end to the other.
 
 ## Install
 
-**Prebuilt binary** — no Rust toolchain needed, detects your OS/architecture automatically:
-
-Linux / macOS (x86_64 or arm64):
+**Prebuilt binary** — detects your OS/architecture automatically:
 
 ```sh
+# Linux / macOS (x86_64 or arm64)
 curl -fsSL https://raw.githubusercontent.com/JGalego/ulexite/main/scripts/install.sh | sh
-```
 
-Windows (x86_64):
-
-```powershell
+# Windows (x86_64), in PowerShell
 irm https://raw.githubusercontent.com/JGalego/ulexite/main/scripts/install.ps1 | iex
 ```
 
-**From source** (any platform with Rust installed):
+**From source** (needs Rust):
 
 ```sh
 cargo install --git https://github.com/JGalego/ulexite ulx-cli --locked
@@ -39,98 +35,81 @@ cargo install --git https://github.com/JGalego/ulexite ulx-cli --locked
 ## Try it
 
 ```sh
-# scaffold a new package (writes ulexite.toml + main.ulx into the given directory)
 ulx init my-first-package /tmp/my-first-package
 ulx check /tmp/my-first-package/main.ulx
 ulx run /tmp/my-first-package/main.ulx Hello --arg name=world --mock
 ```
 
-Or drive one of the shipped examples against a real provider:
+Or drive a shipped example against a real provider:
 
 ```sh
+cd examples
 export OPENAI_API_KEY=sk-...
-cp examples/ulexite.example.toml examples/ulexite.toml
-ulx run examples/translate.ulx Translate --arg source=hello --arg target_lang=fr
+cp ulexite.example.toml ulexite.toml
+ulx run translate.ulx Translate --arg source=hello --arg target_lang=fr
 ```
 
-...including a human-approval suspend/resume round trip (this one forces a deterministic judge escalation, so it stays on `--mock`). `ulx approve`/`ulx deny` reuse whatever `--provider`/`--mock` the original `ulx run` used, so repeating `--mock` here is optional (shown for clarity) — only needed if you want to override it:
+Human-approval suspend/resume round trip (this one forces a judge escalation, so it stays on `--mock`):
 
 ```sh
-ulx run examples/translate.ulx Translate --arg source="MOCK_JUDGE_ESCALATE please" --arg target_lang=fr --run-id demo --mock
-ulx approve demo --value "human said: ship it"
+ulx run translate.ulx Translate --arg source="MOCK_JUDGE_ESCALATE please" --arg target_lang=fr --run-id demo --mock
+ulx approve demo --value "human said: ship it"   # reuses the run's --mock automatically
 ulx trace demo
 ```
 
-Or answer the escalation right at the terminal instead of a separate `approve`/`deny` call, with `--interactive`:
+Or answer it live at the terminal instead, with `--interactive`:
 
 ```sh
-ulx run examples/translate.ulx Translate --arg source="MOCK_JUDGE_ESCALATE please" --arg target_lang=fr --mock --interactive
+ulx run translate.ulx Translate --arg source="MOCK_JUDGE_ESCALATE please" --arg target_lang=fr --mock --interactive
 ```
 
 ## What's implemented
 
 | Crate | What it does |
 |---|---|
-| [`crates/ulx-ast`](crates/ulx-ast) | AST node definitions with source spans (§13.4) |
-| [`crates/ulx-syntax`](crates/ulx-syntax) | Lexer (`logos`) + parser (`chumsky`) implementing the grammar (§8), including interpolated text blocks |
-| [`crates/ulx-sema`](crates/ulx-sema) | Name/import resolution across files, artifact-type checking for `ask` calls (§9.2), `Verdict` match-exhaustiveness (§9.4), `with`-block independence checking (§9.7) |
-| [`crates/ulx-ir`](crates/ulx-ir) | Lowers the AST to a pure/effect IR (§13.4), desugaring message-literal sugar into explicit `chat` effects, plus a dead-binding elimination pass (§13.5) |
-| [`crates/ulx-runtime`](crates/ulx-runtime) | Tree-walking interpreter (§12.2) — a pluggable `Provider` trait with a deterministic `MockProvider` plus real HTTP-backed adapters (OpenAI/Groq/any OpenAI-compatible server, Anthropic, Gemini, Cohere, Ollama), a content-addressed cache and trace log (§10.3, §18), real concurrent `with`-block execution (`std::thread::scope`), and cache-backed suspend/resume for `escalate` (§10.7) |
-| [`crates/ulx-cli`](crates/ulx-cli) | The `ulx` binary: `parse`, `check`, `run`, `approve`/`deny`, `replay`, `trace`, `init`, `manifest` — `run`/`approve`/`deny`/`replay`/`trace` support `--output text\|json\|jsonl\|mermaid\|html` |
-| [`tooling/vscode-ulx`](tooling/vscode-ulx) | TextMate grammar + language config for `.ulx` syntax highlighting in VS Code (§20.10) |
+| [`ulx-ast`](crates/ulx-ast) | AST node definitions with source spans |
+| [`ulx-syntax`](crates/ulx-syntax) | Lexer + parser for the grammar, including interpolated text blocks |
+| [`ulx-sema`](crates/ulx-sema) | Name/import resolution, artifact-type checking, `Verdict` exhaustiveness, `with`-block independence checking |
+| [`ulx-ir`](crates/ulx-ir) | Lowers the AST to a pure/effect IR, desugars message literals, dead-binding elimination |
+| [`ulx-runtime`](crates/ulx-runtime) | Interpreter: pluggable providers (mock + OpenAI/Groq/Anthropic/Gemini/Cohere/Ollama), content-addressed cache + trace log, real concurrent `with` execution, cache-backed suspend/resume for `escalate` |
+| [`ulx-cli`](crates/ulx-cli) | The `ulx` binary: `parse`, `check`, `run`, `approve`/`deny`, `replay`, `trace`, `init`, `manifest` |
+| [`vscode-ulx`](tooling/vscode-ulx) | TextMate grammar + language config for `.ulx` syntax highlighting in VS Code |
 
 ## Configuring providers
 
-`ulx run`/`approve`/`deny` require a configured provider — pass `--mock` for the deterministic offline mock, or configure a real vendor below.
-
-To use a real vendor, add a `[providers.<name>]` table to `ulexite.toml` next to your `.ulx` file — one table per vendor account/deployment, `vendor` mandatory (never inferred from the table name, so two entries for the same vendor are unambiguous), and every other key a capability name mapped to a model:
+`ulx run`/`approve`/`deny` need a configured provider: pass `--mock` for the deterministic offline mock, or add a `[providers.<name>]` table to `ulexite.toml` next to your `.ulx` file:
 
 ```toml
 [providers.anthropic]
-vendor = "anthropic"                          # openai | azure_openai | anthropic | gemini | groq | cohere | ollama | openai_compatible | mock
-api_key_env = "ANTHROPIC_API_KEY"              # name of an env var — never a literal key in this file
-vision = "claude-3-5-sonnet-20241022"          # bare string = just the model name
-
-[providers.anthropic.chat]                     # per-capability overrides need this longer table form instead:
-model = "claude-3-5-sonnet-20241022"
-
-[providers.anthropic.chat.params]
-temperature = 0.2                              # defaults, overridable per call: ask chat(temperature: 0.7) { ... }
+vendor = "anthropic"
+api_key_env = "ANTHROPIC_API_KEY"
+chat = "claude-3-5-sonnet-20241022"
 
 [providers.local_llm]
-vendor = "openai_compatible"                   # any OpenAI-shaped /chat/completions server: vLLM, LM Studio, Groq, etc.
+vendor = "openai_compatible"   # any OpenAI-shaped /chat/completions server: vLLM, LM Studio, Groq, ...
 base_url = "http://localhost:8000/v1"
 chat = "meta-llama/Llama-3-8b"
-
-[providers.openai]
-vendor = "openai"
-api_key_env = "OPENAI_API_KEY"
-transcribe = "whisper-1"                       # each vendor entry can list as many capabilities as it serves
-speak = "tts-1"
-generate_image = "dall-e-3"
-
-[providers.azure]
-vendor = "azure_openai"                        # same JSON shape as OpenAI, different URL/auth conventions
-base_url = "https://my-resource.openai.azure.com"
-api_key_env = "AZURE_OPENAI_API_KEY"
-api_version = "2024-06-01"                     # optional; defaults to a recent stable version
-chat = "my-gpt4o-deployment"                   # this is your *deployment name*, not a generic model id
 ```
 
-`vendor = "ollama"` needs no API key and defaults to `http://localhost:11434`. `chat` is implemented for every vendor; `embed` for `openai_compatible`/`gemini`/`cohere`/`ollama`/`azure_openai`; `vision` for `openai_compatible`/`anthropic`/`gemini`/`ollama`/`azure_openai` (image files only — jpg/png/gif/webp, read straight off disk or passed through as an `http(s)://` URL where the vendor supports it; PDF/video are mock-only); `transcribe`/`speak`/`generate_image` for `openai_compatible` (covers OpenAI directly, and Groq for `transcribe`; not yet implemented for `azure_openai`, which does offer Whisper/TTS/DALL-E deployments of its own). Every real HTTP call goes through one retry-with-backoff policy plus a per-provider circuit breaker (`crates/ulx-runtime/src/provider/transport.rs`) — a handful of consecutive failures trips it open for a cooldown instead of hammering a downed vendor. A rate limit, timeout, or safety refusal surfaces as an unsettled `Draft<T>` (§9.3), not a crash. Adding a provider that isn't listed above needs no compiler/grammar/IR change (§12.4) — see `crates/ulx-runtime/src/provider/`.
+`vendor` is one of `openai | azure_openai | anthropic | gemini | groq | cohere | ollama | openai_compatible | mock` (never inferred from the table name, so two entries for the same vendor are unambiguous). Every other key names a capability; use `{ model = "...", params = { ... } }` instead of a bare string for per-capability overrides like `temperature`. `ollama` needs no API key and defaults to `localhost:11434`.
 
-If more than one registered provider serves the same capability (two `[providers.*]` entries both declaring `chat`, say) and nothing disambiguates it, `ask` fails with a clear `Ambiguous` error naming every candidate — it never silently picks one. Disambiguate either per call, with the reserved `provider:` arg (`ask chat(provider: "anthropic") { ... }`), or for the whole run, with `--provider name` on the CLI (repeatable; only the named provider(s) get registered at all).
+| Capability | Supported vendors |
+|---|---|
+| `chat`, `judge` | every vendor (`judge` routes through that vendor's own `chat`) |
+| `embed` | openai_compatible, gemini, cohere, ollama, azure_openai |
+| `vision` | openai_compatible, anthropic, gemini, ollama, azure_openai — image files (jpg/png/gif/webp); anthropic also accepts PDF |
+| `transcribe` / `speak` / `generate_image` | openai_compatible only (OpenAI directly; Groq for `transcribe`) |
+
+Every real HTTP call goes through retry-with-backoff plus a per-provider circuit breaker; a rate limit, timeout, or safety refusal surfaces as an unsettled `Draft<T>`, not a crash. Adding a new provider needs no compiler/grammar/IR change — see `crates/ulx-runtime/src/provider/`.
+
+If two registered providers serve the same capability and nothing disambiguates it, `ask` fails with a clear `Ambiguous` error rather than silently picking one. Disambiguate per call with `ask chat(provider: "anthropic") { ... }`, or for the whole run with `--provider name` (repeatable).
 
 ### Declaring a provider in `.ulx` source
 
-A `provider` block can also be declared directly in `.ulx` source — standalone (no `ulexite.toml` needed at all) or layered on top of a manifest entry:
+A `provider` block can also be declared directly in `.ulx` source — standalone, or layered on a `ulexite.toml` entry with `from`:
 
 ```
-provider MyAnthropic from "anthropic" {   // inherits vendor/api_key_env/etc. from [providers.anthropic]
-  vision: "claude-3-5-sonnet-20241022"    // adds a capability the manifest entry didn't have
-}
-
-provider Local {                          // fully standalone — no ulexite.toml needed
+provider Local {
   vendor: "openai_compatible"
   base_url: "http://localhost:8000/v1"
   chat: "meta-llama/Llama-3-8b"
@@ -142,27 +121,28 @@ conversation Greet(name: text) -> text {
 }
 ```
 
-See [`examples/custom_provider.ulx`](examples/custom_provider.ulx) for a runnable, fully-offline version (§21.12). `provider` decls can be imported across files too, the same way `judge`/`conversation`/`dataset` already are (`import provider Prod from "providers.ulx"`). This is the one place `.ulx` source can name an actual vendor — every `ask` call site still only ever names a capability (plus, optionally, a provider *name*, never a vendor kind directly); §12.4's provider-independence principle still holds for ordinary `ask` calls, this is an explicit, opt-in escape hatch layered on top of it, not a replacement for it.
+See [`examples/custom_provider.ulx`](examples/custom_provider.ulx) for a runnable version. `provider` decls can be imported across files too, the same way `judge`/`conversation`/`dataset` already are.
 
-**API keys via `.env`**: `ulx run` also loads a `.env` file next to the `.ulx` file being run, if one exists, before resolving providers — so `OPENAI_API_KEY=sk-...` can live in a local, gitignored `.env` instead of being `export`ed by hand every session. A real shell-exported variable always wins over the `.env` file's value. See [`examples/.env.example`](examples/.env.example).
+**API keys via `.env`**: `ulx run` loads a `.env` file next to the `.ulx` file, if one exists, before resolving providers — a real shell-exported variable always wins. See [`examples/.env.example`](examples/.env.example).
 
 ## Output formats
 
-`ulx run`/`approve`/`deny`/`replay`/`trace` all take `--output <FORMAT>`, defaulting to `text` (today's plain, human-readable output, unchanged):
+`ulx run`/`approve`/`deny`/`replay`/`trace` all take `--output <FORMAT>`, defaulting to `text`:
 
-- `text` — the default; a final value on stdout (with `run id: ...` on stderr, so scripts consuming the value don't see it), a `suspended: ...`/resume hint, or an `error: ...` on stderr for `run`/`approve`/`deny`/`replay`; a `#seq [hit|miss|err] capability  output` table for `trace`.
-- `json` — one JSON object, always on stdout (including for errors — this is the one deliberate difference from `text` mode, which puts errors on stderr): `{"status": "ok", "run_id", "value": ...}`, `{"status": "suspended", "run_id", "reason", "target", "resume_hint"}`, or `{"status": "error", "run_id", "message"}` — every shape carries `run_id`, so a script can always chain into `ulx trace` without having had to pass `--run-id` explicitly up front. `ulx trace --output json` prints the whole trace as a JSON array instead.
-- `jsonl` — one JSON object per trace record (`seq`, `kind`, `capability`, `cache_hit`, `output`, `error`, `timestamp_ms`), newline-delimited. For `run`/`approve`/`deny`/`replay` this is the *whole run's* trace, not just the final value — pipe through `tail -1` for the last record, or `jq` to filter.
-- `mermaid` — a `sequenceDiagram` of the run's trace (one participant per capability, request/response arrows labeled with `#seq` and a truncated `[hit|miss|err]` output) — paste into a Markdown `mermaid` code fence or a Mermaid live editor to render it.
-- `html` — a self-contained page (no JS, no external assets, theme-aware) rendering the trace as a list of status-colored cards. Redirect to a file to view it: `ulx trace <run-id> --output html > trace.html`.
+- `text` — a final value on stdout (`run id: ...` on stderr), a `suspended: ...`/resume hint, or `error: ...` on stderr.
+- `json` — one JSON object, always on stdout, always carrying `run_id` (so a script can chain into `ulx trace` without passing `--run-id` up front).
+- `jsonl` — one JSON line per trace record, newline-delimited — the whole run's trace, not just the final value.
+- `mermaid` — a `sequenceDiagram` of the run's trace; paste into a Markdown/Mermaid renderer.
+- `html` — a self-contained page rendering the trace as status-colored cards.
 
 ```sh
-run_id=$(ulx run examples/translate.ulx Translate --arg source=hello --arg target_lang=fr --mock --output json | jq -r .run_id)
+cd examples
+run_id=$(ulx run translate.ulx Translate --arg source=hello --arg target_lang=fr --mock --output json | jq -r .run_id)
 ulx trace "$run_id" --output mermaid
 ulx trace "$run_id" --output html > trace.html
 ```
 
-`jsonl`/`mermaid`/`html` always describe the *whole trace* of a run, even when invoked via `run`/`approve`/`deny`/`replay` — those re-read the trace file the run itself just wrote, rather than needing a separate `ulx trace` call. Errors that happen before a conversation starts running (an unreadable file, an ambiguous or unconfigured provider, a bad `--arg`) are always plain text on stderr regardless of `--output` — only a conversation's actual outcome or trace is format-aware.
+`jsonl`/`mermaid`/`html` always describe the whole trace, even via `run`/`approve`/`deny`/`replay`. Errors before a conversation starts running (unreadable file, ambiguous/unconfigured provider, bad `--arg`) are always plain text on stderr regardless of `--output`.
 
 ## How it compares
 
@@ -179,7 +159,7 @@ ulx trace "$run_id" --output html > trace.html
 
 ## Read the spec
 
-Start at [docs/spec/00-index.md](docs/spec/00-index.md) for the full table of contents. Suggested entry points depending on what you're looking for:
+Start at [docs/spec/00-index.md](docs/spec/00-index.md) for the full table of contents:
 
 - **Why does this need to exist?** → [§1 Vision](docs/spec/01-vision.md), [§3 Gap Analysis](docs/spec/03-gap-analysis.md)
 - **What did you learn from Guidance/LangGraph/DSPy/etc.?** → [§2 Prior Art Survey](docs/spec/02-prior-art-survey.md)
@@ -192,31 +172,16 @@ Start at [docs/spec/00-index.md](docs/spec/00-index.md) for the full table of co
 
 ## Example programs
 
-The `.ulx` programs referenced by the spec live in [`examples/`](examples/), each with any fixture data it needs. All of them parse, type-check, and run to completion against the mock provider (`cargo test` covers this end to end).
-
-Three exercise real-vendor capabilities — set up a provider once:
+The `.ulx` programs referenced by the spec live in [`examples/`](examples/) and all run against the mock provider by default (`cargo test` covers this end to end). Three exercise real-vendor capabilities:
 
 ```sh
+cd examples
 export OPENAI_API_KEY=sk-...
-cp examples/ulexite.example.toml examples/ulexite.toml
-```
+cp ulexite.example.toml ulexite.toml
 
-**Vision** — [`rag.ulx`](examples/rag.ulx):
-
-```sh
-ulx run examples/rag.ulx Caption --arg photo=examples/fixtures/sample.png
-```
-
-**Transcribe + speak** — [`voice_memo.ulx`](examples/voice_memo.ulx):
-
-```sh
-ulx run examples/voice_memo.ulx VoiceMemoReply --arg recording=examples/fixtures/sample.wav
-```
-
-**Generate image + vision** — [`generate_and_describe.ulx`](examples/generate_and_describe.ulx):
-
-```sh
-ulx run examples/generate_and_describe.ulx GenerateAndDescribe --arg prompt="a lighthouse at sunset"
+ulx run rag.ulx Caption --arg photo=fixtures/sample.png                                      # vision
+ulx run voice_memo.ulx VoiceMemoReply --arg recording=fixtures/sample.wav                     # transcribe + speak
+ulx run generate_and_describe.ulx GenerateAndDescribe --arg prompt="a lighthouse at sunset"   # generate_image + vision
 ```
 
 ## Contributing / CI
