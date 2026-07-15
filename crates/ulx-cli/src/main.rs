@@ -59,7 +59,13 @@ enum Command {
         /// Repeatable `name=value` argument, e.g. `--arg source=hello`.
         #[arg(long = "arg", value_name = "NAME=VALUE")]
         args: Vec<String>,
-        /// Reuse a specific run id (default: derived from file+conversation+args).
+        /// Reuse a specific run id — the only way to get a *stable*,
+        /// reproducible one across separate invocations (e.g. to `ulx
+        /// approve`/`ulx trace` a suspended run later). Without this, a
+        /// fresh, unique run id is generated every time, even for the
+        /// exact same file/conversation/args, so two unrelated `ulx run`
+        /// invocations never collide on one trace file/manifest/escalate
+        /// cache key.
         #[arg(long)]
         run_id: Option<String>,
         /// Select a specific configured provider by name (a `.ulx`
@@ -382,6 +388,29 @@ fn use_color() -> bool {
     std::io::stdout().is_terminal() && std::env::var_os("NO_COLOR").is_none()
 }
 
+/// A per-process, per-instant nonce mixed into every auto-derived run id
+/// (`default_run_id`/`default_bench_run_id`) below, so two separate
+/// invocations of the exact same command never collide on one run id —
+/// and therefore one trace file, one persisted `RunManifest`, and (for a
+/// program using `escalate`) one cache key for a human decision. Before
+/// this, `default_run_id` was a pure hash of file+conversation+args, so
+/// e.g. two people (or two CI jobs) running `ulx run translate.ulx
+/// Translate --arg source=hello --arg target_lang=fr --mock` at different
+/// times would silently share a run id, appending to each other's trace
+/// log and manifest. `ask`/`judge` caching is unaffected either way — it's
+/// content-addressed, independent of run_id (see `cache_key` in
+/// `ulx-runtime`). Nanosecond time plus pid isn't cryptographically
+/// unique, but is far more than enough to avoid a practical collision
+/// between `ulx` invocations; anyone who wants a *stable*, reproducible
+/// run id across reruns (e.g. the README's suspend/resume demo) already
+/// passes `--run-id` explicitly, which skips this entirely.
+fn run_nonce() -> String {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default();
+    format!("{}-{}", now.as_nanos(), std::process::id())
+}
+
 fn default_run_id(
     file: &std::path::Path,
     conversation: &str,
@@ -394,6 +423,8 @@ fn default_run_id(
         input.push('=');
         input.push_str(v);
     }
+    input.push('|');
+    input.push_str(&run_nonce());
     ulx_runtime::value::hash_bytes(input.as_bytes())[..16].to_string()
 }
 
@@ -777,7 +808,7 @@ fn execute(
 }
 
 fn default_bench_run_id(file: &std::path::Path, benchmark: &str) -> String {
-    let input = format!("{}::bench::{benchmark}", file.display());
+    let input = format!("{}::bench::{benchmark}::{}", file.display(), run_nonce());
     ulx_runtime::value::hash_bytes(input.as_bytes())[..16].to_string()
 }
 
@@ -1179,4 +1210,40 @@ cache_backend = "local"
         main_path.display()
     );
     true
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_run_id_never_collides_across_separate_calls_with_identical_inputs() {
+        // Regression test: `default_run_id` used to be a pure hash of
+        // file+conversation+args, so two unrelated invocations of the
+        // exact same command (a realistic case: two CI jobs, or a person
+        // rerunning `ulx run` without `--run-id`) silently shared one run
+        // id, and therefore one trace file/manifest/escalate cache key.
+        let file = std::path::Path::new("translate.ulx");
+        let mut args = BTreeMap::new();
+        args.insert("source".to_string(), "hello".to_string());
+        args.insert("target_lang".to_string(), "fr".to_string());
+
+        let a = default_run_id(file, "Translate", &args);
+        let b = default_run_id(file, "Translate", &args);
+        assert_ne!(
+            a, b,
+            "two calls with identical file/conversation/args must not produce the same run id"
+        );
+    }
+
+    #[test]
+    fn default_bench_run_id_never_collides_across_separate_calls() {
+        let file = std::path::Path::new("eval_translate.ulx");
+        let a = default_bench_run_id(file, "TranslateQuality");
+        let b = default_bench_run_id(file, "TranslateQuality");
+        assert_ne!(
+            a, b,
+            "two calls with identical file/benchmark must not produce the same run id"
+        );
+    }
 }
