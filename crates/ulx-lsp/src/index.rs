@@ -507,7 +507,10 @@ fn walk_expr(
             walk_expr(lhs, decls, refs);
             walk_expr(rhs, decls, refs);
         }
-        Expr::Int(_) | Expr::Float(_) | Expr::Str(_) => {}
+        // The path is a static literal with no idents of its own; the
+        // referenced file's interpolations aren't visible here since this
+        // walker runs over the raw pre-sema AST with no file IO.
+        Expr::Int(_) | Expr::Float(_) | Expr::Str(_) | Expr::FileText { .. } => {}
     }
 }
 

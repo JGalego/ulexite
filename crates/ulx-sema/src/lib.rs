@@ -13,6 +13,7 @@
 mod capability;
 mod diagnostic;
 mod resolve;
+mod rewrite;
 mod scope;
 mod typecheck;
 

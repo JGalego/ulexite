@@ -35,6 +35,22 @@ pub fn report_diagnostic(name: &str, src: &str, d: &ulx_sema::Diagnostic) {
     print_report(name, src, d.span.clone(), d.message.clone(), color);
 }
 
+/// Like `report_diagnostic`, but honors `d.source_file`: a diagnostic about
+/// a `{var}` interpolation inside a `file("...")`/`@path`-loaded prompt
+/// file (§8 `file_expr`) carries a span into *that* file's own content, not
+/// `module_name`/`module_src` — render it against the right source instead
+/// of the enclosing module's.
+pub fn report_module_diagnostic(module_name: &str, module_src: &str, d: &ulx_sema::Diagnostic) {
+    let Some(path) = &d.source_file else {
+        report_diagnostic(module_name, module_src, d);
+        return;
+    };
+    match std::fs::read_to_string(path) {
+        Ok(src) => report_diagnostic(&path.display().to_string(), &src, d),
+        Err(_) => eprintln!("{}: {}", path.display(), d.message),
+    }
+}
+
 fn print_report(
     name: &str,
     src: &str,

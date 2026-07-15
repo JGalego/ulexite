@@ -189,6 +189,32 @@ pub fn program_pieces() -> (
     });
     let row_ref = just(Token::Dollar).to(Expr::RowRef);
 
+    // ---- `file("path")` / bare `@path` shorthand (§8 `file_expr`) — both
+    // produce the same node; a loaded prompt file's content is split into
+    // literal/interpolation parts later, once its content is known (see
+    // `ulx-sema`'s prompt-file resolution), the same way `text_block` above
+    // is split eagerly here.
+    let file_call = kw("file")
+        .ignore_then(
+            filter_map(|span, t: Token| match t {
+                Token::Str(s) => Ok(s),
+                other => Err(Simple::expected_input_found(span, Vec::new(), Some(other))),
+            })
+            .delimited_by(just(Token::LParen), just(Token::RParen)),
+        )
+        .map(|path| Expr::FileText {
+            path,
+            shorthand: false,
+        });
+    let at_path = filter_map(|span, t: Token| match t {
+        Token::AtPath(path) => Ok(Expr::FileText {
+            path,
+            shorthand: true,
+        }),
+        other => Err(Simple::expected_input_found(span, Vec::new(), Some(other))),
+    });
+    let file_text_expr = file_call.or(at_path);
+
     let field_assign = ident_p().then_ignore(just(Token::Colon)).then(expr.clone());
     let record_lit = field_assign
         .clone()
@@ -277,6 +303,7 @@ pub fn program_pieces() -> (
         int_lit,
         str_lit,
         text_block,
+        file_text_expr.clone(),
         if_expr,
         generic_call,
         retry_expr,
@@ -400,7 +427,7 @@ pub fn program_pieces() -> (
     ));
     let message_stmt = role
         .then_ignore(just(Token::Colon))
-        .then(spanned(text_block))
+        .then(spanned(text_block.or(file_text_expr.clone())))
         .map(|(role, text)| Stmt::Message { role, text });
 
     let assistant_bind = kw("assistant")
@@ -548,7 +575,12 @@ fn ask_expr_stmt_head(
 /// Splits triple-quoted text-block content into literal/interpolation
 /// parts, re-lexing and re-parsing each `{expr}` span as an ordinary
 /// expression (§7.1). Interpolations are not allowed to nest braces.
-fn split_text_block(raw: &str, base_offset: usize) -> Result<Vec<TextPart>, String> {
+///
+/// Also used (with `base_offset = 0`) by `ulx-sema` to split the content of
+/// a file loaded via `file("...")`/`@path` (§8 `file_expr`) — an externally
+/// loaded prompt's `{var}` interpolations are checked with exactly the same
+/// pass as an inline `"""..."""` block.
+pub fn split_text_block(raw: &str, base_offset: usize) -> Result<Vec<TextPart>, String> {
     let mut parts = Vec::new();
     let mut literal = String::new();
     let mut chars = raw.char_indices().peekable();

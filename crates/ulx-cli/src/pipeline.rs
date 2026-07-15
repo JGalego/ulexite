@@ -120,7 +120,7 @@ pub fn check(file: &Path) -> bool {
         };
         let module_name = module.path.display().to_string();
         for d in &module.diagnostics {
-            diagnostics::report_diagnostic(&module_name, &src, d);
+            diagnostics::report_module_diagnostic(&module_name, &src, d);
             diag_count += 1;
             if d.severity == ulx_sema::Severity::Error {
                 ok = false;
@@ -166,7 +166,7 @@ pub fn load(file: &Path) -> Option<Loaded> {
         let src = std::fs::read_to_string(&module.path).ok()?;
         let module_name = module.path.display().to_string();
         for d in &module.diagnostics {
-            diagnostics::report_diagnostic(&module_name, &src, d);
+            diagnostics::report_module_diagnostic(&module_name, &src, d);
             if d.severity == ulx_sema::Severity::Error {
                 had_errors = true;
             }

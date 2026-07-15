@@ -450,6 +450,15 @@ fn real_examples_run_or_fail_cleanly() {
         if path.extension().and_then(|e| e.to_str()) != Some("ulx") {
             continue;
         }
+        // `file("...")`/`@path` (§8 `file_expr`) requires `ulx-sema`'s
+        // resolve-and-rewrite pass before `lower_program` can handle it
+        // (real base_dir + typechecked interpolations) — this test lowers
+        // straight from a bare parse with no sema step, by design (§13
+        // layering), so this one example is exercised through the real
+        // pipeline in `ulx-cli`'s tests instead.
+        if path.file_name().and_then(|n| n.to_str()) == Some("prompt_from_file.ulx") {
+            continue;
+        }
         let src = std::fs::read_to_string(&path).unwrap();
         let program = ulx_syntax::parse_source(&src).unwrap();
         let ir = match lower_program(&program) {

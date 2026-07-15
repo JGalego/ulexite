@@ -58,7 +58,7 @@ while_stmt    = "while" , expr , block ;
 break_stmt    = "break" , [ expr ] ;
 
 (* message literals: read like the transcript they produce, §7.3 *)
-message_stmt  = role_literal , ":" , text_block
+message_stmt  = role_literal , ":" , ( text_block | file_expr )
               | "assistant" , "->" , ident , [ ":" , type_expr ] ;
 role_literal  = "system" | "user" ;
 
@@ -153,7 +153,7 @@ postfix_expr  = primary_expr , { field_access | call | index } ;
 field_access  = "." , ident ;
 call          = "(" , [ arg_list ] , ")" ;
 index         = "[" , expr , "]" ;
-primary_expr  = int_lit | float_lit | string_lit | text_block
+primary_expr  = int_lit | float_lit | string_lit | text_block | file_expr
               | if_expr | generic_call | retry_expr | escalate_expr
               | judge_call | validator_call | ask_expr
               | row_ref | ident | record_lit | "(" , expr , ")" ;
@@ -162,6 +162,18 @@ primary_expr  = int_lit | float_lit | string_lit | text_block
    statements (§16.2, §21.7) — bound to the dataset row being evaluated *)
 row_ref       = "$" ;
 record_lit    = "{" , [ field_assign , { "," , field_assign } ] , "}" ;
+
+(* a text block loaded from disk, resolved relative to the containing
+   `.ulx` file's directory (same convention as dataset_decl's `from`
+   below) — its content is split into literal/interpolation parts by the
+   same pass that handles an inline text_block, so a `{var}` inside the
+   file is still statically checked, just once the file's content is known
+   (§9, "Configuring providers" README section has worked examples). Both
+   forms are equivalent; `@path` is bare shorthand for `file("path")` with
+   no surrounding quotes. *)
+file_expr     = "file" , "(" , string_lit , ")" | at_path ;
+at_path       = "@" , path_char , { path_char } ;
+path_char     = letter | digit | "." | "/" | "_" | "-" ;
 
 (* branching expression — the imperative-region complement to match_stmt,
    used where a two-way choice is simpler to read than a full match, §21.3 *)

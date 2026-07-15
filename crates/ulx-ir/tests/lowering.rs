@@ -106,6 +106,15 @@ fn all_examples_lower_successfully() {
         if path.extension().and_then(|e| e.to_str()) != Some("ulx") {
             continue;
         }
+        // `file("...")`/`@path` (§8 `file_expr`) is deliberately *not*
+        // resolvable by a bare parse -> `lower_program`: it requires
+        // `ulx-sema`'s resolve-and-rewrite pass first (real base_dir +
+        // typechecked interpolations), which `ulx-ir` has no dependency on
+        // by design (§13's layering). `ulx-sema`/`ulx-cli` test this
+        // example through the real pipeline instead.
+        if path.file_name().and_then(|n| n.to_str()) == Some("prompt_from_file.ulx") {
+            continue;
+        }
         let src = std::fs::read_to_string(&path).unwrap();
         let program =
             ulx_syntax::parse_source(&src).unwrap_or_else(|e| panic!("{}: {e:?}", path.display()));

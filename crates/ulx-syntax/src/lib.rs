@@ -8,4 +8,4 @@ pub mod parser;
 
 pub use fmt::{format_program, format_source};
 pub use lexer::Token;
-pub use parser::{parse_source, Err};
+pub use parser::{parse_source, split_text_block, Err};

@@ -256,6 +256,15 @@ pub enum Expr {
     Float(f64),
     Str(String),
     TextBlock(Vec<TextPart>),
+    /// `file("prompts/system.txt")` or the bare `@prompts/system.txt`
+    /// shorthand — a text block whose content is loaded from disk relative
+    /// to the containing `.ulx` file, then split/interpolated exactly like
+    /// an inline `"""..."""` block. `shorthand` only affects how `ulx fmt`
+    /// prints it back.
+    FileText {
+        path: String,
+        shorthand: bool,
+    },
     Ident(String),
     RecordLit(Vec<(String, Spanned<Expr>)>),
     /// `if cond { .. } else { .. }` (§8 `if_expr`)

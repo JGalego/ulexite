@@ -223,6 +223,8 @@ pub fn load_and_analyze_with_deps(
             }
         }
 
+        let base_dir = path.parent();
+        let mut prompt_cache = HashMap::new();
         for (decl, _) in &program.decls {
             let mut ctx = Ctx {
                 caps: &caps,
@@ -230,16 +232,25 @@ pub fn load_and_analyze_with_deps(
                 judges_and_validators: Some(&judges_and_validators),
                 providers: Some(&providers),
                 known_manifest_providers,
+                base_dir,
+                prompt_cache: &mut prompt_cache,
                 diags: &mut diags,
             };
             check_decl_with(decl, &mut ctx);
         }
 
+        // Replace every `file("...")`/`@path` node with the plain
+        // `Expr::TextBlock` its content resolved to during the check above
+        // (reusing `prompt_cache`, so this does no new file IO) — from here
+        // on, `ulx-ir`/`ulx-runtime` see only ordinary text blocks.
+        let mut resolved_program = program.clone();
+        crate::rewrite::rewrite_program(&mut resolved_program, &prompt_cache, base_dir);
+
         analyzed.insert(
             path.clone(),
             AnalyzedModule {
                 path: path.clone(),
-                program: program.clone(),
+                program: resolved_program,
                 diagnostics: diags,
             },
         );

@@ -574,6 +574,13 @@ fn fmt_expr(e: &Expr, indent: usize) -> String {
         Expr::Float(f) => fmt_float(*f),
         Expr::Str(s) => fmt_str_lit(s),
         Expr::TextBlock(parts) => fmt_text_block(parts, indent),
+        Expr::FileText { path, shorthand } => {
+            if *shorthand {
+                format!("@{path}")
+            } else {
+                format!("file({})", fmt_str_lit(path))
+            }
+        }
         Expr::Ident(s) => s.clone(),
         Expr::RecordLit(fields) => fmt_record_fields(fields, indent),
         Expr::If {

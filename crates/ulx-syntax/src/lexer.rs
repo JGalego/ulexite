@@ -34,6 +34,13 @@ pub enum Token {
     #[regex(r"[A-Za-z_][A-Za-z0-9_]*", |lex| lex.slice().to_string())]
     Ident(String),
 
+    /// `@prompts/system.txt` — bare shorthand for `file("prompts/system.txt")`
+    /// (§8 `file_expr`). The leading `@` is stripped by the callback; the
+    /// character class excludes whitespace and every grammar delimiter
+    /// (`{`, `}`, `(`, `)`, `,`, `:`), so it never swallows past the path.
+    #[regex(r"@[A-Za-z0-9_./-]+", |lex| lex.slice()[1..].to_string())]
+    AtPath(String),
+
     #[token("(")]
     LParen,
     #[token(")")]
@@ -96,7 +103,9 @@ impl std::hash::Hash for Token {
         match self {
             Token::Float(f) => f.to_bits().hash(state),
             Token::Int(i) => i.hash(state),
-            Token::Str(s) | Token::TextBlock(s) | Token::Ident(s) => s.hash(state),
+            Token::Str(s) | Token::TextBlock(s) | Token::Ident(s) | Token::AtPath(s) => {
+                s.hash(state)
+            }
             _ => {}
         }
     }
@@ -110,6 +119,7 @@ impl std::fmt::Display for Token {
             Token::Str(s) => write!(f, "{s:?}"),
             Token::TextBlock(_) => write!(f, "<text block>"),
             Token::Ident(s) => write!(f, "{s}"),
+            Token::AtPath(s) => write!(f, "@{s}"),
             Token::LParen => write!(f, "("),
             Token::RParen => write!(f, ")"),
             Token::LBrace => write!(f, "{{"),

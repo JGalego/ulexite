@@ -15,6 +15,14 @@ pub enum LowerError {
     UnsupportedAskBodyStatement {
         conversation: String,
     },
+    /// A `file("...")`/`@path` node (§8 `file_expr`) reached IR lowering
+    /// unresolved — `ulx-sema`'s analysis pass always rewrites these into a
+    /// plain `TextBlock` before lowering runs (see `ulx-sema`'s `rewrite`
+    /// module), so this only fires if a `Program` was lowered without going
+    /// through semantic analysis first.
+    UnresolvedFileText {
+        path: String,
+    },
 }
 
 pub fn lower_program(program: &Program) -> Result<IrProgram, LowerError> {
@@ -436,5 +444,8 @@ fn lower_expr(expr: &Expr, known: &HashSet<String>) -> Result<IrExpr, LowerError
             lhs: Box::new(lower_expr(&lhs.0, known)?),
             rhs: Box::new(lower_expr(&rhs.0, known)?),
         },
+        Expr::FileText { path, .. } => {
+            return Err(LowerError::UnresolvedFileText { path: path.clone() });
+        }
     })
 }

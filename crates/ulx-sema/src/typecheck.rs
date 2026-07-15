@@ -1,4 +1,5 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
+use std::path::{Path, PathBuf};
 
 use ulx_ast::*;
 
@@ -27,19 +28,81 @@ pub struct Ctx<'a> {
     /// which case `from`/`provider:` references naming a raw manifest entry
     /// can't be validated here at all, only at `ulx run`).
     pub known_manifest_providers: Option<&'a HashSet<String>>,
+    /// Directory `file("...")`/`@path` prompt-file references (§8
+    /// `file_expr`) are resolved relative to. `None` means "this program has
+    /// no filesystem home" (e.g. a REPL fragment via `analyze()`) — prompt
+    /// file references can't be resolved there at all.
+    pub base_dir: Option<&'a Path>,
+    /// Memoizes prompt-file loads (read + `split_text_block`) by resolved
+    /// absolute path, so a file referenced from multiple places is read
+    /// once per module.
+    pub prompt_cache: &'a mut HashMap<PathBuf, Result<Vec<TextPart>, String>>,
     pub diags: &'a mut Vec<Diagnostic>,
 }
 
 pub fn check_decl(decl: &TopDecl, caps: &[CapabilitySpec], diags: &mut Vec<Diagnostic>) {
+    let mut prompt_cache = HashMap::new();
     let mut ctx = Ctx {
         caps,
         globals: None,
         judges_and_validators: None,
         providers: None,
         known_manifest_providers: None,
+        base_dir: None,
+        prompt_cache: &mut prompt_cache,
         diags,
     };
     check_decl_with(decl, &mut ctx);
+}
+
+/// Reads + splits a `file("...")`/`@path` reference's content (cached by
+/// resolved absolute path, so a file referenced from multiple places is
+/// read once per module), with no diagnostics of its own — `Err(None)`
+/// means "no filesystem home to resolve against" (e.g. a REPL fragment via
+/// `analyze()`), `Err(Some(msg))` an IO or `{}`-syntax error.
+fn load_file_text(path: &str, ctx: &mut Ctx) -> Result<Vec<TextPart>, Option<String>> {
+    let base_dir = ctx.base_dir.ok_or(None)?;
+    let full = base_dir.join(path);
+    if !ctx.prompt_cache.contains_key(&full) {
+        let loaded = std::fs::read_to_string(&full)
+            .map_err(|e| format!("could not read prompt file `{}`: {e}", full.display()))
+            .and_then(|content| {
+                ulx_syntax::split_text_block(&content, 0).map_err(|e| {
+                    format!(
+                        "invalid interpolation in prompt file `{}`: {e}",
+                        full.display()
+                    )
+                })
+            });
+        ctx.prompt_cache.insert(full.clone(), loaded);
+    }
+    // Clone the whole cached result up front so this immediately releases
+    // the borrow of `ctx.prompt_cache` — callers may push to `ctx.diags` (a
+    // different field of the same `Ctx`) right after this returns.
+    ctx.prompt_cache.get(&full).unwrap().clone().map_err(Some)
+}
+
+/// `load_file_text`, but pushes a diagnostic at `span` on failure (used
+/// wherever a `file(...)`/`@path` node is the thing actually being
+/// typechecked, as opposed to merely scanned for referenced idents).
+fn resolve_file_text(path: &str, span: &Span, ctx: &mut Ctx) -> Vec<TextPart> {
+    match load_file_text(path, ctx) {
+        Ok(parts) => parts,
+        Err(None) => {
+            ctx.diags.push(Diagnostic::error(
+                format!(
+                    "`file(\"{path}\")` (or `@{path}`) requires a `.ulx` file on disk — not \
+                     supported when analyzing a source fragment with no filesystem path"
+                ),
+                span.clone(),
+            ));
+            Vec::new()
+        }
+        Err(Some(msg)) => {
+            ctx.diags.push(Diagnostic::error(msg, span.clone()));
+            Vec::new()
+        }
+    }
 }
 
 pub fn check_decl_with(decl: &TopDecl, ctx: &mut Ctx) {
@@ -283,7 +346,7 @@ fn check_with_block_independence(block: &Block, ctx: &mut Ctx) {
             let names: HashSet<&str> = bindings.iter().map(|b| b.name.as_str()).collect();
             for b in bindings {
                 let mut refs = HashSet::new();
-                collect_idents(&b.value.0, &mut refs);
+                collect_idents(&b.value.0, &mut refs, ctx);
                 for r in &refs {
                     if names.contains(r.as_str()) && r != &b.name {
                         ctx.diags.push(Diagnostic::error(
@@ -302,62 +365,76 @@ fn check_with_block_independence(block: &Block, ctx: &mut Ctx) {
     }
 }
 
-fn collect_idents(expr: &Expr, out: &mut HashSet<String>) {
+fn collect_idents(expr: &Expr, out: &mut HashSet<String>, ctx: &mut Ctx) {
     match expr {
         Expr::Ident(s) => {
             out.insert(s.clone());
         }
-        Expr::FieldAccess { base, .. } => collect_idents(&base.0, out),
+        Expr::FieldAccess { base, .. } => collect_idents(&base.0, out, ctx),
         Expr::Call { callee, args } => {
-            collect_idents(&callee.0, out);
+            collect_idents(&callee.0, out, ctx);
             for a in args {
-                collect_idents(&a.value.0, out);
+                collect_idents(&a.value.0, out, ctx);
             }
         }
         Expr::Index { base, index } => {
-            collect_idents(&base.0, out);
-            collect_idents(&index.0, out);
+            collect_idents(&base.0, out, ctx);
+            collect_idents(&index.0, out, ctx);
         }
-        Expr::Unary { expr, .. } => collect_idents(&expr.0, out),
+        Expr::Unary { expr, .. } => collect_idents(&expr.0, out, ctx),
         Expr::Binary { lhs, rhs, .. } => {
-            collect_idents(&lhs.0, out);
-            collect_idents(&rhs.0, out);
+            collect_idents(&lhs.0, out, ctx);
+            collect_idents(&rhs.0, out, ctx);
         }
-        Expr::If { cond, .. } => collect_idents(&cond.0, out),
+        Expr::If { cond, .. } => collect_idents(&cond.0, out, ctx),
         Expr::GenericCall { args, .. } => {
             for a in args {
-                collect_idents(&a.value.0, out);
+                collect_idents(&a.value.0, out, ctx);
             }
         }
         Expr::Retry { else_expr, .. } => {
             if let Some(e) = else_expr {
-                collect_idents(&e.0, out);
+                collect_idents(&e.0, out, ctx);
             }
         }
         Expr::Escalate { args, .. } => {
             for (_, e) in args {
-                collect_idents(&e.0, out);
+                collect_idents(&e.0, out, ctx);
             }
         }
         Expr::JudgeCall { args, .. } | Expr::ValidatorCall { args, .. } => {
             for a in args {
-                collect_idents(&a.value.0, out);
+                collect_idents(&a.value.0, out, ctx);
             }
         }
         Expr::AskExpr { args, .. } => {
             for a in args {
-                collect_idents(&a.value.0, out);
+                collect_idents(&a.value.0, out, ctx);
             }
         }
         Expr::RecordLit(fields) => {
             for (_, e) in fields {
-                collect_idents(&e.0, out);
+                collect_idents(&e.0, out, ctx);
             }
         }
         Expr::TextBlock(parts) => {
             for p in parts {
                 if let TextPart::Interp((e, _)) = p {
-                    collect_idents(e, out);
+                    collect_idents(e, out, ctx);
+                }
+            }
+        }
+        Expr::FileText { path, .. } => {
+            // No diagnostic here: this is only extracting which idents a
+            // `with`-binding's value references (§9.7 independence check);
+            // the same node is separately typechecked via `check_expr`
+            // (`Stmt::With`'s own `check_expr(&b.value, ..)` call), which
+            // reports any load failure with an accurate span.
+            if let Ok(parts) = load_file_text(path, ctx) {
+                for p in &parts {
+                    if let TextPart::Interp((e, _)) = p {
+                        collect_idents(e, out, ctx);
+                    }
                 }
             }
         }
@@ -595,6 +672,46 @@ fn check_expr(expr: &Spanned<Expr>, scope: &mut Scope, ctx: &mut Ctx) {
                 }
             }
         }
+        Expr::FileText { path, .. } => {
+            let parts = resolve_file_text(path, span, ctx);
+            match ctx.base_dir {
+                // Diagnostics from a loaded prompt file's own interpolations
+                // belong to *that* file, not the importing module — check
+                // them into a scratch `Vec` with a reborrowed `Ctx`, then
+                // re-tag each one with `source_file` before merging it in.
+                Some(base_dir) => {
+                    let full = base_dir.join(path);
+                    let mut local_diags = Vec::new();
+                    {
+                        let mut sub_ctx = Ctx {
+                            caps: ctx.caps,
+                            globals: ctx.globals,
+                            judges_and_validators: ctx.judges_and_validators,
+                            providers: ctx.providers,
+                            known_manifest_providers: ctx.known_manifest_providers,
+                            base_dir: ctx.base_dir,
+                            prompt_cache: &mut *ctx.prompt_cache,
+                            diags: &mut local_diags,
+                        };
+                        for p in &parts {
+                            if let TextPart::Interp(e) = p {
+                                check_expr(e, scope, &mut sub_ctx);
+                            }
+                        }
+                    }
+                    for d in local_diags {
+                        ctx.diags.push(d.in_file(full.clone()));
+                    }
+                }
+                None => {
+                    for p in &parts {
+                        if let TextPart::Interp(e) = p {
+                            check_expr(e, scope, ctx);
+                        }
+                    }
+                }
+            }
+        }
         Expr::Int(_) | Expr::Float(_) | Expr::Str(_) | Expr::RowRef => {}
     }
 }
@@ -605,7 +722,7 @@ fn infer_expr_type(expr: &Spanned<Expr>, scope: &Scope) -> InferredType {
             .type_of(name)
             .cloned()
             .unwrap_or(InferredType::Unknown),
-        Expr::Str(_) | Expr::TextBlock(_) => {
+        Expr::Str(_) | Expr::TextBlock(_) | Expr::FileText { .. } => {
             InferredType::Known(TypeExpr::Artifact(ArtifactType::Text))
         }
         Expr::JudgeCall { .. } | Expr::ValidatorCall { .. } => {

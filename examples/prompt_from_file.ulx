@@ -1,0 +1,13 @@
+// examples/prompt_from_file.ulx
+// See docs/spec/08-grammar.md `file_expr` — prompt text loaded from disk
+// instead of inline `"""..."""` blocks. Both forms are equivalent; `{var}`
+// interpolation inside the loaded file is statically checked exactly like
+// an inline text block. (Formatting note: `ulx fmt` drops comments — see
+// its own docs — so re-running it will strip this header again.)
+
+conversation Greet(name: text, occasion: text) -> text {
+  system: file("prompts/greet_system.txt")
+  user: @prompts/greet_user.txt
+  assistant -> reply: text
+  reply
+}

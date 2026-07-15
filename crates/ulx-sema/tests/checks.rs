@@ -552,3 +552,137 @@ fn import_referencing_unlisted_package_name_fails_like_before() {
 
     std::fs::remove_dir_all(&base).ok();
 }
+
+/// `file("...")`/`@path` (§8 `file_expr`) needs a real `.ulx` file on disk
+/// to resolve against (`base_dir`), so these tests go through
+/// `load_and_analyze` rather than the no-filesystem-home `analyze()` used
+/// by `diags()` above.
+fn workspace_diags(main_file: &std::path::Path) -> Vec<ulx_sema::Diagnostic> {
+    let ws = ulx_sema::load_and_analyze(main_file, None).expect("must load");
+    ws.modules
+        .values()
+        .flat_map(|m| m.diagnostics.clone())
+        .collect()
+}
+
+#[test]
+fn file_prompt_with_valid_interpolation_has_no_diagnostics() {
+    let base = std::env::temp_dir().join(format!("ulexite-sema-file-ok-{}", std::process::id()));
+    std::fs::create_dir_all(&base).unwrap();
+    std::fs::write(base.join("user.txt"), "Hi {name}, welcome to {occasion}.").unwrap();
+    let main_file = base.join("main.ulx");
+    std::fs::write(
+        &main_file,
+        r#"
+        conversation Greet(name: text, occasion: text) -> text {
+          system: @user.txt
+          user: file("user.txt")
+          assistant -> reply: text
+          reply
+        }
+        "#,
+    )
+    .unwrap();
+
+    let d = workspace_diags(&main_file);
+    assert!(d.is_empty(), "expected no diagnostics, got: {d:?}");
+
+    std::fs::remove_dir_all(&base).ok();
+}
+
+#[test]
+fn undefined_variable_inside_a_loaded_prompt_file_is_flagged_against_that_file() {
+    let base =
+        std::env::temp_dir().join(format!("ulexite-sema-file-badvar-{}", std::process::id()));
+    std::fs::create_dir_all(&base).unwrap();
+    let prompt_file = base.join("user.txt");
+    std::fs::write(&prompt_file, "Hi {name}, welcome to {oopsUndefined}.").unwrap();
+    let main_file = base.join("main.ulx");
+    std::fs::write(
+        &main_file,
+        r#"
+        conversation Greet(name: text) -> text {
+          system: """You are nice."""
+          user: file("user.txt")
+          assistant -> reply: text
+          reply
+        }
+        "#,
+    )
+    .unwrap();
+
+    let d = workspace_diags(&main_file);
+    assert!(
+        d.iter().any(|diag| diag.message.contains("oopsUndefined")),
+        "expected an undefined-variable diagnostic, got: {d:?}"
+    );
+    let expected_path = prompt_file.canonicalize().unwrap();
+    assert!(
+        d.iter()
+            .any(|diag| diag.source_file.as_deref() == Some(expected_path.as_path())),
+        "expected the diagnostic's source_file to point at the prompt file {}, got: {d:?}",
+        expected_path.display()
+    );
+
+    std::fs::remove_dir_all(&base).ok();
+}
+
+#[test]
+fn missing_prompt_file_is_a_clear_diagnostic() {
+    let base =
+        std::env::temp_dir().join(format!("ulexite-sema-file-missing-{}", std::process::id()));
+    std::fs::create_dir_all(&base).unwrap();
+    let main_file = base.join("main.ulx");
+    std::fs::write(
+        &main_file,
+        r#"
+        conversation Greet(name: text) -> text {
+          system: file("does_not_exist.txt")
+          user: """Hi {name}"""
+          assistant -> reply: text
+          reply
+        }
+        "#,
+    )
+    .unwrap();
+
+    let d = workspace_diags(&main_file);
+    assert!(
+        has_error_containing(&d, "could not read prompt file"),
+        "expected a missing-file error, got: {d:?}"
+    );
+
+    std::fs::remove_dir_all(&base).ok();
+}
+
+#[test]
+fn with_block_sibling_reference_through_a_loaded_file_is_still_rejected() {
+    let base =
+        std::env::temp_dir().join(format!("ulexite-sema-file-with-sibling-{}", std::process::id()));
+    std::fs::create_dir_all(&base).unwrap();
+    // References `{outline}`, a sibling `with`-binding — §9.7 forbids this
+    // regardless of whether the referencing text is inline or file-sourced.
+    std::fs::write(base.join("combined.txt"), "Combined: {outline}").unwrap();
+    let main_file = base.join("main.ulx");
+    std::fs::write(
+        &main_file,
+        r#"
+        conversation Summarize(doc: pdf) -> text {
+          with {
+            outline = ask vision(doc) { user: """Extract an outline.""" }
+            combined = file("combined.txt")
+          }
+          combined
+        }
+        "#,
+    )
+    .unwrap();
+
+    let d = workspace_diags(&main_file);
+    assert!(
+        has_error_containing(&d, "sibling binding"),
+        "expected a with-block independence error, got: {d:?}"
+    );
+
+    std::fs::remove_dir_all(&base).ok();
+}
