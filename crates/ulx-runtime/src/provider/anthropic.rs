@@ -183,6 +183,10 @@ impl Provider for AnthropicProvider {
         capability == self.capability
     }
 
+    fn model(&self) -> Option<&str> {
+        Some(&self.model)
+    }
+
     fn invoke(&self, capability: &str, request: &Invocation) -> Result<Value, ProviderError> {
         match capability {
             "chat" => self.chat(request),

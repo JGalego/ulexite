@@ -9,6 +9,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 
+use crate::provider::Message;
 use crate::value::Value;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -19,6 +20,24 @@ pub struct TraceRecord {
     pub capability: Option<String>,
     pub cache_key: Option<String>,
     pub cache_hit: bool,
+    /// The request side of an `ask`/`judge`/`escalate` effect — the actual
+    /// `system`/`user` messages sent for a `chat`/`vision` call, a
+    /// `subject`/`rubric` pair for a `judge` call, or a single
+    /// `{role: target, text: reason}` entry for an `escalate` call.
+    /// `#[serde(default)]` so a trace file written before this field
+    /// existed still deserializes (as empty).
+    #[serde(default)]
+    pub input: Vec<Message>,
+    /// Which registered provider (`Provider::id()`) actually served this
+    /// effect, and which model/deployment it was configured with
+    /// (`Provider::model()`) — `None` for both on a `mock`-served call, a
+    /// `validator`/`call`/`escalate` record (none of those resolve to a
+    /// vendor provider), or a trace file written before these fields
+    /// existed (`#[serde(default)]`).
+    #[serde(default)]
+    pub provider: Option<String>,
+    #[serde(default)]
+    pub model: Option<String>,
     pub output: Option<Value>,
     pub error: Option<String>,
     pub timestamp_ms: u128,
@@ -83,6 +102,9 @@ impl TraceWriter {
         capability: Option<&str>,
         cache_key: Option<&str>,
         cache_hit: bool,
+        input: &[Message],
+        provider: Option<&str>,
+        model: Option<&str>,
         output: Option<&Value>,
         error: Option<&str>,
     ) -> u64 {
@@ -106,6 +128,9 @@ impl TraceWriter {
             capability: capability.map(str::to_string),
             cache_key: cache_key.map(str::to_string),
             cache_hit,
+            input: input.to_vec(),
+            provider: provider.map(str::to_string),
+            model: model.map(str::to_string),
             output: output.cloned(),
             error: error.map(str::to_string),
             timestamp_ms: now_ms(),

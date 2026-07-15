@@ -5,9 +5,13 @@
 //! the `jsonl`/`mermaid`/`html` formats, which need the whole trace rather
 //! than just the final value).
 //!
-//! `Text` is the pre-existing default and is deliberately handled entirely
-//! in `main.rs`, verbatim as it was before this module existed — every
-//! format here is additive and never touches that path.
+//! `Text`'s final-value/suspended/error handling is the pre-existing
+//! default and stays inline in `main.rs` — but its transcript (and
+//! `Json`'s `messages` field) are rendered here via `dialogue_turns`,
+//! which turns the run's trace back into the `system`/`user`/`assistant`/
+//! `judge <name>`/`escalate <target>` conversation it actually was, rather
+//! than the flat `{capability, output}` shape the trace log stores
+//! internally — a translate call reads as a dialogue, not a log dump.
 
 use serde_json::{json, Value as Json};
 
@@ -17,7 +21,15 @@ use ulx_runtime::{TraceRecord, Value};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
 #[value(rename_all = "lowercase")]
 pub enum OutputFormat {
+    /// The dialogue transcript (role emoji, color when stdout is a
+    /// terminal, a blank line between turns) plus the final value/
+    /// suspended/error lines — the default.
     Text,
+    /// The same transcript and final value/suspended/error lines as
+    /// `Text`, but with no emoji, no color, and no blank-line spacing —
+    /// one `role: text` line per turn. For scripts/logs that want the
+    /// dialogue without any of `Text`'s decoration.
+    Plain,
     Json,
     Jsonl,
     Mermaid,
@@ -51,12 +63,38 @@ pub enum RunOutcome<'a> {
 /// unlike `Text` mode, which splits success/suspended (stdout) from error
 /// (stderr). That split is a deliberate, documented difference: `Json`
 /// mode is for scripts that want one parseable shape on one stream.
-pub fn render_run_json(outcome: &RunOutcome) -> String {
+///
+/// `records` is the same run's trace (already on disk by the time this is
+/// called) — used to add a `"messages"` array (the dialogue) and a
+/// `"metadata"` object (`capabilities`/`providers`, the same data
+/// `render_metadata_text` shows) alongside the existing `run_id`/`status`/
+/// `value` fields, so a script that only ever wanted the final value
+/// doesn't have to change; one that wants the dialogue or the
+/// provider/model breakdown now has both in the same object instead of a
+/// separate `ulx trace` round trip.
+pub fn render_run_json(outcome: &RunOutcome, records: &[TraceRecord]) -> String {
+    let messages: Vec<Json> = dialogue_turns(records)
+        .into_iter()
+        .map(|t| json!({"role": t.role, "text": t.text, "status": t.status}))
+        .collect();
+    let (capabilities, providers) = run_metadata(records);
+    let metadata = json!({
+        "capabilities": capabilities,
+        "providers": providers.iter().map(|(id, caps)| json!({
+            "id": id,
+            "capabilities": caps.iter().map(|(cap, model)| json!({
+                "capability": cap,
+                "model": model,
+            })).collect::<Vec<_>>(),
+        })).collect::<Vec<_>>(),
+    });
     let doc = match outcome {
         RunOutcome::Value { run_id, value } => json!({
             "status": "ok",
             "run_id": run_id,
             "value": value_to_json(value),
+            "messages": messages,
+            "metadata": metadata,
         }),
         RunOutcome::Suspended {
             run_id,
@@ -68,11 +106,15 @@ pub fn render_run_json(outcome: &RunOutcome) -> String {
             "reason": reason,
             "target": target,
             "resume_hint": format!("ulx approve {run_id} --value <text>   (or: ulx deny {run_id})"),
+            "messages": messages,
+            "metadata": metadata,
         }),
         RunOutcome::Error { run_id, message } => json!({
             "status": "error",
             "run_id": run_id,
             "message": message,
+            "messages": messages,
+            "metadata": metadata,
         }),
     };
     serde_json::to_string(&doc).expect("json! output always serializes")
@@ -127,6 +169,7 @@ fn unsettled_to_json(o: &DraftOutcome) -> Json {
 pub fn render_trace(format: OutputFormat, records: &[TraceRecord]) -> String {
     match format {
         OutputFormat::Text => unreachable!("Text trace rendering stays inline in main.rs"),
+        OutputFormat::Plain => render_dialogue_plain(records),
         OutputFormat::Json => {
             let values: Vec<Json> = records.iter().map(trace_record_to_json).collect();
             serde_json::to_string(&values).expect("json! output always serializes")
@@ -150,6 +193,7 @@ fn trace_record_to_json(r: &TraceRecord) -> Json {
         "kind": r.kind,
         "capability": r.capability,
         "cache_hit": r.cache_hit,
+        "input": r.input.iter().map(|m| json!({"role": m.role, "text": m.text})).collect::<Vec<_>>(),
         "output": r.output.as_ref().map(value_to_json),
         "error": r.error,
         "timestamp_ms": r.timestamp_ms,
@@ -225,6 +269,253 @@ fn dedup_for_diagram(records: &[TraceRecord]) -> Vec<TraceRecord> {
         .into_iter()
         .map(|k| latest.remove(&k).expect("just inserted"))
         .collect()
+}
+
+/// One line of an actual conversation: a `system`/`user` message sent, the
+/// `assistant` reply that came back, a `judge <name>`/`validator <kind>`
+/// verdict, or an `escalate <target>` suspend/resolution.
+pub struct DialogueTurn {
+    pub role: String,
+    pub text: String,
+    pub status: &'static str,
+}
+
+/// Turns a run's trace back into the dialogue it actually was — the
+/// opposite direction of `eval_ask`/`eval_escalate` flattening a
+/// `system:`/`user:`/`judge`/`escalate` program into the trace log's flat
+/// `{capability, input, output}` shape. Reuses `dedup_for_diagram`'s
+/// suspend/resume collapsing (see its doc comment) for the same reason:
+/// without it, `ulx approve`'s full-conversation replay would print every
+/// earlier turn twice.
+pub fn dialogue_turns(records: &[TraceRecord]) -> Vec<DialogueTurn> {
+    let records = dedup_for_diagram(records);
+    let mut turns = Vec::new();
+    for r in &records {
+        let status = status_of(r);
+        match r.kind.as_str() {
+            "call" => {
+                let name = r.capability.as_deref().unwrap_or("?");
+                let args = r
+                    .input
+                    .iter()
+                    .map(|m| format!("{}: {}", m.role, truncate(&m.text, 40)))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                turns.push(DialogueTurn {
+                    role: "call".to_string(),
+                    text: format!("{name}({args})"),
+                    status,
+                });
+            }
+            "effect" => match r.capability.as_deref() {
+                Some("chat") | Some("vision") => {
+                    for m in &r.input {
+                        turns.push(DialogueTurn {
+                            role: m.role.clone(),
+                            text: m.text.clone(),
+                            status: "sent",
+                        });
+                    }
+                    turns.push(DialogueTurn {
+                        role: "assistant".to_string(),
+                        text: output_text_of(r),
+                        status,
+                    });
+                }
+                Some("judge") => {
+                    // `eval_rubric_call`'s judge branch records
+                    // `[{role: "subject", ...}, {role: "rubric <Name>", ...}]`.
+                    let judge_name = r
+                        .input
+                        .get(1)
+                        .map(|m| m.role.trim_start_matches("rubric ").to_string())
+                        .unwrap_or_default();
+                    turns.push(DialogueTurn {
+                        role: format!("judge {judge_name}").trim().to_string(),
+                        text: output_text_of(r),
+                        status,
+                    });
+                }
+                Some("escalate") => {
+                    let (target, reason) = r
+                        .input
+                        .first()
+                        .map(|m| (m.role.clone(), m.text.clone()))
+                        .unwrap_or_default();
+                    let text = if status == "err" {
+                        format!("{reason} (suspended)")
+                    } else {
+                        format!("{reason} => {}", output_text_of(r))
+                    };
+                    turns.push(DialogueTurn {
+                        role: format!("escalate {target}"),
+                        text,
+                        status,
+                    });
+                }
+                Some(other) => {
+                    turns.push(DialogueTurn {
+                        role: other.to_string(),
+                        text: output_text_of(r),
+                        status,
+                    });
+                }
+                None => {}
+            },
+            _ => {}
+        }
+    }
+    turns
+}
+
+const ANSI_RESET: &str = "\x1b[0m";
+const ANSI_BOLD: &str = "\x1b[1m";
+
+/// An emoji + ANSI color for a `DialogueTurn`'s role, so `system`/`user`/
+/// `assistant`/`judge`/`escalate`/... read as visually distinct speakers
+/// instead of a wall of same-looking lines. `status` overrides the color
+/// for a hard failure (any non-escalate turn that errored) or an
+/// escalate's own pending-vs-resolved state, which is a status, not a
+/// per-role identity.
+fn role_style(role: &str, status: &str) -> (&'static str, &'static str) {
+    if role.starts_with("escalate") {
+        return if status == "err" {
+            ("🙋", "\x1b[33m") // pending: yellow
+        } else {
+            ("🙋", "\x1b[32m") // resolved: green
+        };
+    }
+    if status == "err" {
+        return ("⚠️ ", "\x1b[31m"); // any other turn that errored: red
+    }
+    match role {
+        "system" => ("🧭", "\x1b[90m"),
+        "user" => ("🧑", "\x1b[36m"),
+        "assistant" => ("🤖", "\x1b[32m"),
+        "call" => ("▶️ ", "\x1b[34m"),
+        "transcribe" => ("🎙️ ", "\x1b[36m"),
+        "speak" => ("🔊", "\x1b[36m"),
+        "generate_image" => ("🖼️ ", "\x1b[36m"),
+        "embed" => ("🔢", "\x1b[36m"),
+        r if r.starts_with("judge") => ("⚖️ ", "\x1b[35m"),
+        r if r.starts_with("validator") => ("🔍", "\x1b[36m"),
+        _ => ("🔧", "\x1b[39m"),
+    }
+}
+
+/// Transcript for `ulx run`'s default `Text` output: one paragraph per
+/// `DialogueTurn` (a blank line between turns, so `system`/`user`/
+/// `assistant`/`judge`/... read as separate speakers, not a run-on log),
+/// each prefixed with a role emoji and — only when `color` is true —
+/// bold+colored by `role_style`. `color` should be
+/// `stdout().is_terminal() && NO_COLOR is unset`: piping into `jq`/a file/
+/// another program must get plain text, never raw escape codes.
+pub fn render_dialogue_text(records: &[TraceRecord], color: bool) -> String {
+    dialogue_turns(records)
+        .into_iter()
+        .map(|t| {
+            let (emoji, ansi) = role_style(&t.role, t.status);
+            if color {
+                format!(
+                    "{emoji} {ANSI_BOLD}{ansi}{}:{ANSI_RESET} {}",
+                    t.role, t.text
+                )
+            } else {
+                format!("{emoji} {}: {}", t.role, t.text)
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n\n")
+}
+
+/// The `Plain` counterpart to `render_dialogue_text`: the same turns, in
+/// the same order, but no emoji, no color, and no blank-line spacing —
+/// one `role: text` line per turn, for scripts/logs that want the
+/// dialogue with none of `Text`'s decoration.
+pub fn render_dialogue_plain(records: &[TraceRecord]) -> String {
+    dialogue_turns(records)
+        .into_iter()
+        .map(|t| format!("{}: {}", t.role, t.text))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// One provider's distinct `(capability, model)` pairs used in a run.
+type ProviderCapabilities = Vec<(String, Option<String>)>;
+/// One entry per distinct provider that served this run, in
+/// first-appearance order.
+type ProviderBreakdown = Vec<(String, ProviderCapabilities)>;
+
+/// Every distinct capability used, and every distinct (provider, capability,
+/// model) triple, across a run — deduped the same way `dialogue_turns` is,
+/// so a suspend/resume replay's second pass doesn't double-list anything.
+/// `capability`/`provider` order is first-appearance order, not sorted, so
+/// it reads in roughly the order the conversation actually called them.
+fn run_metadata(records: &[TraceRecord]) -> (Vec<String>, ProviderBreakdown) {
+    let records = dedup_for_diagram(records);
+    let mut capabilities: Vec<String> = Vec::new();
+    let mut providers: ProviderBreakdown = Vec::new();
+    for r in &records {
+        let Some(cap) = &r.capability else { continue };
+        if !capabilities.contains(cap) {
+            capabilities.push(cap.clone());
+        }
+        let Some(p) = &r.provider else { continue };
+        let entry = match providers.iter_mut().find(|(id, _)| id == p) {
+            Some(e) => e,
+            None => {
+                providers.push((p.clone(), Vec::new()));
+                providers.last_mut().expect("just pushed")
+            }
+        };
+        let cap_model = (cap.clone(), r.model.clone());
+        if !entry.1.contains(&cap_model) {
+            entry.1.push(cap_model);
+        }
+    }
+    (capabilities, providers)
+}
+
+const ANSI_DIM: &str = "\x1b[2m";
+
+/// The metadata block printed after the dialogue transcript (`Text`/
+/// `Plain`/`--output json`'s `metadata` field share this data) — `run_id`,
+/// outcome `status`, every capability the run touched, and which
+/// provider/model actually served each one. Kept visually separate from
+/// the conversation itself (a horizontal rule, when `color` allows it a
+/// dim one) since it's information *about* the run, not part of it.
+pub fn render_metadata_text(
+    run_id: &str,
+    status: &str,
+    records: &[TraceRecord],
+    color: bool,
+) -> String {
+    let (capabilities, providers) = run_metadata(records);
+    let rule = "─".repeat(44);
+    let mut lines = vec![
+        if color {
+            format!("{ANSI_DIM}{rule}{ANSI_RESET}")
+        } else {
+            rule
+        },
+        format!("run id        {run_id}"),
+        format!("status        {status}"),
+    ];
+    if !capabilities.is_empty() {
+        lines.push(format!("capabilities  {}", capabilities.join(", ")));
+    }
+    for (provider, caps) in &providers {
+        let caps_str = caps
+            .iter()
+            .map(|(cap, model)| match model {
+                Some(m) => format!("{cap} ({m})"),
+                None => cap.clone(),
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+        lines.push(format!("provider      {provider} — {caps_str}"));
+    }
+    lines.join("\n")
 }
 
 fn render_trace_mermaid(records: &[TraceRecord]) -> String {
@@ -401,6 +692,9 @@ mod tests {
             capability: Some(capability.to_string()),
             cache_key: None,
             cache_hit,
+            input: vec![],
+            provider: None,
+            model: None,
             output,
             error: error.map(str::to_string),
             timestamp_ms: 0,
@@ -448,26 +742,116 @@ mod tests {
     #[test]
     fn render_run_json_shapes() {
         let v = Value::Text("hello".into());
-        let s = render_run_json(&RunOutcome::Value {
-            run_id: "abc",
-            value: &v,
-        });
-        assert_eq!(s, r#"{"run_id":"abc","status":"ok","value":"hello"}"#);
+        let s = render_run_json(
+            &RunOutcome::Value {
+                run_id: "abc",
+                value: &v,
+            },
+            &[],
+        );
+        assert_eq!(
+            s,
+            r#"{"messages":[],"metadata":{"capabilities":[],"providers":[]},"run_id":"abc","status":"ok","value":"hello"}"#
+        );
 
-        let s = render_run_json(&RunOutcome::Suspended {
-            run_id: "abc",
-            reason: "need approval",
-            target: "human",
-        });
+        let s = render_run_json(
+            &RunOutcome::Suspended {
+                run_id: "abc",
+                reason: "need approval",
+                target: "human",
+            },
+            &[],
+        );
         assert!(s.contains(r#""status":"suspended""#));
         assert!(s.contains(r#""run_id":"abc""#));
         assert!(s.contains("ulx approve abc"));
 
-        let s = render_run_json(&RunOutcome::Error {
-            run_id: "abc",
-            message: "boom".into(),
-        });
-        assert_eq!(s, r#"{"message":"boom","run_id":"abc","status":"error"}"#);
+        let s = render_run_json(
+            &RunOutcome::Error {
+                run_id: "abc",
+                message: "boom".into(),
+            },
+            &[],
+        );
+        assert_eq!(
+            s,
+            r#"{"message":"boom","messages":[],"metadata":{"capabilities":[],"providers":[]},"run_id":"abc","status":"error"}"#
+        );
+    }
+
+    #[test]
+    fn render_run_json_embeds_the_dialogue_as_messages() {
+        let mut r = record(0, "chat", false, Some(Value::Text("Bonjour".into())), None);
+        r.input = vec![
+            ulx_runtime::provider::Message {
+                role: "system".to_string(),
+                text: "You are a translator.".to_string(),
+            },
+            ulx_runtime::provider::Message {
+                role: "user".to_string(),
+                text: "Translate: hello".to_string(),
+            },
+        ];
+        let v = Value::Text("Bonjour".into());
+        let s = render_run_json(
+            &RunOutcome::Value {
+                run_id: "abc",
+                value: &v,
+            },
+            &[r],
+        );
+        let parsed: Json = serde_json::from_str(&s).unwrap();
+        let messages = parsed["messages"].as_array().unwrap();
+        assert_eq!(messages.len(), 3, "system, user, assistant: {messages:?}");
+        assert_eq!(messages[0]["role"], "system");
+        assert_eq!(messages[1]["role"], "user");
+        assert_eq!(messages[2]["role"], "assistant");
+        assert_eq!(messages[2]["text"], "Bonjour");
+    }
+
+    #[test]
+    fn metadata_reports_capabilities_and_provider_model_breakdown() {
+        let mut chat = record(0, "chat", false, Some(Value::Text("hi".into())), None);
+        chat.provider = Some("anthropic".to_string());
+        chat.model = Some("claude-haiku-4-5".to_string());
+        let mut judge = record(1, "judge", false, Some(Value::Verdict(Verdict::Pass)), None);
+        judge.provider = Some("anthropic".to_string());
+        judge.model = Some("claude-sonnet-4-5".to_string());
+        let records = vec![chat, judge];
+
+        // Plain-text form: run id/status always present, one `provider`
+        // line per distinct provider, both its capabilities and models
+        // listed.
+        let text = render_metadata_text("run1", "ok", &records, false);
+        assert!(text.contains("run id        run1"));
+        assert!(text.contains("status        ok"));
+        assert!(text.contains("capabilities  chat, judge"));
+        assert!(text.contains(
+            "provider      anthropic — chat (claude-haiku-4-5), judge (claude-sonnet-4-5)"
+        ));
+
+        // JSON form: same data, structured.
+        let v = Value::Text("hi".into());
+        let s = render_run_json(
+            &RunOutcome::Value {
+                run_id: "run1",
+                value: &v,
+            },
+            &records,
+        );
+        let parsed: Json = serde_json::from_str(&s).unwrap();
+        let meta = &parsed["metadata"];
+        assert_eq!(meta["capabilities"], json!(["chat", "judge"]));
+        let providers = meta["providers"].as_array().unwrap();
+        assert_eq!(providers.len(), 1);
+        assert_eq!(providers[0]["id"], "anthropic");
+        assert_eq!(
+            providers[0]["capabilities"],
+            json!([
+                {"capability": "chat", "model": "claude-haiku-4-5"},
+                {"capability": "judge", "model": "claude-sonnet-4-5"},
+            ])
+        );
     }
 
     #[test]

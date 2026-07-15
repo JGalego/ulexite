@@ -72,10 +72,12 @@ enum Command {
         /// configured real providers entirely.
         #[arg(long, conflicts_with = "providers")]
         mock: bool,
-        /// Output format: `text` (default), `json`, `jsonl`, `mermaid`, or
-        /// `html`. The latter three render the run's full trace, not just
-        /// its final value. Ignored when `--interactive` is set, which
-        /// always reports in plain text.
+        /// Output format: `text` (default, a colorized/emoji dialogue
+        /// transcript when stdout is a terminal), `plain` (the same
+        /// transcript with no color/emoji/spacing), `json`, `jsonl`,
+        /// `mermaid`, or `html`. The last four render the run's full
+        /// trace, not just its final value. Ignored when `--interactive`
+        /// is set, which always reports the way `plain` does.
         #[arg(long, value_enum, default_value = "text")]
         output: OutputFormat,
         /// Prompt at the terminal for each `escalate(...)` suspension
@@ -343,6 +345,17 @@ fn parse_args(raw: &[String]) -> Result<BTreeMap<String, String>, String> {
     Ok(out)
 }
 
+/// Whether the dialogue transcript (`Text` output) should include ANSI
+/// color: only when stdout is an actual terminal, and the user hasn't set
+/// `NO_COLOR` (https://no-color.org) — piping into `jq`, a file, or
+/// another program must always get plain text, never raw escape codes.
+/// Role emoji aren't gated on this: they're plain UTF-8, not control
+/// codes, so they're harmless in a pipe/file the way ANSI color isn't.
+fn use_color() -> bool {
+    use std::io::IsTerminal;
+    std::io::stdout().is_terminal() && std::env::var_os("NO_COLOR").is_none()
+}
+
 fn default_run_id(
     file: &std::path::Path,
     conversation: &str,
@@ -503,8 +516,17 @@ fn run_interactive(
         };
         match ulx_runtime::run_conversation(&ctx, conversation, args.clone()) {
             Ok(value) => {
+                let records =
+                    ulx_runtime::read_trace(manifest::traces_dir(), run_id).unwrap_or_default();
+                let transcript = output::render_dialogue_plain(&records);
+                if !transcript.is_empty() {
+                    println!("{transcript}\n");
+                }
                 println!("{value}");
-                eprintln!("run id: {run_id}");
+                eprintln!(
+                    "{}",
+                    output::render_metadata_text(run_id, "ok", &records, false)
+                );
                 return true;
             }
             Err(RuntimeError::Suspended {
@@ -632,12 +654,20 @@ fn cmd_plan(
     plan::print_plan(conversation, &rows)
 }
 
-/// `Text` (the default) is handled inline here, byte-for-byte what `ulx`
-/// printed before `--output` existed — every other format is rendered by
-/// `output.rs` instead. `Json` needs only the final outcome; `Jsonl`/
-/// `Mermaid`/`Html` need the whole trace, so those re-read the trace file
-/// `run_conversation` just finished writing — a cheap local read, and it
-/// keeps this feature entirely CLI-side with no `ulx-runtime` changes.
+/// `Text` (the default) and `Plain` both print the run's dialogue
+/// transcript (the `system`/`user`/`assistant`/`judge`/`escalate` turns
+/// `output::dialogue_turns` reconstructs from the trace `run_conversation`
+/// just wrote — a translate call reads back as a conversation, not a bare
+/// final value) followed by the same final-value/suspended/error lines
+/// `ulx` printed before `--output`/the dialogue transcript existed —
+/// `Plain` differs only in using `render_dialogue_plain` (no emoji, no
+/// color, no blank-line spacing) instead of `render_dialogue_text`. Every
+/// other format is rendered by `output.rs`: `Json` embeds the same
+/// dialogue as a `messages` array alongside `run_id`/`status`/`value`;
+/// `Jsonl`/`Mermaid`/`Html` render the whole trace. All of them re-read the
+/// trace file `run_conversation` just finished writing — a cheap local
+/// read, and it keeps this feature entirely CLI-side with no
+/// `ulx-runtime` changes.
 fn execute(
     ctx: &RunContext,
     conversation: &str,
@@ -646,16 +676,32 @@ fn execute(
     output: OutputFormat,
 ) -> bool {
     let result = ulx_runtime::run_conversation(ctx, conversation, args);
-    if let OutputFormat::Text = output {
+    let records = ulx_runtime::read_trace(manifest::traces_dir(), run_id).unwrap_or_default();
+
+    if let OutputFormat::Text | OutputFormat::Plain = output {
+        let color = output == OutputFormat::Text && use_color();
+        let transcript = match output {
+            OutputFormat::Text => output::render_dialogue_text(&records, color),
+            _ => output::render_dialogue_plain(&records),
+        };
+        if !transcript.is_empty() {
+            println!("{transcript}\n");
+        }
         return match result {
             Ok(value) => {
                 println!("{value}");
-                eprintln!("run id: {run_id}");
+                eprintln!(
+                    "{}",
+                    output::render_metadata_text(run_id, "ok", &records, color)
+                );
                 true
             }
             Err(RuntimeError::Suspended { reason, target, .. }) => {
                 println!("suspended: waiting on `{target}` — {reason}");
-                println!("run id: {run_id}");
+                println!(
+                    "{}",
+                    output::render_metadata_text(run_id, "suspended", &records, color)
+                );
                 println!(
                     "resume with: ulx approve {run_id} --value <text>   (or: ulx deny {run_id})"
                 );
@@ -663,6 +709,10 @@ fn execute(
             }
             Err(e) => {
                 eprintln!("error: {e}");
+                eprintln!(
+                    "{}",
+                    output::render_metadata_text(run_id, "error", &records, color)
+                );
                 false
             }
         };
@@ -687,13 +737,11 @@ fn execute(
         ),
     };
     match output {
-        OutputFormat::Json => println!("{}", output::render_run_json(&outcome)),
+        OutputFormat::Json => println!("{}", output::render_run_json(&outcome, &records)),
         OutputFormat::Jsonl | OutputFormat::Mermaid | OutputFormat::Html => {
-            let records =
-                ulx_runtime::read_trace(manifest::traces_dir(), run_id).unwrap_or_default();
             println!("{}", output::render_trace(output, &records));
         }
-        OutputFormat::Text => unreachable!("returned above"),
+        OutputFormat::Text | OutputFormat::Plain => unreachable!("returned above"),
     }
     ok
 }

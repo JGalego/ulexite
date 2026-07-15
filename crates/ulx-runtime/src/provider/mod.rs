@@ -23,6 +23,8 @@
 
 use std::collections::BTreeMap;
 
+use serde::{Deserialize, Serialize};
+
 use crate::value::Value;
 
 mod anthropic;
@@ -41,7 +43,7 @@ mod transport;
 pub use factory::{build_provider, ProviderBuildError, ProviderSpec};
 pub use mock::MockProvider;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Message {
     pub role: String,
     pub text: String,
@@ -87,6 +89,16 @@ pub trait Provider: Send + Sync {
     fn id(&self) -> &str;
     fn supports(&self, capability: &str) -> bool;
     fn invoke(&self, capability: &str, request: &Invocation) -> Result<Value, ProviderError>;
+    /// The configured model/deployment name this provider calls, when it
+    /// has just one fixed answer for that (every real adapter does — the
+    /// `model`/`deployment` field it was built with). `None` for
+    /// `MockProvider`, which accepts (and ignores) any model name.
+    /// Surfaced in `TraceRecord`/`ulx run`'s dialogue metadata so a
+    /// transcript shows not just *that* a provider answered, but which
+    /// model it actually was.
+    fn model(&self) -> Option<&str> {
+        None
+    }
 }
 
 /// Failure modes for resolving a capability (optionally by name) against
@@ -205,16 +217,24 @@ impl ProviderRegistry {
         capability: &str,
         name: &str,
     ) -> Result<&dyn Provider, ResolveError> {
-        let Some((_, provider)) = self.providers.iter().find(|(n, _)| n == name) else {
+        // A single `ulexite.toml`/`.ulx provider` entry declaring several
+        // capabilities (e.g. groq's `chat` + `transcribe`) registers one
+        // real `Provider` instance *per capability* (`build_registry`),
+        // all sharing this same name — so `name` alone doesn't uniquely
+        // pick one entry, and stopping at the first name match (as this
+        // used to) could silently hand back a same-named instance that
+        // supports a different capability entirely.
+        let mut same_name = self.providers.iter().filter(|(n, _)| n == name).peekable();
+        if same_name.peek().is_none() {
             return Err(ResolveError::UnknownProvider(name.to_string()));
-        };
-        if !provider.supports(capability) {
-            return Err(ResolveError::ProviderDoesNotSupportCapability {
+        }
+        same_name
+            .find(|(_, p)| p.supports(capability))
+            .map(|(_, p)| p.as_ref())
+            .ok_or_else(|| ResolveError::ProviderDoesNotSupportCapability {
                 name: name.to_string(),
                 capability: capability.to_string(),
-            });
-        }
-        Ok(provider.as_ref())
+            })
     }
 }
 
@@ -331,6 +351,52 @@ mod tests {
             ResolveError::ProviderDoesNotSupportCapability {
                 name: "mock".to_string(),
                 capability: "not-a-real-capability".to_string(),
+            }
+        );
+    }
+
+    /// A stub that supports exactly one capability — real adapters built by
+    /// `ulx-cli`'s `build_registry` are like this: `ProviderSpec.capability`
+    /// (§`provider/factory.rs`) is a single string, so a `ulexite.toml`
+    /// entry declaring N capabilities becomes N separate `Provider`
+    /// instances, all registered under that entry's one name.
+    struct SingleCapabilityProvider(&'static str);
+
+    impl Provider for SingleCapabilityProvider {
+        fn id(&self) -> &str {
+            "single-capability-stub"
+        }
+        fn supports(&self, capability: &str) -> bool {
+            capability == self.0
+        }
+        fn invoke(&self, _capability: &str, _request: &Invocation) -> Result<Value, ProviderError> {
+            Ok(Value::Text("stub".to_string()))
+        }
+    }
+
+    #[test]
+    fn resolve_named_finds_the_right_capability_instance_among_same_named_entries() {
+        // Mirrors `ulx-cli`'s `build_registry`: one `ulexite.toml` entry
+        // ("groq") declaring both `chat` and `transcribe` registers two
+        // `Provider` instances under the identical name "groq", each
+        // supporting only its own capability. `resolve_named` must not
+        // stop at the first "groq" match — that used to be the "chat"
+        // instance (registration order here mirrors the real BTreeMap
+        // iteration order, `chat` before `transcribe`), silently reporting
+        // "groq doesn't support transcribe" even though a same-named
+        // instance genuinely does.
+        let mut registry = ProviderRegistry::new();
+        registry.register("groq", Box::new(SingleCapabilityProvider("chat")));
+        registry.register("groq", Box::new(SingleCapabilityProvider("transcribe")));
+
+        assert!(registry.resolve_named("chat", "groq").is_ok());
+        assert!(registry.resolve_named("transcribe", "groq").is_ok());
+        let err = registry.resolve_named("speak", "groq").err().unwrap();
+        assert_eq!(
+            err,
+            ResolveError::ProviderDoesNotSupportCapability {
+                name: "groq".to_string(),
+                capability: "speak".to_string(),
             }
         );
     }

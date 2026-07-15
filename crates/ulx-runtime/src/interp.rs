@@ -832,9 +832,15 @@ fn eval_ask(
     let refs: Vec<&Value> = hash_inputs.iter().collect();
     let key = cache_key(capability, provider.id(), &refs, &[]);
 
-    invoke_cached(ctx, capability, &key, || {
-        settle(provider.invoke(capability, &invocation))
-    })
+    invoke_cached(
+        ctx,
+        capability,
+        &key,
+        &invocation.messages,
+        Some(provider.id()),
+        provider.model(),
+        || settle(provider.invoke(capability, &invocation)),
+    )
 }
 
 enum RubricKind {
@@ -901,9 +907,25 @@ fn eval_rubric_call(
                 ]),
             };
             let key = cache_key("judge", provider.id(), &[&subject, &rubric_text], &[name]);
-            invoke_cached(ctx, "judge", &key, || {
-                settle(provider.invoke("judge", &invocation))
-            })
+            let judge_input = [
+                Message {
+                    role: "subject".to_string(),
+                    text: subject.to_string(),
+                },
+                Message {
+                    role: format!("rubric {name}"),
+                    text: rubric_text.to_string(),
+                },
+            ];
+            invoke_cached(
+                ctx,
+                "judge",
+                &key,
+                &judge_input,
+                Some(provider.id()),
+                provider.model(),
+                || settle(provider.invoke("judge", &invocation)),
+            )
         }
         RubricKind::Validator => {
             let subject_text = subject.as_text().unwrap_or_default().to_string();
@@ -911,16 +933,36 @@ fn eval_rubric_call(
                 let pattern = eval_expr(ctx, e, &mut call_env)?;
                 let pattern = pattern.as_text().unwrap_or_default();
                 let verdict = crate::validator::run_regex(pattern, &subject_text);
-                ctx.trace
-                    .record("effect", Some("validator:regex"), None, false, None, None);
+                let input = [Message {
+                    role: "subject".to_string(),
+                    text: subject_text.clone(),
+                }];
+                ctx.trace.record(
+                    "effect",
+                    Some("validator:regex"),
+                    None,
+                    false,
+                    &input,
+                    None,
+                    None,
+                    None,
+                    None,
+                );
                 Ok(Value::Verdict(verdict))
             } else if decl.fields.iter().any(|(k, _)| k == "json_schema") {
                 let verdict = crate::validator::run_json_wellformed(&subject_text);
+                let input = [Message {
+                    role: "subject".to_string(),
+                    text: subject_text.clone(),
+                }];
                 ctx.trace.record(
                     "effect",
                     Some("validator:json_schema"),
                     None,
                     false,
+                    &input,
+                    None,
+                    None,
                     None,
                     None,
                 );
@@ -993,6 +1035,10 @@ fn eval_escalate(
     });
     let refs: Vec<&Value> = evaluated.values().collect();
     let key = cache_key("escalate", target, &refs, &[&ctx.run_id, &disambiguator]);
+    let input = [Message {
+        role: target.to_string(),
+        text: reason.clone(),
+    }];
 
     if let Some(decision) = ctx.cache.get(&key) {
         ctx.trace.record(
@@ -1000,6 +1046,9 @@ fn eval_escalate(
             Some("escalate"),
             Some(&key),
             true,
+            &input,
+            None,
+            None,
             Some(&decision),
             None,
         );
@@ -1015,6 +1064,9 @@ fn eval_escalate(
         Some("escalate"),
         Some(&key),
         false,
+        &input,
+        None,
+        None,
         None,
         Some("suspended"),
     );
@@ -1060,8 +1112,24 @@ fn eval_conversation_call(
         }
     }
 
-    ctx.trace
-        .record("call", Some(name), None, false, None, None);
+    let call_input: Vec<Message> = evaluated
+        .iter()
+        .map(|(pname, v)| Message {
+            role: pname.clone().unwrap_or_else(|| "_".to_string()),
+            text: v.to_string(),
+        })
+        .collect();
+    ctx.trace.record(
+        "call",
+        Some(name),
+        None,
+        false,
+        &call_input,
+        None,
+        None,
+        None,
+        None,
+    );
     eval_block(ctx, &conv.body, &mut call_env)
 }
 
@@ -1076,12 +1144,24 @@ fn invoke_cached(
     ctx: &RunContext,
     capability: &str,
     key: &str,
+    input: &[Message],
+    provider: Option<&str>,
+    model: Option<&str>,
     call: impl FnOnce() -> Result<Value, RuntimeError>,
 ) -> Result<Value, RuntimeError> {
     if !ctx.no_cache {
         if let Some(v) = ctx.cache.get(key) {
-            ctx.trace
-                .record("effect", Some(capability), Some(key), true, Some(&v), None);
+            ctx.trace.record(
+                "effect",
+                Some(capability),
+                Some(key),
+                true,
+                input,
+                provider,
+                model,
+                Some(&v),
+                None,
+            );
             return Ok(v);
         }
     }
@@ -1093,8 +1173,17 @@ fn invoke_cached(
     match call() {
         Ok(v) => {
             let _ = ctx.cache.put(key, &v);
-            ctx.trace
-                .record("effect", Some(capability), Some(key), false, Some(&v), None);
+            ctx.trace.record(
+                "effect",
+                Some(capability),
+                Some(key),
+                false,
+                input,
+                provider,
+                model,
+                Some(&v),
+                None,
+            );
             Ok(v)
         }
         Err(e) => {
@@ -1103,6 +1192,9 @@ fn invoke_cached(
                 Some(capability),
                 Some(key),
                 false,
+                input,
+                provider,
+                model,
                 None,
                 Some(&e.to_string()),
             );

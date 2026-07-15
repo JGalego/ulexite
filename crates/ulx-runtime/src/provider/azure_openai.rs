@@ -135,6 +135,10 @@ impl Provider for AzureOpenAiProvider {
         capability == self.capability
     }
 
+    fn model(&self) -> Option<&str> {
+        Some(&self.deployment)
+    }
+
     fn invoke(&self, capability: &str, request: &Invocation) -> Result<Value, ProviderError> {
         match capability {
             "chat" => self.chat(request),
