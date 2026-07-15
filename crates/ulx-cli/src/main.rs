@@ -478,6 +478,7 @@ fn execute(
         return match result {
             Ok(value) => {
                 println!("{value}");
+                eprintln!("run id: {run_id}");
                 true
             }
             Err(RuntimeError::Suspended { reason, target, .. }) => {
@@ -496,7 +497,7 @@ fn execute(
     }
 
     let (ok, outcome) = match &result {
-        Ok(value) => (true, RunOutcome::Value(value)),
+        Ok(value) => (true, RunOutcome::Value { run_id, value }),
         Err(RuntimeError::Suspended { reason, target, .. }) => (
             false,
             RunOutcome::Suspended {
@@ -505,7 +506,13 @@ fn execute(
                 target,
             },
         ),
-        Err(e) => (false, RunOutcome::Error(e.to_string())),
+        Err(e) => (
+            false,
+            RunOutcome::Error {
+                run_id,
+                message: e.to_string(),
+            },
+        ),
     };
     match output {
         OutputFormat::Json => println!("{}", output::render_run_json(&outcome)),

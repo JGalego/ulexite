@@ -144,16 +144,16 @@ See [`examples/custom_provider.ulx`](examples/custom_provider.ulx) for a runnabl
 
 `ulx run`/`approve`/`deny`/`replay`/`trace` all take `--output <FORMAT>`, defaulting to `text` (today's plain, human-readable output, unchanged):
 
-- `text` — the default; a final value, a `suspended: ...`/resume hint, or an `error: ...` on stderr for `run`/`approve`/`deny`/`replay`; a `#seq [hit|miss|err] capability  output` table for `trace`.
-- `json` — one JSON object, always on stdout (including for errors — this is the one deliberate difference from `text` mode, which puts errors on stderr): `{"status": "ok", "value": ...}`, `{"status": "suspended", "run_id", "reason", "target", "resume_hint"}`, or `{"status": "error", "message"}`. `ulx trace --output json` prints the whole trace as a JSON array instead.
+- `text` — the default; a final value on stdout (with `run id: ...` on stderr, so scripts consuming the value don't see it), a `suspended: ...`/resume hint, or an `error: ...` on stderr for `run`/`approve`/`deny`/`replay`; a `#seq [hit|miss|err] capability  output` table for `trace`.
+- `json` — one JSON object, always on stdout (including for errors — this is the one deliberate difference from `text` mode, which puts errors on stderr): `{"status": "ok", "run_id", "value": ...}`, `{"status": "suspended", "run_id", "reason", "target", "resume_hint"}`, or `{"status": "error", "run_id", "message"}` — every shape carries `run_id`, so a script can always chain into `ulx trace` without having had to pass `--run-id` explicitly up front. `ulx trace --output json` prints the whole trace as a JSON array instead.
 - `jsonl` — one JSON object per trace record (`seq`, `kind`, `capability`, `cache_hit`, `output`, `error`, `timestamp_ms`), newline-delimited. For `run`/`approve`/`deny`/`replay` this is the *whole run's* trace, not just the final value — pipe through `tail -1` for the last record, or `jq` to filter.
 - `mermaid` — a `sequenceDiagram` of the run's trace (one participant per capability, request/response arrows labeled with `#seq` and a truncated `[hit|miss|err]` output) — paste into a Markdown `mermaid` code fence or a Mermaid live editor to render it.
 - `html` — a self-contained page (no JS, no external assets, theme-aware) rendering the trace as a list of status-colored cards. Redirect to a file to view it: `ulx trace <run-id> --output html > trace.html`.
 
 ```sh
-ulx run examples/translate.ulx Translate --arg source=hello --arg target_lang=fr --mock --output json
-ulx trace <run-id> --output mermaid
-ulx trace <run-id> --output html > trace.html
+run_id=$(ulx run examples/translate.ulx Translate --arg source=hello --arg target_lang=fr --mock --output json | jq -r .run_id)
+ulx trace "$run_id" --output mermaid
+ulx trace "$run_id" --output html > trace.html
 ```
 
 `jsonl`/`mermaid`/`html` always describe the *whole trace* of a run, even when invoked via `run`/`approve`/`deny`/`replay` — those re-read the trace file the run itself just wrote, rather than needing a separate `ulx trace` call. Errors that happen before a conversation starts running (an unreadable file, an ambiguous or unconfigured provider, a bad `--arg`) are always plain text on stderr regardless of `--output` — only a conversation's actual outcome or trace is format-aware.

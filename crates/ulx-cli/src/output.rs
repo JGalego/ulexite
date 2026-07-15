@@ -25,15 +25,25 @@ pub enum OutputFormat {
 }
 
 /// The result of one `run_conversation` call, format-agnostic. `Text`
-/// rendering of this never goes through here — see the module docs.
+/// rendering of this never goes through here — see the module docs. Every
+/// variant carries `run_id` (even `Error`, whose trace up to the failure
+/// point may still be worth inspecting) so a script consuming `Json` can
+/// always chain into `ulx trace <run_id>` without having had to pass
+/// `--run-id` explicitly up front.
 pub enum RunOutcome<'a> {
-    Value(&'a Value),
+    Value {
+        run_id: &'a str,
+        value: &'a Value,
+    },
     Suspended {
         run_id: &'a str,
         reason: &'a str,
         target: &'a str,
     },
-    Error(String),
+    Error {
+        run_id: &'a str,
+        message: String,
+    },
 }
 
 /// `Json`-renders a `RunOutcome` as one line of structured output,
@@ -43,7 +53,11 @@ pub enum RunOutcome<'a> {
 /// mode is for scripts that want one parseable shape on one stream.
 pub fn render_run_json(outcome: &RunOutcome) -> String {
     let doc = match outcome {
-        RunOutcome::Value(v) => json!({"status": "ok", "value": value_to_json(v)}),
+        RunOutcome::Value { run_id, value } => json!({
+            "status": "ok",
+            "run_id": run_id,
+            "value": value_to_json(value),
+        }),
         RunOutcome::Suspended {
             run_id,
             reason,
@@ -55,7 +69,11 @@ pub fn render_run_json(outcome: &RunOutcome) -> String {
             "target": target,
             "resume_hint": format!("ulx approve {run_id} --value <text>   (or: ulx deny {run_id})"),
         }),
-        RunOutcome::Error(message) => json!({"status": "error", "message": message}),
+        RunOutcome::Error { run_id, message } => json!({
+            "status": "error",
+            "run_id": run_id,
+            "message": message,
+        }),
     };
     serde_json::to_string(&doc).expect("json! output always serializes")
 }
@@ -371,8 +389,11 @@ mod tests {
     #[test]
     fn render_run_json_shapes() {
         let v = Value::Text("hello".into());
-        let s = render_run_json(&RunOutcome::Value(&v));
-        assert_eq!(s, r#"{"status":"ok","value":"hello"}"#);
+        let s = render_run_json(&RunOutcome::Value {
+            run_id: "abc",
+            value: &v,
+        });
+        assert_eq!(s, r#"{"run_id":"abc","status":"ok","value":"hello"}"#);
 
         let s = render_run_json(&RunOutcome::Suspended {
             run_id: "abc",
@@ -383,8 +404,11 @@ mod tests {
         assert!(s.contains(r#""run_id":"abc""#));
         assert!(s.contains("ulx approve abc"));
 
-        let s = render_run_json(&RunOutcome::Error("boom".into()));
-        assert_eq!(s, r#"{"message":"boom","status":"error"}"#);
+        let s = render_run_json(&RunOutcome::Error {
+            run_id: "abc",
+            message: "boom".into(),
+        });
+        assert_eq!(s, r#"{"message":"boom","run_id":"abc","status":"error"}"#);
     }
 
     #[test]
