@@ -504,6 +504,7 @@ mod tests {
         ProviderDecl {
             doc: None,
             name: name.to_string(),
+            name_span: 0..0,
             from: from.map(str::to_string),
             fields: fields
                 .into_iter()

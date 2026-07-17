@@ -91,6 +91,22 @@ pub fn decl_name(decl: &TopDecl) -> &str {
     }
 }
 
+/// The name identifier's own precise span — e.g. just `Foo` in
+/// `conversation Foo(...) { ... }` — as opposed to `Spanned<TopDecl>`'s
+/// span in `program.decls`, which covers the whole declaration. Used so a
+/// "duplicate declaration" diagnostic underlines just the offending name,
+/// not the entire (possibly many-line) declaration body.
+pub fn decl_name_span(decl: &TopDecl) -> ulx_ast::Span {
+    match decl {
+        TopDecl::Conversation(c) => c.name_span.clone(),
+        TopDecl::Judge(r) | TopDecl::Validator(r) => r.name_span.clone(),
+        TopDecl::Dataset(d) => d.name_span.clone(),
+        TopDecl::Type(t) => t.name_span.clone(),
+        TopDecl::Benchmark(b) => b.name_span.clone(),
+        TopDecl::Provider(p) => p.name_span.clone(),
+    }
+}
+
 fn decl_kind(decl: &TopDecl) -> ImportKind {
     match decl {
         TopDecl::Conversation(_) => ImportKind::Conversation,
@@ -105,17 +121,18 @@ fn decl_kind(decl: &TopDecl) -> ImportKind {
 
 pub fn check_duplicate_top_level_names(program: &Program, diags: &mut Vec<Diagnostic>) {
     let mut seen: HashMap<&str, ulx_ast::Span> = HashMap::new();
-    for (decl, span) in &program.decls {
+    for (decl, _) in &program.decls {
         let name = decl_name(decl);
+        let name_span = decl_name_span(decl);
         if let Some(prev_span) = seen.get(name) {
             diags.push(Diagnostic::error(
                 format!(
                     "duplicate top-level declaration `{name}` (first declared at {prev_span:?})"
                 ),
-                span.clone(),
+                name_span,
             ));
         } else {
-            seen.insert(name, span.clone());
+            seen.insert(name, name_span);
         }
     }
 }

@@ -271,6 +271,21 @@ fn duplicate_top_level_name_is_rejected() {
         has_error_containing(&d, "duplicate top-level declaration"),
         "expected a duplicate-name error, got: {d:?}"
     );
+
+    // The diagnostic should underline just the offending `Foo` name token
+    // (the second declaration's own `name_span`), not the whole multi-line
+    // `conversation Foo() -> text { ... }` body — precise per-name spans
+    // (§20) are what make this possible.
+    let dup = d
+        .iter()
+        .find(|dg| dg.message.contains("duplicate top-level declaration"))
+        .expect("duplicate diagnostic");
+    let second_foo_offset = src.rfind("Foo").unwrap();
+    assert_eq!(
+        dup.span,
+        second_foo_offset..second_foo_offset + "Foo".len(),
+        "expected the span to cover exactly the second `Foo` token"
+    );
 }
 
 /// Regression test for a real bug: `if`/`retry`/`ask` bodies were checked

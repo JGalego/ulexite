@@ -2,18 +2,18 @@
 //! go-to-definition, and completion need: a map of top-level declarations
 //! plus every reference to a name found inside declaration bodies.
 //!
-//! `ulx-ast` spans every *declaration* (`Spanned<TopDecl>`) but not
-//! individual name tokens — `ConversationDecl.name` is a plain `String`,
-//! not `Spanned<String>` (same for every other decl/param name). Widening
-//! that would ripple through `ulx-sema`'s and `ulx-ir`'s pattern matches
-//! and every test that destructures a decl name, which is out of scope for
-//! adding a language server. So this index deliberately mixes coarse spans
-//! (a whole declaration, a whole `ask` block) with tight spans
-//! (`Expr::Ident`, `TypeExpr::Named`, judge/validator call names, which
-//! *do* carry their own `Spanned<_>` wrapper) and `lookup` always prefers
-//! whichever containing span is smallest — that one rule is what makes a
-//! precise reference nested inside a coarse declaration resolve to the
-//! tight reference rather than falling back to "the whole enclosing decl."
+//! `ulx-ast` spans every *declaration* (`Spanned<TopDecl>`) as a whole (the
+//! keyword through the closing `}`/`;`) — every decl/param name also
+//! carries its own, separate, precise `name_span` (`ConversationDecl`,
+//! `RubricDecl`, `DatasetDecl`, `TypeDecl`, `BenchmarkDecl`,
+//! `ProviderDecl`, and `Param` all have one), used here for `DeclEntry`'s
+//! own `name_span` — so this index mixes coarse spans (a whole
+//! declaration, a whole `ask` block) with tight ones (`Expr::Ident`,
+//! `TypeExpr::Named`, judge/validator call names, and now a decl's own
+//! name token) and `lookup` always prefers whichever containing span is
+//! smallest — that one rule is what makes a precise reference nested
+//! inside a coarse declaration resolve to the tight reference rather than
+//! falling back to "the whole enclosing decl."
 
 use std::collections::HashMap;
 
@@ -52,7 +52,17 @@ impl DeclKind {
 pub struct DeclEntry {
     pub kind: DeclKind,
     pub name: String,
+    /// The whole declaration's span (keyword through closing `}`) — what
+    /// `document_symbol`'s outline `range` covers, and the `refs` fallback
+    /// registered for "hovering anywhere in this decl that isn't a
+    /// tighter reference." Not what go-to-definition jumps to — see
+    /// `name_span`.
     pub span: Span,
+    /// The name token's own precise span — what go-to-definition actually
+    /// reports as the target `Location`, and `document_symbol`'s
+    /// `selectionRange` (the LSP field meant to be exactly the identifier,
+    /// not the whole symbol body).
+    pub name_span: Span,
     pub doc: Option<String>,
     pub signature: String,
 }
@@ -87,9 +97,13 @@ impl Index {
         let mut refs = Vec::new();
         // Register every decl's own (coarse) span so hovering anywhere in
         // a declaration that isn't covered by a tighter reference below
-        // still resolves to that declaration.
+        // still resolves to that declaration — and *also* its precise
+        // `name_span`, so hovering exactly over a decl's own name (e.g.
+        // `Foo` in `conversation Foo(...) { ... }`) resolves via the tight
+        // span like any other reference, not just via the coarse fallback.
         for (name, entry) in &decls {
             refs.push((entry.span.clone(), RefTarget::Name(name.clone())));
+            refs.push((entry.name_span.clone(), RefTarget::Name(name.clone())));
         }
 
         let mut import_sources = HashMap::new();
@@ -128,6 +142,7 @@ fn decl_entry(decl: &TopDecl, span: Span) -> DeclEntry {
             kind: DeclKind::Conversation,
             name: c.name.clone(),
             span,
+            name_span: c.name_span.clone(),
             doc: c.doc.clone(),
             signature: conversation_signature(c),
         },
@@ -135,6 +150,7 @@ fn decl_entry(decl: &TopDecl, span: Span) -> DeclEntry {
             kind: DeclKind::Judge,
             name: r.name.clone(),
             span,
+            name_span: r.name_span.clone(),
             doc: r.doc.clone(),
             signature: rubric_signature("judge", r),
         },
@@ -142,6 +158,7 @@ fn decl_entry(decl: &TopDecl, span: Span) -> DeclEntry {
             kind: DeclKind::Validator,
             name: r.name.clone(),
             span,
+            name_span: r.name_span.clone(),
             doc: r.doc.clone(),
             signature: rubric_signature("validator", r),
         },
@@ -149,6 +166,7 @@ fn decl_entry(decl: &TopDecl, span: Span) -> DeclEntry {
             kind: DeclKind::Dataset,
             name: d.name.clone(),
             span,
+            name_span: d.name_span.clone(),
             doc: d.doc.clone(),
             signature: format!("dataset {}: {}", d.name, type_expr_str(&d.ty.0)),
         },
@@ -156,6 +174,7 @@ fn decl_entry(decl: &TopDecl, span: Span) -> DeclEntry {
             kind: DeclKind::Type,
             name: t.name.clone(),
             span,
+            name_span: t.name_span.clone(),
             doc: None,
             signature: format!("type {} = {}", t.name, type_expr_str(&t.ty.0)),
         },
@@ -163,6 +182,7 @@ fn decl_entry(decl: &TopDecl, span: Span) -> DeclEntry {
             kind: DeclKind::Benchmark,
             name: b.name.clone(),
             span,
+            name_span: b.name_span.clone(),
             doc: b.doc.clone(),
             signature: format!("benchmark {}", b.name),
         },
@@ -170,6 +190,7 @@ fn decl_entry(decl: &TopDecl, span: Span) -> DeclEntry {
             kind: DeclKind::Provider,
             name: p.name.clone(),
             span,
+            name_span: p.name_span.clone(),
             doc: p.doc.clone(),
             signature: provider_signature(p),
         },

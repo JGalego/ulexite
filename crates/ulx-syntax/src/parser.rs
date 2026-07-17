@@ -640,10 +640,14 @@ fn end_no_input() -> impl Parser<Token, (), Error = Err> + Clone {
 fn param_list_p(
     type_expr: impl Parser<Token, Spanned<TypeExpr>, Error = Err> + Clone,
 ) -> impl Parser<Token, Vec<Param>, Error = Err> + Clone {
-    ident_p()
+    spanned(ident_p())
         .then_ignore(just(Token::Colon))
         .then(type_expr)
-        .map(|(name, ty)| Param { name, ty })
+        .map(|((name, name_span), ty)| Param {
+            name,
+            name_span,
+            ty,
+        })
         .separated_by(just(Token::Comma))
         .allow_trailing()
         .delimited_by(just(Token::LParen), just(Token::RParen))
@@ -689,7 +693,7 @@ pub fn program_p() -> impl Parser<Token, Program, Error = Err> + Clone {
 
     let rubric_decl = |head: &'static str| {
         kw(head)
-            .ignore_then(ident_p())
+            .ignore_then(spanned(ident_p()))
             .then(param_list_p(type_expr.clone()))
             .then_ignore(just(Token::Arrow))
             .then(type_expr.clone())
@@ -699,9 +703,10 @@ pub fn program_p() -> impl Parser<Token, Program, Error = Err> + Clone {
                     .repeated()
                     .delimited_by(just(Token::LBrace), just(Token::RBrace)),
             )
-            .map(|(((name, params), ret), fields)| RubricDecl {
+            .map(|((((name, name_span), params), ret), fields)| RubricDecl {
                 doc: None,
                 name,
+                name_span,
                 params,
                 ret,
                 fields,
@@ -727,24 +732,31 @@ pub fn program_p() -> impl Parser<Token, Program, Error = Err> + Clone {
         .map(DatasetSource::FromFile)
         .or(dataset_rows.map(DatasetSource::Rows));
     let dataset_decl = kw("dataset")
-        .ignore_then(ident_p())
+        .ignore_then(spanned(ident_p()))
         .then_ignore(just(Token::Colon))
         .then(type_expr.clone())
         .then(dataset_source.delimited_by(just(Token::LBrace), just(Token::RBrace)))
-        .map(|((name, ty), source)| {
+        .map(|(((name, name_span), ty), source)| {
             TopDecl::Dataset(DatasetDecl {
                 doc: None,
                 name,
+                name_span,
                 ty,
                 source,
             })
         });
 
     let type_decl = kw("type")
-        .ignore_then(ident_p())
+        .ignore_then(spanned(ident_p()))
         .then_ignore(just(Token::Eq))
         .then(type_expr.clone())
-        .map(|(name, ty)| TopDecl::Type(TypeDecl { name, ty }));
+        .map(|((name, name_span), ty)| {
+            TopDecl::Type(TypeDecl {
+                name,
+                name_span,
+                ty,
+            })
+        });
 
     let benchmark_stmt = choice((
         kw("dataset")
@@ -791,22 +803,23 @@ pub fn program_p() -> impl Parser<Token, Program, Error = Err> + Clone {
             .map(|(expr, key)| BenchmarkStmt::Snapshot { expr, key }),
     ));
     let benchmark_decl = kw("benchmark")
-        .ignore_then(ident_p())
+        .ignore_then(spanned(ident_p()))
         .then(
             spanned(benchmark_stmt)
                 .repeated()
                 .delimited_by(just(Token::LBrace), just(Token::RBrace)),
         )
-        .map(|(name, stmts)| {
+        .map(|((name, name_span), stmts)| {
             TopDecl::Benchmark(BenchmarkDecl {
                 doc: None,
                 name,
+                name_span,
                 stmts,
             })
         });
 
     let provider_decl = kw("provider")
-        .ignore_then(ident_p())
+        .ignore_then(spanned(ident_p()))
         .then(kw("from").ignore_then(str_lit).or_not())
         .then(
             field_assign
@@ -814,24 +827,26 @@ pub fn program_p() -> impl Parser<Token, Program, Error = Err> + Clone {
                 .repeated()
                 .delimited_by(just(Token::LBrace), just(Token::RBrace)),
         )
-        .map(|((name, from), fields)| {
+        .map(|(((name, name_span), from), fields)| {
             TopDecl::Provider(ProviderDecl {
                 doc: None,
                 name,
+                name_span,
                 from,
                 fields,
             })
         });
 
     let conversation_decl = kw("conversation")
-        .ignore_then(ident_p())
+        .ignore_then(spanned(ident_p()))
         .then(param_list_p(type_expr.clone()))
         .then(just(Token::Arrow).ignore_then(type_expr.clone()).or_not())
         .then(block)
-        .map(|(((name, params), ret), body)| {
+        .map(|((((name, name_span), params), ret), body)| {
             TopDecl::Conversation(ConversationDecl {
                 doc: None,
                 name,
+                name_span,
                 params,
                 ret,
                 body,

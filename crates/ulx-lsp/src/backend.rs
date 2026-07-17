@@ -334,7 +334,10 @@ impl LanguageServer for Backend {
         };
 
         let target_url = Url::from_file_path(&resolved.path).unwrap_or_else(|_| uri.clone());
-        let range = LineIndex::new(resolved.text).span_to_range(&resolved.entry.span);
+        // The name token's own precise span, not the whole enclosing
+        // declaration — jumping to a call site should land the cursor on
+        // just `Foo`, not select `conversation Foo(...) { ... }` in full.
+        let range = LineIndex::new(resolved.text).span_to_range(&resolved.entry.name_span);
         Ok(Some(GotoDefinitionResponse::Scalar(Location::new(
             target_url, range,
         ))))
@@ -358,7 +361,13 @@ impl LanguageServer for Backend {
             .decls
             .values()
             .map(|entry| {
+                // `range` is the whole declaration (what the outline entry
+                // spans); `selection_range` is meant per the LSP spec to be
+                // just the identifier — what actually highlights/is jumped
+                // to when the symbol is picked from the outline or a
+                // breadcrumb.
                 let range = line_index.span_to_range(&entry.span);
+                let selection_range = line_index.span_to_range(&entry.name_span);
                 #[allow(deprecated)]
                 DocumentSymbol {
                     name: entry.name.clone(),
@@ -367,7 +376,7 @@ impl LanguageServer for Backend {
                     tags: None,
                     deprecated: None,
                     range,
-                    selection_range: range,
+                    selection_range,
                     children: None,
                 }
             })

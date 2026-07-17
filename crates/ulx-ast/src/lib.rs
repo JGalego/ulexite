@@ -51,6 +51,12 @@ pub enum TopDecl {
 pub struct ConversationDecl {
     pub doc: Option<String>,
     pub name: String,
+    /// The `name` identifier token's own span — precise, unlike a whole
+    /// declaration's span (`Spanned<TopDecl>` in `Program.decls`, which
+    /// runs from the leading keyword to the closing `}`). Lets
+    /// `ulx-lsp`'s goto-definition land on just `Foo` in `conversation
+    /// Foo(...) { ... }` rather than selecting the entire body.
+    pub name_span: Span,
     pub params: Vec<Param>,
     pub ret: Option<Spanned<TypeExpr>>,
     pub body: Block,
@@ -59,6 +65,10 @@ pub struct ConversationDecl {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Param {
     pub name: String,
+    /// The parameter name identifier's own span — see
+    /// `ConversationDecl::name_span`'s docs for why this is tracked
+    /// separately from `ty`'s span.
+    pub name_span: Span,
     pub ty: Spanned<TypeExpr>,
 }
 
@@ -68,6 +78,8 @@ pub struct Param {
 pub struct RubricDecl {
     pub doc: Option<String>,
     pub name: String,
+    /// See `ConversationDecl::name_span`'s docs.
+    pub name_span: Span,
     pub params: Vec<Param>,
     pub ret: Spanned<TypeExpr>,
     pub fields: Vec<(String, Spanned<Expr>)>,
@@ -77,6 +89,8 @@ pub struct RubricDecl {
 pub struct DatasetDecl {
     pub doc: Option<String>,
     pub name: String,
+    /// See `ConversationDecl::name_span`'s docs.
+    pub name_span: Span,
     pub ty: Spanned<TypeExpr>,
     pub source: DatasetSource,
 }
@@ -90,6 +104,8 @@ pub enum DatasetSource {
 #[derive(Debug, Clone, PartialEq)]
 pub struct TypeDecl {
     pub name: String,
+    /// See `ConversationDecl::name_span`'s docs.
+    pub name_span: Span,
     pub ty: Spanned<TypeExpr>,
 }
 
@@ -97,6 +113,8 @@ pub struct TypeDecl {
 pub struct BenchmarkDecl {
     pub doc: Option<String>,
     pub name: String,
+    /// See `ConversationDecl::name_span`'s docs.
+    pub name_span: Span,
     pub stmts: Vec<Spanned<BenchmarkStmt>>,
 }
 
@@ -110,6 +128,8 @@ pub struct BenchmarkDecl {
 pub struct ProviderDecl {
     pub doc: Option<String>,
     pub name: String,
+    /// See `ConversationDecl::name_span`'s docs.
+    pub name_span: Span,
     pub from: Option<String>,
     pub fields: Vec<(String, Spanned<Expr>)>,
 }

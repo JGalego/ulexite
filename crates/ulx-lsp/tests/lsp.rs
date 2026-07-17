@@ -130,11 +130,16 @@ async fn goto_definition_on_a_judge_reference_finds_its_declaration() {
         panic!("expected a single Location");
     };
     assert_eq!(location.uri, uri, "Fluency is declared in the same file");
-    // The declaration's span starts at `judge Fluency(...)`, well before
-    // the `match` reference this lookup started from.
-    let decl_offset = text.find("judge Fluency").unwrap();
+    // The reported location is the `Fluency` name token itself (its own
+    // precise `name_span`), not the whole `judge Fluency(...) { ... }`
+    // declaration starting at the `judge` keyword — landing the cursor on
+    // just the identifier is the whole point of a precise name span.
+    let decl_offset = text.find("judge Fluency").unwrap() + "judge ".len();
     let decl_position = LineIndex::new(text.clone()).offset_to_position(decl_offset);
     assert_eq!(location.range.start, decl_position);
+    let decl_end_offset = decl_offset + "Fluency".len();
+    let decl_end_position = LineIndex::new(text.clone()).offset_to_position(decl_end_offset);
+    assert_eq!(location.range.end, decl_end_position);
 }
 
 #[tokio::test]
@@ -163,6 +168,30 @@ async fn document_symbol_lists_every_top_level_decl() {
     let names: Vec<&str> = symbols.iter().map(|s| s.name.as_str()).collect();
     assert!(names.contains(&"Fluency"), "symbols were: {names:?}");
     assert!(names.contains(&"Translate"), "symbols were: {names:?}");
+
+    // `selection_range` (§20's precise per-name span) must be the name
+    // token alone — strictly smaller than, and contained within, `range`
+    // (the whole multi-line declaration) — not a duplicate of it.
+    let translate = symbols
+        .iter()
+        .find(|s| s.name == "Translate")
+        .expect("Translate symbol");
+    assert_ne!(
+        translate.range, translate.selection_range,
+        "selection_range should be tighter than the whole-declaration range"
+    );
+    assert_eq!(
+        translate.selection_range.start.line,
+        translate.range.start.line
+    );
+    assert!(
+        translate.selection_range.end.character > translate.selection_range.start.character,
+        "selection_range should cover the `Translate` identifier, not be empty"
+    );
+    assert!(
+        translate.range.end.line > translate.selection_range.end.line,
+        "the whole declaration should extend well past its own name"
+    );
 }
 
 #[tokio::test]

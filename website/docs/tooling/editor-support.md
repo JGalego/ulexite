@@ -15,7 +15,7 @@ description: What the ulx-lsp language server actually does today, and how to wi
 - **Document symbols** — an outline view listing every top-level declaration in the current file.
 - **Completion** — declared names in scope, stdlib capability and module names, artifact-type keywords, and grammar keywords.
 
-One honest gap worth knowing about: Ulexite's AST spans whole declarations, not individual name tokens (a `conversation Foo(...)` declaration's name isn't separately spanned from the rest of the declaration). Hovering or jumping to a declaration *by name* therefore resolves to "somewhere in that declaration," not the exact name token — references *inside* a body (a call, a type reference) resolve precisely, since those do carry their own spans. This is a real, small, current limitation, not a bug.
+Go to definition and the outline view both land precisely on a declaration's name token — `conversation Foo(...) { ... }` jumps the cursor to just `Foo`, not the whole multi-line body — the same way a reference *inside* a body (a call, a type reference) already resolved precisely. Every top-level declaration's name (and every parameter's) carries its own span, separate from the whole declaration's span.
 
 ## What's not implemented yet
 
