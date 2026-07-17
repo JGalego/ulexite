@@ -212,7 +212,7 @@ ulx run batch.ulx TriageBacklog --provider anthropic
 
 ## `eval_translate.ulx` — benchmark with dataset, judge, and snapshot
 
-Reuses `translate.ulx`'s `Translate` conversation and `Fluency` judge (imported, not copy-pasted) against a golden dataset, with a judge threshold and a snapshot assertion. A row whose `Translate` call escalates (the judge couldn't decide) now suspends that row gracefully instead of aborting the whole benchmark — the other rows still complete, and `ulx bench --run-id <id>` plus `ulx approve <id>`/`ulx deny <id>` resolves it.
+Reuses `translate.ulx`'s `Translate` conversation and `Fluency` judge (imported, not copy-pasted) against a golden dataset, with a judge threshold and a snapshot assertion. A row whose `Translate` call escalates (the judge couldn't decide) now suspends that row gracefully instead of aborting the whole benchmark — the other rows still complete, and `ulx bench --run-id <id>` plus `ulx approve <id>`/`ulx deny <id>` resolves it. The `snapshot` statement records a real golden baseline on first run and compares against it (exact value equality) on every later one; `ulx bench --update-snapshots` accepts a new baseline deliberately.
 
 ```ulexite
 import conversation Translate from "translate.ulx"
@@ -227,7 +227,7 @@ benchmark TranslateQuality {
   run: Translate(source: $.source, target_lang: $.target_lang) -> result
   expect result satisfies judge Fluency(result) with threshold(0.8)
   assert result != $.golden
-  snapshot result as "translate/{$.target_lang}"
+  snapshot result as """translate/{$.target_lang}"""
 }
 ```
 

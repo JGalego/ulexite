@@ -1,0 +1,7 @@
+{
+  "key": "translate/fr",
+  "value": {
+    "kind": "Text",
+    "value": "[mock:chat] response to -> system: You are a professional translator. | user: Translate to fr: Good morning, how are you?"
+  }
+}

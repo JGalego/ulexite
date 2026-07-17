@@ -5,7 +5,11 @@
 //! `Translate`, imported from `translate.ulx`) — with `--mock` so it needs
 //! no real provider credentials. The child process's cwd is a throwaway
 //! temp dir so its `.ulexite/` cache/trace state (see `manifest.rs`) never
-//! touches the repo.
+//! touches the repo — but `snapshot`'s golden-baseline files live beside
+//! the source file itself (`examples/snapshots/TranslateQuality/`), not
+//! under cwd, so this test exercises a real comparison against the
+//! baseline already committed there (produced by this exact mock run),
+//! not just a first-ever "recorded" pass.
 
 use std::path::PathBuf;
 use std::process::Command;

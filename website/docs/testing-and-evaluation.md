@@ -39,7 +39,7 @@ benchmark TranslateQuality {
   run: Translate(source: $.source, target_lang: $.target_lang) -> result
   expect result satisfies judge Fluency(result) with threshold(0.8)
   assert result != $.golden
-  snapshot result as "translate/{$.target_lang}"
+  snapshot result as """translate/{$.target_lang}"""
 }
 ```
 
@@ -65,15 +65,19 @@ row 1: FAIL
 TranslateQuality: 1/2 row(s) passed
 ```
 
-## `snapshot` — recorded, not yet compared
+## `snapshot` — a real golden baseline, exact-equality today
 
 ```ulexite
-snapshot result as "translate/{$.target_lang}"
+snapshot result as """translate/{$.target_lang}"""
 ```
 
-The full design describes `snapshot expr as "<key>"` as Playwright-style visual-regression testing adapted for text: recording a golden baseline on first run (or with `ulx test --update-snapshots`), then comparing against it on subsequent runs via a **semantic** diff rather than a byte- or line-diff, since exact-match text comparison is far too brittle for genuinely non-deterministic model output.
+The full design describes `snapshot expr as "<key>"` as Playwright-style visual-regression testing adapted for text: recording a golden baseline on first run (or with `ulx bench --update-snapshots`), then comparing against it on subsequent runs via a **semantic** diff rather than a byte- or line-diff, since exact-match text comparison is far too brittle for genuinely non-deterministic model output.
 
-**None of the comparison half is implemented today.** `snapshot` evaluates its expression and key — so a real effectful subexpression still runs, and any error in it still surfaces — but there's no golden-baseline file store and no `--update-snapshots` flag wired up anywhere. Every `snapshot` statement always reports "recorded," every time, whether or not this is the first run. Treat it today as a way to capture and print a labeled artifact value alongside your other checks, not as a working regression gate.
+**The baseline storage and comparison are real today; the diff is exact, not semantic.** The first time a `snapshot` statement runs for a given key, it writes the evaluated value to a JSON file under `<package-dir>/snapshots/<benchmark>/` (meant to be committed alongside your source, the same role a `.snap` file plays for `insta` or `__snapshots__/` plays for Jest) and passes as "recorded (new baseline)." Every later run compares the freshly-evaluated value against that stored baseline with plain `Value` equality — an identical value passes ("matches baseline"), anything else fails with both values printed. `ulx bench --update-snapshots` skips the comparison and unconditionally overwrites the baseline, for accepting an intentional change.
+
+Because the comparison is exact rather than semantic, `snapshot` today suits a deterministic subexpression (a computed key, a structural transform) far better than raw `ask`/`judge` output, which will almost never come back byte-identical across a real provider call — reserve it for the parts of a benchmark row that genuinely shouldn't change, not the whole non-deterministic response.
+
+The key must be a triple-quoted string (`"""..."""`) if you want it interpolated per row — a plain `"..."` string is a literal with no `{...}` substitution in Ulexite (interpolation is a text-block feature, §7.1), so every row would collide on the same literal key.
 
 ## Reporting and aggregation
 

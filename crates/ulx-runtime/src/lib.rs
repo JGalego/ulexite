@@ -19,6 +19,7 @@ mod env;
 pub mod error;
 mod interp;
 pub mod provider;
+mod snapshot;
 mod stdlib;
 pub mod trace;
 mod validator;
@@ -80,6 +81,10 @@ pub struct RunContext<'a> {
     /// not a "don't waste an API call" optimization, so bypassing it would
     /// break resume rather than just cost more.
     pub no_cache: bool,
+    /// `ulx bench --update-snapshots` (§16.5): when true, a `snapshot`
+    /// statement unconditionally overwrites its stored golden baseline with
+    /// the freshly-evaluated value instead of comparing against it.
+    pub update_snapshots: bool,
 }
 
 impl<'a> RunContext<'a> {
@@ -100,6 +105,7 @@ impl<'a> RunContext<'a> {
             base_dir,
             replay_only: false,
             no_cache: false,
+            update_snapshots: false,
         }
     }
 
@@ -110,6 +116,11 @@ impl<'a> RunContext<'a> {
 
     pub fn without_cache(mut self) -> Self {
         self.no_cache = true;
+        self
+    }
+
+    pub fn with_update_snapshots(mut self) -> Self {
+        self.update_snapshots = true;
         self
     }
 }

@@ -362,7 +362,11 @@ impl BenchmarkReport {
 /// Scope, honestly: this is a narrower executor than §16 describes in
 /// full. There's no `metrics.*` aggregation (§16.6) or JUnit/JSON report
 /// format — `BenchmarkReport` is a plain in-memory per-row structure for
-/// `ulx bench` to print.
+/// `ulx bench` to print. `snapshot` (§16.5, `crate::snapshot`) does
+/// compare against a real, persisted golden baseline now, but via exact
+/// `Value` equality rather than §16.5's semantic diff — a snapshot fails
+/// the moment non-deterministic model output drifts at all, so it suits
+/// deterministic subexpressions far better than raw `ask`/`judge` output.
 ///
 /// A row whose body hits a real `escalate(...)` suspend point (a `run:`
 /// conversation that needs a human decision) doesn't abort the whole
@@ -484,10 +488,47 @@ pub fn run_benchmark(ctx: &RunContext, name: &str) -> Result<BenchmarkReport, Ru
                     IrBenchmarkStep::Snapshot { expr, key } => {
                         let value = eval_expr(ctx, expr, &mut env)?;
                         let key_value = eval_expr(ctx, key, &mut env)?;
+                        let key_str = key_value.to_string();
+                        let (passed, message) = if ctx.update_snapshots {
+                            crate::snapshot::save(&ctx.base_dir, name, &key_str, &value).map_err(
+                                |e| {
+                                    RuntimeError::TypeError(format!(
+                                        "snapshot `{key_str}`: failed to write baseline: {e}"
+                                    ))
+                                },
+                            )?;
+                            (true, format!("updated baseline `{key_str}`: {value}"))
+                        } else {
+                            match crate::snapshot::load(&ctx.base_dir, name, &key_str)
+                                .map_err(|e| {
+                                    RuntimeError::TypeError(format!(
+                                        "snapshot `{key_str}`: failed to read baseline: {e}"
+                                    ))
+                                })? {
+                                None => {
+                                    crate::snapshot::save(&ctx.base_dir, name, &key_str, &value)
+                                        .map_err(|e| {
+                                            RuntimeError::TypeError(format!(
+                                                "snapshot `{key_str}`: failed to write baseline: {e}"
+                                            ))
+                                        })?;
+                                    (true, format!("recorded (new baseline) `{key_str}`: {value}"))
+                                }
+                                Some(baseline) if baseline == value => {
+                                    (true, format!("matches baseline `{key_str}`"))
+                                }
+                                Some(baseline) => (
+                                    false,
+                                    format!(
+                                        "snapshot `{key_str}` differs from baseline:\n  baseline: {baseline}\n  actual:   {value}"
+                                    ),
+                                ),
+                            }
+                        };
                         checks.push(CheckResult {
                             kind: "snapshot",
-                            passed: true,
-                            message: Some(format!("recorded `{key_value}`: {value}")),
+                            passed,
+                            message: Some(message),
                         });
                     }
                 }

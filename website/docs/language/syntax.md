@@ -150,13 +150,13 @@ benchmark TranslateQuality {
   run: Translate(source: $.source, target_lang: $.target_lang) -> result
   expect result satisfies judge Fluency(result) with threshold(0.8)
   assert result != golden           // structural inequality is fine; exact match is not required
-  snapshot result as "translate/{source_lang}-{target_lang}"
+  snapshot result as """translate/{source_lang}-{target_lang}"""
 }
 ```
 
 - `dataset` is a first-class, typed, versioned, injectable value — not a decorator bolted onto a host-language test function. Inside a `benchmark`, `$` refers to the current row.
 - `expect ... satisfies <judge-or-validator> with threshold(...)` and `assert` share the same `Verdict` type that ordinary `match` control flow uses — a benchmark and the conversation it exercises are checked by one compiler pass, not two disconnected tools.
-- `snapshot` records and compares a semantic (not purely textual) diff of an artifact against a golden baseline.
+- `snapshot` records and compares an artifact against a golden baseline, today via exact value equality rather than the full design's semantic diff — note the key needs a triple-quoted string (`"""..."""`) to interpolate per row, since interpolation is a text-block feature, not a plain-string one.
 
 See [Testing and evaluation](../testing-and-evaluation.md) for the full framework.
 

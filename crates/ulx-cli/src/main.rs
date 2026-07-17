@@ -5,9 +5,11 @@
 //! dataset-parametrized `benchmark` execution, `--run-id`-resumable when a
 //! row suspends on a real `escalate(...)`, same mechanism as `run`; see
 //! `ulx-runtime::run_benchmark` for the narrower-than-spec scope that's
-//! still real: no `expect`-polling/retry-until-converged, no golden-file
-//! `snapshot` comparison, no `metrics.*` aggregation or JUnit/JSON report
-//! — a plain-text per-row pass/fail/suspended report), `approve`/`deny`
+//! still real: `snapshot` compares against a persisted golden baseline
+//! (`--update-snapshots` accepts a new one) via exact value equality
+//! rather than §16.5's semantic diff; there's still no `expect`-polling/
+//! retry-until-converged and no `metrics.*` aggregation or JUnit/JSON
+//! report — a plain-text per-row pass/fail/suspended report), `approve`/`deny`
 //! (§10.7's human-approval resume, v0.1-style, for both a conversation and
 //! a benchmark run — see `ulx-runtime`'s docs for how that actually
 //! works), `replay` (§18.3), `trace` (§20.6 — no viewer webview, but
@@ -128,6 +130,12 @@ enum Command {
         providers: Vec<String>,
         #[arg(long, conflicts_with = "providers")]
         mock: bool,
+        /// Unconditionally overwrite every `snapshot` statement's stored
+        /// golden baseline with this run's freshly-evaluated value, instead
+        /// of comparing against it (§16.5) — for accepting an intentional
+        /// change to a benchmark's expected output.
+        #[arg(long)]
+        update_snapshots: bool,
     },
     /// Statically estimate which providers/models a conversation will call
     /// and a rough token/cost range, without executing anything (§10.5).
@@ -242,7 +250,15 @@ fn main() {
             run_id,
             providers,
             mock,
-        } => cmd_bench(&file, &benchmark, run_id, &providers, mock),
+            update_snapshots,
+        } => cmd_bench(
+            &file,
+            &benchmark,
+            run_id,
+            &providers,
+            mock,
+            update_snapshots,
+        ),
         Command::Plan {
             file,
             conversation,
@@ -956,6 +972,7 @@ fn cmd_bench(
     run_id: Option<String>,
     selected_providers: &[String],
     force_mock: bool,
+    update_snapshots: bool,
 ) -> bool {
     let Some(loaded) = pipeline::load(file) else {
         return false;
@@ -994,6 +1011,11 @@ fn cmd_bench(
             eprintln!("error: could not set up run context: {e}");
             return false;
         }
+    };
+    let ctx = if update_snapshots {
+        ctx.with_update_snapshots()
+    } else {
+        ctx
     };
 
     match ulx_runtime::run_benchmark(&ctx, benchmark) {

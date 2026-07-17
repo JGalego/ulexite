@@ -70,7 +70,7 @@ ulx run rag.ulx Caption --arg photo=fixtures/sample.jpg --output mermaid
 Runs a `benchmark` declaration to completion: loads its `dataset:`, runs the benchmark body once per row, and prints a plain-text pass/fail report. Like `ulx run`, it errors if no provider is configured — pass `--mock` to use the offline mock instead.
 
 ```
-ulx bench <file> <benchmark> [--run-id ID] [--provider NAME]... [--mock]
+ulx bench <file> <benchmark> [--run-id ID] [--provider NAME]... [--mock] [--update-snapshots]
 ```
 
 ```bash
@@ -78,10 +78,11 @@ ulx bench eval_translate.ulx TranslateQuality --provider anthropic
 ```
 
 - **`--run-id ID`** — reuses a specific run id, the same way `ulx run --run-id` does. Needed to resume a row that suspends on a human-approval `escalate(...)` — without it, the report still shows which rows are pending, but there's no stable id for `ulx approve`/`ulx deny` to resume by.
+- **`--update-snapshots`** — unconditionally overwrites every `snapshot` statement's stored golden baseline with this run's freshly-evaluated value, instead of comparing against it. Use it once, deliberately, when a `snapshot` failure reflects an intentional change to the benchmark's expected output.
 
 A row that hits a real `escalate(...)` (not a judge's own `Escalate` verdict, which is just an ordinary failed `expect` check) suspends gracefully rather than aborting the whole benchmark — the other rows still run and report normally. `ulx approve <run-id> --value ...`/`ulx deny <run-id>` resolves the first still-suspended row and re-runs; call it again with the same id if more than one row is pending.
 
-Note the scope is still narrower than the full spec's `benchmark` design in other ways: there's no `expect`-polling/retry-until-converged, no golden-file `snapshot` comparison, and no `metrics.*` aggregation or JUnit/JSON report — just a plain-text per-row result.
+`snapshot expr as "<key>"` records a golden baseline on first run (one JSON file per key, under `<package-dir>/snapshots/<benchmark>/`, meant to be committed alongside the source) and compares against it on every later run — a real regression gate, not just a recorded artifact. Note the comparison is exact `Value` equality, not §16.5's semantic diff, so it suits deterministic subexpressions better than raw non-deterministic model output. Also note the scope is still narrower than the full spec's `benchmark` design in other ways: there's no `expect`-polling/retry-until-converged, and no `metrics.*` aggregation or JUnit/JSON report — just a plain-text per-row result.
 
 ## `ulx plan`
 

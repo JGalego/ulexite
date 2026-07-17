@@ -649,6 +649,97 @@ fn benchmark_runs_once_per_dataset_row_and_reports_pass_fail() {
     assert!(row1_assert.passed);
 }
 
+/// `snapshot` (§16.5): first run records a golden baseline and passes;
+/// a later run with an unchanged value matches it and passes; a later run
+/// with a *different* value fails with a diff-style message; and
+/// `--update-snapshots` (`RunContext::with_update_snapshots`) accepts the
+/// new value as the baseline unconditionally. Uses a plain pass-through
+/// conversation (no `ask`) so the snapshotted value is fully deterministic
+/// and under the test's control, rather than depending on mock-provider
+/// echo behavior.
+#[test]
+fn snapshot_compares_against_a_real_golden_baseline() {
+    let tmp = tempfile::tempdir().unwrap();
+    let src = r#"
+        dataset Rows: [{source: text}] { from "rows.jsonl" }
+
+        conversation Echo(source: text) -> text {
+          source
+        }
+
+        benchmark SnapshotBench {
+          dataset: Rows
+          run: Echo(source: $.source) -> result
+          snapshot result as "greeting"
+        }
+    "#;
+    let program = setup(src, &tmp);
+
+    let write_row = |source: &str| {
+        std::fs::write(
+            tmp.path().join("rows.jsonl"),
+            format!("{{\"source\": \"{source}\"}}\n"),
+        )
+        .unwrap()
+    };
+
+    // First run: no baseline yet, so it's recorded and passes.
+    write_row("hello");
+    let ctx = make_ctx(&program, &tmp, "snap1");
+    let report = ulx_runtime::run_benchmark(&ctx, "SnapshotBench").expect("must run");
+    assert!(report.rows[0].passed());
+    let snap_check = |report: &ulx_runtime::BenchmarkReport| {
+        report.rows[0]
+            .checks()
+            .iter()
+            .find(|c| c.kind == "snapshot")
+            .expect("snapshot check")
+            .clone()
+    };
+    let check = snap_check(&report);
+    assert!(check.passed);
+    assert!(
+        check.message.as_deref().unwrap().contains("recorded"),
+        "{check:?}"
+    );
+
+    // Second run, same value: matches the baseline and passes.
+    let ctx = make_ctx(&program, &tmp, "snap2");
+    let report = ulx_runtime::run_benchmark(&ctx, "SnapshotBench").expect("must run");
+    let check = snap_check(&report);
+    assert!(check.passed);
+    assert!(
+        check.message.as_deref().unwrap().contains("matches"),
+        "{check:?}"
+    );
+
+    // Third run, changed value: diverges from the baseline and fails.
+    write_row("goodbye");
+    let ctx = make_ctx(&program, &tmp, "snap3");
+    let report = ulx_runtime::run_benchmark(&ctx, "SnapshotBench").expect("must run");
+    assert!(!report.rows[0].passed());
+    let check = snap_check(&report);
+    assert!(!check.passed);
+    let message = check.message.as_deref().unwrap();
+    assert!(message.contains("differs from baseline"), "{message}");
+    assert!(message.contains("hello"), "{message}");
+    assert!(message.contains("goodbye"), "{message}");
+
+    // With --update-snapshots, the new value is accepted unconditionally.
+    let ctx = make_ctx(&program, &tmp, "snap4").with_update_snapshots();
+    let report = ulx_runtime::run_benchmark(&ctx, "SnapshotBench").expect("must run");
+    assert!(report.rows[0].passed());
+    let check = snap_check(&report);
+    assert!(check.message.as_deref().unwrap().contains("updated"));
+
+    // A subsequent normal run now matches the updated baseline.
+    let ctx = make_ctx(&program, &tmp, "snap5");
+    let report = ulx_runtime::run_benchmark(&ctx, "SnapshotBench").expect("must run");
+    assert!(report.rows[0].passed());
+    let check = snap_check(&report);
+    assert!(check.message.as_deref().unwrap().contains("matches"));
+}
+
 /// Regression test for the bug this whole suspend-handling rework fixes:
 /// a benchmark row that hits a real `escalate(...)` used to propagate
 /// `RuntimeError::Suspended` straight out of `run_benchmark` via `?`,

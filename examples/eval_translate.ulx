@@ -13,5 +13,5 @@ benchmark TranslateQuality {
   run: Translate(source: $.source, target_lang: $.target_lang) -> result
   expect result satisfies judge Fluency(result) with threshold(0.8)
   assert result != $.golden
-  snapshot result as "translate/{$.target_lang}"
+  snapshot result as """translate/{$.target_lang}"""
 }
