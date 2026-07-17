@@ -22,11 +22,17 @@
 //! illustrative pricing table; see `plan.rs`'s module docs for exactly how
 //! approximate that estimate is), `fmt` (§20.10 — an AST-based
 //! pretty-printer; see `ulx_syntax::fmt` for the important caveat that it
-//! does not preserve comments).
+//! does not preserve comments), `debug` (§19 — an interactive stepper over
+//! an already-recorded trace: forward/backward stepping, breakpoints by
+//! record seq, full inspection, and a call-stack view; see `debug.rs`'s
+//! module docs for the narrower-than-spec scope — no `breakpoint()`
+//! language keyword, no `ulx fork`/re-run-with-edits, no `ulx attach` to a
+//! live process).
 //!
-//! Not implemented: `doc`/`repl` (§20). See
+//! Not implemented: `doc`/`repl` (§20), `ulx fork`, `ulx attach`. See
 //! `docs/spec/25-future-directions.md`.
 
+mod debug;
 mod diagnostics;
 mod manifest;
 mod output;
@@ -196,6 +202,10 @@ enum Command {
         #[arg(long, value_enum, default_value = "text")]
         output: OutputFormat,
     },
+    /// Interactively step through a completed or suspended run's trace
+    /// (§19 — a deliberately narrower slice: see `debug.rs`'s module docs
+    /// for exactly what this does and doesn't cover).
+    Debug { run_id: String },
     /// Scaffold a new package: `ulexite.toml` + a starter conversation (§14.1).
     Init {
         name: String,
@@ -282,6 +292,7 @@ fn main() {
         } => cmd_deny(&run_id, note.as_deref(), &providers, mock, output),
         Command::Replay { run_id, output } => cmd_replay(&run_id, output),
         Command::Trace { run_id, output } => cmd_trace(&run_id, output),
+        Command::Debug { run_id } => cmd_debug(&run_id),
         Command::Init { name, dir } => cmd_init(&name, &dir),
         Command::Manifest { file } => cmd_manifest(&file),
         Command::Fmt { file, check } => cmd_fmt(&file, check),
@@ -1422,6 +1433,77 @@ fn cmd_trace(run_id: &str, output: OutputFormat) -> bool {
             false
         }
     }
+}
+
+/// `ulx debug <run_id>` (§19 — see `debug.rs`'s module docs for exactly
+/// how much of the full design this covers). Reads stdin line-by-line
+/// rather than pulling in a REPL crate: the command surface is small
+/// enough (§19.2/§19.3-inspired stepping over an already-recorded trace,
+/// not a general-purpose language shell — no `repl` subcommand exists
+/// either, see the module doc comment at the top of this file) that a
+/// dependency for it isn't warranted.
+fn cmd_debug(run_id: &str) -> bool {
+    let records = match ulx_runtime::read_trace(manifest::traces_dir(), run_id) {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("error: could not read trace for `{run_id}`: {e}");
+            return false;
+        }
+    };
+    if records.is_empty() {
+        println!("run `{run_id}` has an empty trace (nothing was ever recorded)");
+        return true;
+    }
+
+    let mut session = debug::DebugSession::new(records);
+    println!(
+        "ulx debug: {} record(s) for run `{run_id}` — type `help` for commands",
+        session.len()
+    );
+    if let Some((target, reason)) = session.suspend_info() {
+        println!(
+            "this run is SUSPENDED waiting on `{target}`: {reason}\n  resume with: ulx approve {run_id} --value <text>   (or: ulx deny {run_id})"
+        );
+    }
+
+    let stdin = std::io::stdin();
+    loop {
+        print!("(ulx-debug) ");
+        let _ = std::io::Write::flush(&mut std::io::stdout());
+        let mut line = String::new();
+        if stdin.read_line(&mut line).unwrap_or(0) == 0 {
+            break; // EOF (piped input exhausted, or Ctrl-D)
+        }
+        match debug::parse_command(&line) {
+            debug::DebugCommand::Next => match session.step_next() {
+                Some(_) => println!("{}", session.render_current_summary()),
+                None => println!("(end of trace)"),
+            },
+            debug::DebugCommand::Back => match session.step_back() {
+                Some(_) => println!("{}", session.render_current_summary()),
+                None => println!("(already at the start of the trace)"),
+            },
+            debug::DebugCommand::Continue => match session.continue_to_breakpoint() {
+                Some(_) => println!("{}", session.render_current_summary()),
+                None => println!("(end of trace)"),
+            },
+            debug::DebugCommand::SetBreakpoint(seq) => {
+                session.set_breakpoint(seq);
+                println!("breakpoint set at #{seq}");
+            }
+            debug::DebugCommand::Inspect => println!("{}", session.render_inspect()),
+            debug::DebugCommand::Stack => println!("{}", session.render_stack()),
+            debug::DebugCommand::List => println!("{}", session.render_list()),
+            debug::DebugCommand::Help => println!("{}", debug::HELP_TEXT),
+            debug::DebugCommand::Quit => break,
+            debug::DebugCommand::Unknown(cmd) => {
+                if !cmd.is_empty() {
+                    println!("unrecognized command `{cmd}` — type `help` for commands");
+                }
+            }
+        }
+    }
+    true
 }
 
 fn cmd_manifest(file: &Path) -> bool {

@@ -1,13 +1,13 @@
 ---
 title: Debugging
-description: How to inspect a run today with ulx trace/replay, and what the full breakpoint/time-travel debugging model in the spec still needs built.
+description: How to inspect a run today with ulx trace/replay/debug, and what the full time-travel/live-attach debugging model in the spec still needs built.
 ---
 
 # Debugging
 
 Because every run is checkpointed and traced by default, Ulexite's debugging story is designed around replaying a completed run's trace, not attaching to a live process. That's the right idea for a language where the interesting failures are usually a refused/rate-limited call or a judge that couldn't decide, rather than a segfault — but it's worth being direct about how much of that design is actually built.
 
-**What you get today** is real: every `ulx run` produces a full trace, and `ulx trace`/`ulx replay` let you inspect and reproduce it in detail — one line per capability call, in every output format from a plain listing to a Mermaid sequence diagram to a self-contained HTML page. **What the spec describes beyond that** — a dedicated `ulx debug` command with breakpoints, time-travel, forking a run with modified inputs, and live-attaching to an in-flight conversation — is a future direction. None of it is a real `ulx` subcommand yet. This page walks through both, clearly labeled.
+**What you get today** is real: every `ulx run` produces a full trace, `ulx trace`/`ulx replay` let you inspect and reproduce it in detail (one line per capability call, in every output format from a plain listing to a Mermaid sequence diagram to a self-contained HTML page), and `ulx debug <run_id>` lets you interactively step through that same trace — forward and backward, with breakpoints, full artifact inspection, and a call-stack view for nested conversations. **What the spec describes beyond that** — `breakpoint()` as a language keyword suspending live interpretation, forking a run with modified inputs (`ulx fork`), and live-attaching to an in-flight conversation (`ulx attach`) — is a future direction. This page walks through both, clearly labeled.
 
 ## What's real: inspecting a run via its trace
 
@@ -52,13 +52,37 @@ For a non-deterministic failure — a refused call, a rate limit, a judge that r
 
 See the [CLI Reference](./tooling/cli-reference.md) for every `--output` format and the full flag list on `run`/`trace`/`replay`.
 
+## `ulx debug <run_id>`: stepping through a trace interactively
+
+`ulx debug <run_id>` loads a completed *or* suspended run's trace and drops you into an interactive session — a real debugger's mental model (step, breakpoints, inspect, call stack) applied to that recorded trace, rather than a live process:
+
+```text
+$ ulx debug demo
+ulx debug: 2 record(s) for run `demo` — type `help` for commands
+(ulx-debug) next
+#0   [miss] Middle
+(ulx-debug) stack
+Middle (current)
+(ulx-debug) next
+#1   [miss] Leaf
+(ulx-debug) stack
+Middle > Leaf (current)
+(ulx-debug) inspect
+#1 [Leaf] kind=call cache=miss
+input:
+  x: hi
+output: hi
+timestamp_ms: 1784128850854
+(ulx-debug) quit
+```
+
+Commands: `next`/`n` and `back`/`prev`/`p` step one record at a time (in either direction — `back` just re-displays an earlier record already held in memory, since this is a read-only stepper, not live re-execution); `break <seq>`/`bp <seq>` sets a breakpoint, and `continue`/`c` runs forward to the next one (or the end); `inspect`/`i`/`show` prints the current record's full, untruncated input/output/error (unlike `ulx trace`'s one-line-per-record table); `stack`/`where`/`w` prints the call-stack chain built from `parent_run_id` (see below); `list`/`l` lists every record; `help` and `quit` do what you'd expect.
+
+If the run is suspended on a real `escalate(...)`, `ulx debug` opens with a banner naming the target and reason, plus the exact `ulx approve`/`ulx deny` command to resume it — it points you at that existing resume flow rather than reimplementing it.
+
 ## What the spec describes, not yet built
 
-Section 19 of the spec lays out a considerably richer debugging model. Here's each piece, and what (if anything) stands in for it today.
-
-### `ulx debug <run_id>` and stepping through a trace
-
-The spec describes `ulx debug <run_id>` loading a completed (or crashed, or suspended-on-`human_approval`) run and letting you step through it forward and backward, with full artifact inspection at every step — a real debugger's mental model applied to a deterministic replay. **There is no `ulx debug` command.** Today you get `ulx trace`, which prints the whole trace at once rather than letting you step through it interactively, and `ulx replay`, which re-executes a run from its trace non-interactively. Neither lets you pause mid-run or inspect a single step's local bindings.
+Section 19 of the spec lays out a considerably richer debugging model than the interactive stepper above. Here's each remaining piece, and what (if anything) stands in for it today.
 
 ### `breakpoint()` as a language construct
 
@@ -66,34 +90,39 @@ The spec describes a `breakpoint()` statement (and a conditional variant, `break
 
 ### Time-travel and re-run-from-here (`ulx fork`)
 
-Because every statement is meant to be a checkpoint, the spec describes jumping to any point in a trace and either inspecting state there or re-running from there with modified inputs, via `ulx fork`. **`ulx fork` doesn't exist.** The closest real capability is `ulx run --run-id <id>`, which lets you reuse a specific run id across separate invocations — useful for driving a suspend/resume flow deliberately, but not a way to jump to an arbitrary earlier point in an existing run and branch from it.
+Because every statement is meant to be a checkpoint, the spec describes jumping to any point in a trace and either inspecting state there or re-running from there with modified inputs, via `ulx fork`. **`ulx fork` doesn't exist.** `ulx debug`'s `back`/`next` do let you jump freely to any already-recorded point and inspect state there — the "jump to any point" half — but it's read-only: there's no way to re-run from that point with an edited input, since the stepper never re-invokes the interpreter. The closest thing to a real re-run capability is `ulx run --run-id <id>`, which lets you reuse a specific run id across separate invocations — useful for driving a suspend/resume flow deliberately, but not a way to branch a new variant off an arbitrary earlier point in an existing run.
 
 ### Root-cause navigation across nested conversations
 
-The spec describes the debugger rendering nested conversations (one conversation calling another) as a navigable call stack, keyed off a `parent_run_id` carried by each trace record. **The `parent_run_id` field is real today; the interactive debugger around it isn't.** Every `TraceRecord` carries `parent_run_id: Option<String>` — `None` at the top level, or the enclosing "call" record's own `{run_id}:{seq}` when produced while a nested conversation's body is executing (including across a `with` block's concurrently spawned branches). `ulx trace`'s default text output already renders this as an indented call stack straight from the trace log:
+The spec describes the debugger rendering nested conversations (one conversation calling another) as a navigable call stack, keyed off a `parent_run_id` carried by each trace record. **This part is real today.** Every `TraceRecord` carries `parent_run_id: Option<String>` — `None` at the top level, or the enclosing "call" record's own `{run_id}:{seq}` when produced while a nested conversation's body is executing (including across a `with` block's concurrently spawned branches). Both `ulx trace`'s default text output and `ulx debug`'s `stack` command render this as a call stack straight from the trace log:
 
 ```text
 #0   [miss] Middle
 #1   [miss]   Leaf
 ```
 
-`--output json`/`jsonl` also include `parent_run_id` on every record, so a script or external tool can reconstruct the same tree. What's still missing is the rest of §19.4's picture: there's no interactive debugger to navigate that stack with (see `ulx debug` above), and nested calls still share one flat trace file/`run_id` rather than each getting its own genuinely separate, independently-replayable run the way the full design describes.
+```text
+(ulx-debug) stack
+Middle > Leaf (current)
+```
+
+`--output json`/`jsonl` also include `parent_run_id` on every record, so a script or external tool can reconstruct the same tree. What's still missing from §19.4's full picture: nested calls still share one flat trace file/`run_id` rather than each getting its own genuinely separate, independently-replayable run.
 
 ### Live attach for in-flight conversations
 
-The spec describes `ulx attach <run_id>` connecting to a live execution engine for a long-running or suspended conversation, showing the same view as replay debugging but against actual in-flight state — useful for inspecting a production conversation waiting on a human approval before deciding how to respond. **`ulx attach` doesn't exist.** What's real for a suspended run is the asynchronous suspend/resume flow itself: `ulx run` prints a `suspended: ...` line with resume instructions, and a separate `ulx approve <run_id>`/`ulx deny <run_id>` invocation (possibly from a different terminal, possibly much later) resolves it. That's a real, working mechanism — it just isn't a live-attached debugging view.
+The spec describes `ulx attach <run_id>` connecting to a live execution engine for a long-running or suspended conversation, showing the same view as replay debugging but against actual in-flight state — useful for inspecting a production conversation waiting on a human approval before deciding how to respond. **`ulx attach` doesn't exist.** `ulx debug` reads a suspended run's trace-so-far from disk, which is a real and useful view (including a startup banner naming what it's waiting on), but it isn't attached to anything actually running — there's no long-running execution engine to attach to in the first place. What's real for a suspended run beyond that is the asynchronous suspend/resume flow itself: `ulx run` prints a `suspended: ...` line with resume instructions, and a separate `ulx approve <run_id>`/`ulx deny <run_id>` invocation (possibly from a different terminal, possibly much later) resolves it.
 
 ### Debugger hooks for tool/provider authors
 
-The spec describes tool and provider adapters registering debug-inspector callbacks exposed identically through `ulx debug`'s UI, so a third-party plugin (say, a vector-store provider) could expose its own "show me the retrieved candidates and their scores" panel without the core debugger needing to know anything about vector stores specifically. Since there's no `ulx debug` UI at all, there's nothing for a plugin to register a panel into.
+The spec describes tool and provider adapters registering debug-inspector callbacks exposed identically through `ulx debug`'s UI, so a third-party plugin (say, a vector-store provider) could expose its own "show me the retrieved candidates and their scores" panel without the core debugger needing to know anything about vector stores specifically. **There's no such extension point.** `ulx debug`'s command set (`next`/`back`/`break`/`inspect`/`stack`/`list`) is fixed in the binary; a plugin author has no way to register an additional panel or command into it today.
 
 ## What to actually reach for today
 
 Given the above, the practical debugging loop looks like this:
 
 1. Run with `--run-id` so you can find the run again: `ulx run main.ulx MyConv --arg x=1 --run-id debug-1 --mock`.
-2. If it suspends, inspect it with `ulx trace debug-1`, then resolve it with `ulx approve debug-1 --value ...` or `ulx deny debug-1`.
-3. Otherwise, pull the full trace with `ulx trace debug-1 --output jsonl` (for grepping/`jq`) or `--output html` (for a readable, shareable page).
+2. If it suspends, step through it with `ulx debug debug-1` (or `ulx trace debug-1` for the non-interactive listing), then resolve it with `ulx approve debug-1 --value ...` or `ulx deny debug-1`.
+3. Otherwise, pull the full trace with `ulx trace debug-1 --output jsonl` (for grepping/`jq`) or `--output html` (for a readable, shareable page) — or step through it interactively with `ulx debug debug-1`.
 4. Use `ulx replay debug-1` to reproduce the exact same dialogue and final value deterministically, from the cache — a cache miss there is itself a useful signal that something about the run's inputs or provider config changed since it was recorded.
 5. Use `--output mermaid` when you want a shareable diagram of the call sequence rather than a line-by-line log.
 

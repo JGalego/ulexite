@@ -169,6 +169,20 @@ run_id=$(ulx run voice_memo.ulx VoiceMemoReply --arg recording=fixtures/sample.w
 ulx trace "$run_id" --output mermaid
 ```
 
+## `ulx debug`
+
+Interactively steps through a completed or suspended run's trace (§19 — a deliberately narrower slice of the full design; see [Debugging](../debugging.md) for exactly what this does and doesn't cover).
+
+```
+ulx debug <run_id>
+```
+
+```bash
+ulx debug demo
+```
+
+Type `help` at the `(ulx-debug)` prompt for the full command list — `next`/`back` step one record at a time in either direction, `break <seq>`/`continue` set and run to a breakpoint, `inspect` prints the current record's full untruncated input/output/error, and `stack` prints the call-stack chain (built from `parent_run_id`) for nested conversations. If the run is suspended on a real `escalate(...)`, `ulx debug` opens with a banner naming the target/reason and the exact `ulx approve`/`ulx deny` command to resume it.
+
 ## `ulx init`
 
 Scaffolds a new package: a `ulexite.toml` manifest plus a starter `main.ulx` conversation, in the given directory (created if it doesn't exist).
