@@ -27,7 +27,11 @@
 //! record seq, full inspection, and a call-stack view; see `debug.rs`'s
 //! module docs for the narrower-than-spec scope — no `breakpoint()`
 //! language keyword, no `ulx fork`/re-run-with-edits, no `ulx attach` to a
-//! live process).
+//! live process), `eval calibrate` (§17.1 — runs a judge against a
+//! human-labeled dataset and reports agreement; see
+//! `ulx_runtime::calibrate`'s module docs for why the labeled-dataset row
+//! shape is narrower than §17.1's own example). `eval`'s other
+//! subcommands (`shadow`/`trend`/`sweep`) aren't implemented.
 //!
 //! Not implemented: `doc`/`repl` (§20), `ulx fork`, `ulx attach`. See
 //! `docs/spec/25-future-directions.md`.
@@ -206,6 +210,13 @@ enum Command {
     /// (§19 — a deliberately narrower slice: see `debug.rs`'s module docs
     /// for exactly what this does and doesn't cover).
     Debug { run_id: String },
+    /// Evaluation-methodology commands built on top of the same runtime
+    /// `ulx bench` uses (§17). Only `calibrate` is implemented — §17's
+    /// `shadow`/`trend`/`sweep` aren't (see `docs/spec/17-evaluation-framework.md`).
+    Eval {
+        #[command(subcommand)]
+        command: EvalCommand,
+    },
     /// Scaffold a new package: `ulexite.toml` + a starter conversation (§14.1).
     Init {
         name: String,
@@ -226,6 +237,31 @@ enum Command {
         /// in canonical form (mirrors `cargo fmt --check`/`gofmt -l`).
         #[arg(long)]
         check: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum EvalCommand {
+    /// Runs a judge against a human-labeled dataset and reports how often
+    /// its pass/fail verdict agrees with the human label (§17.1). The
+    /// dataset's row type must be `{subject: <any>, human_pass: bool}` —
+    /// see `ulx_runtime::calibrate`'s module docs for why this is a
+    /// simpler, honest scoping of §17.1's full `{subject, human_verdict:
+    /// Verdict}` example (the dataset loader can't produce a `Verdict`
+    /// value from JSONL today).
+    Calibrate {
+        file: PathBuf,
+        dataset: String,
+        judge: String,
+        /// Minimum agreement rate (0.0-1.0) for this command to succeed —
+        /// defaults to 0.8, the same default `expect ... satisfies judge
+        /// ...` uses when no `with threshold(...)` is written.
+        #[arg(long)]
+        threshold: Option<f64>,
+        #[arg(long = "provider", value_name = "NAME")]
+        providers: Vec<String>,
+        #[arg(long, conflicts_with = "providers")]
+        mock: bool,
     },
 }
 
@@ -293,6 +329,16 @@ fn main() {
         Command::Replay { run_id, output } => cmd_replay(&run_id, output),
         Command::Trace { run_id, output } => cmd_trace(&run_id, output),
         Command::Debug { run_id } => cmd_debug(&run_id),
+        Command::Eval { command } => match command {
+            EvalCommand::Calibrate {
+                file,
+                dataset,
+                judge,
+                threshold,
+                providers,
+                mock,
+            } => cmd_eval_calibrate(&file, &dataset, &judge, threshold, &providers, mock),
+        },
         Command::Init { name, dir } => cmd_init(&name, &dir),
         Command::Manifest { file } => cmd_manifest(&file),
         Command::Fmt { file, check } => cmd_fmt(&file, check),
@@ -1034,6 +1080,81 @@ fn cmd_bench(
         Ok(report) => {
             print_benchmark_report(&report, &run_id);
             report.all_passed() && !report.has_suspended()
+        }
+        Err(e) => {
+            eprintln!("error: {e}");
+            false
+        }
+    }
+}
+
+fn default_calibrate_run_id(file: &std::path::Path, judge: &str) -> String {
+    let input = format!("{}::calibrate::{judge}::{}", file.display(), run_nonce());
+    ulx_runtime::value::hash_bytes(input.as_bytes())[..16].to_string()
+}
+
+/// `ulx eval calibrate` (§17.1): no resume/manifest persistence — a
+/// calibration run doesn't suspend on `escalate` the way a benchmark row
+/// can (a judge invoked directly via `invoke_judge_with_subject` never
+/// reaches conversation-level control flow), so there's nothing to
+/// `ulx approve`/`ulx deny` here and no reason to write a `RunManifest`.
+fn cmd_eval_calibrate(
+    file: &Path,
+    dataset: &str,
+    judge: &str,
+    threshold: Option<f64>,
+    selected_providers: &[String],
+    force_mock: bool,
+) -> bool {
+    let Some(loaded) = pipeline::load(file) else {
+        return false;
+    };
+    let run_id = default_calibrate_run_id(file, judge);
+
+    let providers = match providers::resolve_providers(
+        file,
+        &loaded.provider_decls,
+        selected_providers,
+        force_mock,
+    ) {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("error: {e}");
+            return false;
+        }
+    };
+    let ctx = match build_context(&loaded.ir, providers, file, &run_id, false, None) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("error: could not set up run context: {e}");
+            return false;
+        }
+    };
+
+    let gate = threshold.unwrap_or(0.8);
+    match ulx_runtime::run_calibration(&ctx, dataset, judge, None) {
+        Ok(report) => {
+            for row in &report.rows {
+                let status = if row.agrees() { "AGREE " } else { "DISAGREE" };
+                println!(
+                    "row {}: {status} human={} judge={}",
+                    row.row_index, row.human_pass, row.judge_verdict
+                );
+            }
+            let rate = report.agreement_rate();
+            let verdict = if report.passes_threshold(gate) {
+                "PASS"
+            } else {
+                "FAIL"
+            };
+            println!(
+                "{judge} calibrated against {dataset}: {}/{} agree ({:.1}%) — {verdict} threshold {:.1}%",
+                report.rows.len() - report.disagreements().count(),
+                report.rows.len(),
+                rate * 100.0,
+                gate * 100.0
+            );
+            report.passes_threshold(gate)
         }
         Err(e) => {
             eprintln!("error: {e}");

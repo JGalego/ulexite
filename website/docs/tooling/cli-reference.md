@@ -183,6 +183,24 @@ ulx debug demo
 
 Type `help` at the `(ulx-debug)` prompt for the full command list — `next`/`back` step one record at a time in either direction, `break <seq>`/`continue` set and run to a breakpoint, `inspect` prints the current record's full untruncated input/output/error, and `stack` prints the call-stack chain (built from `parent_run_id`) for nested conversations. If the run is suspended on a real `escalate(...)`, `ulx debug` opens with a banner naming the target/reason and the exact `ulx approve`/`ulx deny` command to resume it.
 
+## `ulx eval calibrate`
+
+Runs a judge against a human-labeled dataset and reports how often its pass/fail verdict agrees with the human label (§17.1 — only `calibrate` exists under `ulx eval`; `shadow`/`trend`/`sweep` don't, see [Testing and Evaluation](../testing-and-evaluation.md)).
+
+```
+ulx eval calibrate <file> <dataset> <judge> [--threshold RATE] [--provider NAME]... [--mock]
+```
+
+```bash
+ulx eval calibrate calibrate.ulx HumanLabeled Fluency --provider anthropic
+```
+
+The dataset's row type must be `{subject: <any>, human_pass: bool}` — see [Testing and Evaluation](../testing-and-evaluation.md#judges-as-calibrated-versioned-instruments) for why this is a narrower, honest stand-in for the full design's `{subject, human_verdict: Verdict}` shape.
+
+- **`--threshold RATE`** — minimum agreement rate (`0.0`-`1.0`) for the command to succeed; defaults to `0.8`, the same default `expect ... satisfies judge ...` uses when no `with threshold(...)` is written.
+
+Prints one `AGREE`/`DISAGREE` line per row plus a summary, and exits non-zero if the agreement rate is below the threshold — a real CI gate for "has this judge drifted from its labeled ground truth."
+
 ## `ulx init`
 
 Scaffolds a new package: a `ulexite.toml` manifest plus a starter `main.ulx` conversation, in the given directory (created if it doesn't exist).

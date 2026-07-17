@@ -1088,6 +1088,109 @@ fn run_benchmark_reports_a_clear_error_for_an_unknown_name() {
     assert!(matches!(err, RuntimeError::UnknownBenchmark(name) if name == "DoesNotExist"));
 }
 
+/// A fake `judge`-only `Provider` for calibration tests: passes a subject
+/// containing "good", fails everything else — a real, deterministic
+/// stand-in for "what a judge actually decided," so `run_calibration`'s
+/// agreement computation can be checked against a known-in-advance answer.
+struct KeywordJudgeProvider;
+
+impl ulx_runtime::Provider for KeywordJudgeProvider {
+    fn id(&self) -> &str {
+        "keyword-judge"
+    }
+    fn supports(&self, capability: &str) -> bool {
+        capability == "judge"
+    }
+    fn invoke(
+        &self,
+        _capability: &str,
+        request: &ulx_runtime::provider::Invocation,
+    ) -> Result<Value, ulx_runtime::provider::ProviderError> {
+        let subject = request
+            .args
+            .get("subject")
+            .and_then(Value::as_text)
+            .unwrap_or_default();
+        if subject.contains("good") {
+            Ok(Value::Verdict(Verdict::Pass))
+        } else {
+            Ok(Value::Verdict(Verdict::Fail(
+                "no `good` keyword".to_string(),
+            )))
+        }
+    }
+}
+
+/// `run_calibration` (§17.1): the judge agrees with the human label on 2 of
+/// 4 rows (deliberately mixed so the test can't pass by accident either
+/// way) — proving both agreement *and* disagreement are detected and
+/// aggregated correctly, not just the happy path.
+#[test]
+fn run_calibration_reports_real_agreement_against_a_labeled_dataset() {
+    let tmp = tempfile::tempdir().unwrap();
+    let src = r#"
+        judge Fluency(subject: text) -> Verdict {
+          rubric: """Is this fluent?"""
+        }
+
+        dataset Labels: [{subject: text, human_pass: bool}] {
+          from "labels.jsonl"
+        }
+    "#;
+    std::fs::write(
+        tmp.path().join("labels.jsonl"),
+        "{\"subject\": \"this is good text\", \"human_pass\": true}\n\
+         {\"subject\": \"this is bad text\", \"human_pass\": true}\n\
+         {\"subject\": \"another good one\", \"human_pass\": false}\n\
+         {\"subject\": \"plain text\", \"human_pass\": false}\n",
+    )
+    .unwrap();
+    let program = setup(src, &tmp);
+
+    let mut registry = ProviderRegistry::new();
+    registry.register("keyword-judge", Box::new(KeywordJudgeProvider));
+    let cache = Cache::new(tmp.path().join("cache")).unwrap();
+    let trace = TraceWriter::create(tmp.path().join("traces"), "calibrate").unwrap();
+    let ctx = RunContext::new(
+        &program,
+        registry,
+        cache,
+        trace,
+        "calibrate".to_string(),
+        tmp.path().to_path_buf(),
+    );
+
+    let report = ulx_runtime::run_calibration(&ctx, "Labels", "Fluency", None)
+        .expect("calibration should run");
+    assert_eq!(report.rows.len(), 4);
+    assert_eq!(report.agreement_rate(), 0.5);
+    assert!(!report.passes_threshold(0.8));
+    assert!(report.passes_threshold(0.5));
+
+    let disagreements: Vec<_> = report.disagreements().collect();
+    assert_eq!(disagreements.len(), 2);
+    assert!(disagreements.iter().any(|r| r.row_index == 1));
+    assert!(disagreements.iter().any(|r| r.row_index == 2));
+}
+
+#[test]
+fn run_calibration_reports_a_clear_error_for_an_unknown_judge_or_dataset() {
+    let tmp = tempfile::tempdir().unwrap();
+    let src = r#"
+        judge Fluency(subject: text) -> Verdict { rubric: """Is this fluent?""" }
+        dataset Labels: [{subject: text, human_pass: bool}] { from "labels.jsonl" }
+    "#;
+    std::fs::write(tmp.path().join("labels.jsonl"), "").unwrap();
+    let program = setup(src, &tmp);
+    let ctx = make_ctx(&program, &tmp, "calibrate_errors");
+
+    let err = ulx_runtime::run_calibration(&ctx, "Labels", "NotAJudge", None).unwrap_err();
+    assert!(matches!(err, RuntimeError::UnknownJudgeOrValidator(name) if name == "NotAJudge"));
+
+    let err = ulx_runtime::run_calibration(&ctx, "NotADataset", "Fluency", None).unwrap_err();
+    assert!(matches!(err, RuntimeError::UnknownDataset(name) if name == "NotADataset"));
+}
+
 #[test]
 fn real_examples_run_or_fail_cleanly() {
     // Not every example is fully executable (some reference illustrative

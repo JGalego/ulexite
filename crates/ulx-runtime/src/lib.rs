@@ -14,6 +14,7 @@
 
 pub mod artifact_validate;
 pub mod cache;
+pub mod calibrate;
 mod dataset;
 mod env;
 pub mod error;
@@ -27,6 +28,7 @@ pub mod value;
 
 pub use artifact_validate::validate_artifact_arg;
 pub use cache::Cache;
+pub use calibrate::{run_calibration, CalibrationReport, CalibrationRow};
 pub use error::RuntimeError;
 pub use interp::{
     run_benchmark, run_conversation, BenchmarkReport, BenchmarkRowOutcome, BenchmarkRowResult,

@@ -640,7 +640,10 @@ pub fn run_benchmark(ctx: &RunContext, name: &str) -> Result<BenchmarkReport, Ru
 /// once per attempt by `run_benchmark`'s `Expect` step, which retries a
 /// failing verdict up to a fixed budget (§16.3's retry-until-converged)
 /// before giving up — see that call site for the resample loop itself.
-fn evaluate_expect_verdict(verdict: &Value, threshold: Option<f64>) -> (bool, Option<String>) {
+pub(crate) fn evaluate_expect_verdict(
+    verdict: &Value,
+    threshold: Option<f64>,
+) -> (bool, Option<String>) {
     match verdict {
         Value::Verdict(Verdict::Pass) => (true, None),
         Value::Verdict(Verdict::Fail(reason)) => (false, Some(reason.clone())),
@@ -1091,6 +1094,52 @@ fn eval_rubric_call(
         .cloned()
         .unwrap_or(Value::Text(String::new()));
 
+    invoke_rubric_with_subject(ctx, kind, name, decl, subject, &mut call_env)
+}
+
+/// A judge invocation given an already-evaluated subject directly, rather
+/// than unevaluated `IrArg` expressions bound against the judge's own
+/// parameter list — used by `ulx eval calibrate` (`crate::calibrate`),
+/// which drives a judge from a `dataset` row's `subject` field without a
+/// `.ulx` call expression to lower/evaluate at all. Only supports a
+/// single-parameter judge (the first declared parameter is bound to
+/// `subject`, same as `eval_rubric_call`'s own convention) — a rubric
+/// field referencing a second parameter would hit an ordinary
+/// `UndefinedName` error, which is an acceptable, honest scoping limit for
+/// a calibration harness rather than something worth a bespoke error.
+pub(crate) fn invoke_judge_with_subject(
+    ctx: &RunContext,
+    judge_name: &str,
+    subject: Value,
+) -> Result<Value, RuntimeError> {
+    let decl = ctx
+        .program
+        .judges
+        .iter()
+        .find(|j| j.name == judge_name)
+        .ok_or_else(|| RuntimeError::UnknownJudgeOrValidator(judge_name.to_string()))?;
+    let mut call_env = Env::new();
+    if let Some((pname, _)) = decl.params.first() {
+        call_env.declare(pname.clone(), subject.clone());
+    }
+    invoke_rubric_with_subject(
+        ctx,
+        RubricKind::Judge,
+        judge_name,
+        decl,
+        subject,
+        &mut call_env,
+    )
+}
+
+fn invoke_rubric_with_subject(
+    ctx: &RunContext,
+    kind: RubricKind,
+    name: &str,
+    decl: &IrRubric,
+    subject: Value,
+    call_env: &mut Env,
+) -> Result<Value, RuntimeError> {
     match kind {
         RubricKind::Judge => {
             let rubric_field = decl
@@ -1101,7 +1150,7 @@ fn eval_rubric_call(
                 .ok_or_else(|| {
                     RuntimeError::TypeError(format!("judge `{name}` has no `rubric` field"))
                 })?;
-            let rubric_text = eval_expr(ctx, rubric_field, &mut call_env)?;
+            let rubric_text = eval_expr(ctx, rubric_field, call_env)?;
 
             // Judge/validator calls have no args bag to carry a `provider:`
             // selector the way `ask` does (their args are consumed
@@ -1156,7 +1205,7 @@ fn eval_rubric_call(
         RubricKind::Validator => {
             let subject_text = subject.as_text().unwrap_or_default().to_string();
             if let Some((_, e)) = decl.fields.iter().find(|(k, _)| k == "regex") {
-                let pattern = eval_expr(ctx, e, &mut call_env)?;
+                let pattern = eval_expr(ctx, e, call_env)?;
                 let pattern = pattern.as_text().unwrap_or_default();
                 let verdict = crate::validator::run_regex(pattern, &subject_text);
                 let input = [Message {

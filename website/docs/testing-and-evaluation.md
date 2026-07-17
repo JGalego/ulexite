@@ -97,9 +97,9 @@ Because every `ask`/`judge` call is content-addressed and cached by default, and
 
 ## Judges as calibrated, versioned instruments
 
-Everything above is what you write and run today. Everything below this line — judge calibration, pairwise/comparative evaluation, and production shadow evaluation — describes the intended methodology on top of that grammar, and **none of it has a working CLI command yet**. There is no `ulx eval` subcommand at all in the current CLI (only `ulx bench`, alongside `parse`/`check`/`run`/`plan`/`approve`/`deny`/`replay`/`trace`/`init`/`manifest`/`fmt`).
+Everything above is what you write and run today. Everything below this line — judge calibration, pairwise/comparative evaluation, and production shadow evaluation — describes the intended methodology on top of that grammar. `ulx eval calibrate` is real; `shadow`/`trend`/`sweep` still aren't (only `calibrate` exists under `ulx eval`, alongside `parse`/`check`/`run`/`bench`/`plan`/`approve`/`deny`/`replay`/`trace`/`debug`/`init`/`manifest`/`fmt`).
 
-The design's premise: a `judge` shouldn't be trusted by default. It's meant to be a versioned artifact you can evaluate against human-labeled ground truth, the same idea as a meta-eval pattern, made a standard, expected step rather than an optional afterthought:
+The design's premise: a `judge` shouldn't be trusted by default. It's meant to be a versioned artifact you can evaluate against human-labeled ground truth, the same idea as a meta-eval pattern, made a standard, expected step rather than an optional afterthought. The full design's example types the labeled dataset as `{subject: text, human_verdict: Verdict}` and compares full `Verdict` values via a hand-written `benchmark`:
 
 ```ulexite
 dataset HumanLabeled: [{subject: text, human_verdict: Verdict}] {
@@ -114,7 +114,19 @@ benchmark CalibrateFluencyJudge {
 }
 ```
 
-You can write and run the `benchmark` half of this today with `ulx bench` (modulo the `metrics.agreement` call, which isn't implemented — see [Standard Library](./standard-library.md)). The part that doesn't exist is `ulx eval calibrate Fluency`, the dedicated command the design describes for surfacing "this judge failed its own calibration benchmark" as a signal before that judge gates a `retry`/`escalate` decision in production code.
+You can still write and run that `benchmark` form today with `ulx bench` (modulo the `metrics.agreement` call, which isn't implemented — see [Standard Library](./standard-library.md)). **`ulx eval calibrate` is a real, dedicated command now, with one deliberate narrowing**: the dataset loader has no notion of a dataset's declared row type at load time, so it can't parse a JSONL `"Pass"` string into a real `Value::Verdict` the way the example above assumes — there's no type-directed coercion to lean on. Rather than bolt one on just for this feature, `ulx eval calibrate` works against a simpler row shape, `{subject: <any>, human_pass: bool}` — the human's binary judgment, compared against the judge's own verdict reduced to a boolean via the same pass/fail rule `expect` uses (`Pass` → true, `Fail` → false, `Score(s)` → against a threshold, `Escalate` → false):
+
+```bash
+ulx eval calibrate calibrate.ulx HumanLabeled Fluency --mock
+```
+
+```text
+row 0: AGREE   human=true judge=Pass
+row 1: DISAGREE human=true judge=Fail("no `good` keyword")
+Fluency calibrated against HumanLabeled: 1/2 agree (50.0%) — FAIL threshold 80.0%
+```
+
+`--threshold` (default `0.8`) sets the minimum agreement rate for the command to succeed — a genuinely useful CI gate: "fail the build if this judge no longer agrees with its labeled ground truth often enough," surfacing exactly the "this judge failed its own calibration" signal the design describes, just without the dedicated `Verdict`-typed dataset the runtime can't load yet.
 
 ## Pairwise and comparative evaluation
 
@@ -122,7 +134,7 @@ You can write and run the `benchmark` half of this today with `ulx bench` (modul
 
 ## Production shadow evaluation
 
-Because every ordinary conversation run already produces a full trace, the design's evaluation engine is meant to be pointable at a sample of production traces instead of a static `dataset` — `ulx eval shadow --judge Fluency --sample 0.05 --window 24h` re-running a judge against a random sample of real production runs, using the trace log itself as the dataset. This closes the loop between "the tests I wrote" and "what actually happened in production." **This is a future direction, not a real command** — there's no `ulx eval` subcommand, and no trace-sampling machinery behind it.
+Because every ordinary conversation run already produces a full trace, the design's evaluation engine is meant to be pointable at a sample of production traces instead of a static `dataset` — `ulx eval shadow --judge Fluency --sample 0.05 --window 24h` re-running a judge against a random sample of real production runs, using the trace log itself as the dataset. This closes the loop between "the tests I wrote" and "what actually happened in production." **`ulx eval shadow` doesn't exist** — `ulx eval calibrate` (above) is real, but it's a dataset-driven calibration command, not a trace-sampling one; there's no trace-sampling machinery behind this specific idea yet.
 
 ## Regression tracking over time
 
