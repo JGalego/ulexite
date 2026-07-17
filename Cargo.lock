@@ -1317,11 +1317,11 @@ checksum = "b6f5e870be6c3b371b77fe0ee0bafb859fa4964b4404c27de1d380043c4dda20"
 
 [[package]]
 name = "ulx-ast"
-version = "0.1.1"
+version = "0.1.2"
 
 [[package]]
 name = "ulx-cli"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "ariadne",
  "clap",
@@ -1339,7 +1339,7 @@ dependencies = [
 
 [[package]]
 name = "ulx-ir"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "ulx-ast",
  "ulx-syntax",
@@ -1347,7 +1347,7 @@ dependencies = [
 
 [[package]]
 name = "ulx-lsp"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "tokio",
  "toml",
@@ -1359,7 +1359,7 @@ dependencies = [
 
 [[package]]
 name = "ulx-runtime"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "base64",
  "regex",
@@ -1376,7 +1376,7 @@ dependencies = [
 
 [[package]]
 name = "ulx-sema"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "ulx-ast",
  "ulx-syntax",
@@ -1384,7 +1384,7 @@ dependencies = [
 
 [[package]]
 name = "ulx-syntax"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "chumsky",
  "logos",
@@ -1393,7 +1393,7 @@ dependencies = [
 
 [[package]]
 name = "ulx-wasm"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "serde",
  "serde-wasm-bindgen",
