@@ -28,7 +28,8 @@ pub use artifact_validate::validate_artifact_arg;
 pub use cache::Cache;
 pub use error::RuntimeError;
 pub use interp::{
-    run_benchmark, run_conversation, BenchmarkReport, BenchmarkRowResult, CheckResult,
+    run_benchmark, run_conversation, BenchmarkReport, BenchmarkRowOutcome, BenchmarkRowResult,
+    CheckResult,
 };
 pub use provider::{
     build_provider, MockProvider, Provider, ProviderBuildError, ProviderRegistry, ProviderSpec,

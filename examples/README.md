@@ -79,9 +79,11 @@ ulx bench eval_translate.ulx TranslateQuality --provider anthropic
 calls can't be pinned per-call the way `ask` can (§12.4 — their args are
 consumed entirely into rubric parameters), so pick one `--provider` that
 supports both `chat` and `judge` rather than trying to pin them
-separately. `ulx bench` also doesn't resume a mid-benchmark escalation
-today — a row that escalates fails the whole run rather than suspending
-it (§16, narrower-than-spec scope).
+separately. A `ulx bench` row that escalates now suspends gracefully
+instead of aborting the whole run — the other rows still complete, and
+`ulx bench --run-id <id>` plus `ulx approve <id>`/`ulx deny <id>` resolves
+one suspended row at a time (call `approve`/`deny` again with the same id
+if more than one row is pending).
 
 `custom_provider.ulx` needs no export at all — it deliberately runs
 against its own inline mock-vendor provider to demonstrate the `provider {
@@ -92,10 +94,11 @@ against its own inline mock-vendor provider to demonstrate the `provider {
 Recorded with [VHS](https://github.com/charmbracelet/vhs) (tape scripts in
 [`demos/`](demos)) against real vendors — genuine output, not staged, so
 exact wording will differ if you regenerate them (`vhs demos/<name>.tape`
-from the repo root). Two are honest, not flattering: `pdf_qa.ulx` shows
-today's `pdf.extract_text` placeholder limitation, and `eval_translate.ulx`
-shows `ulx bench` failing outright on a mid-run judge escalation rather
-than suspending — both noted above and left in on purpose.
+from the repo root). `pdf_qa.ulx`'s recording predates `pdf.extract_text`
+becoming real (it was a canned placeholder when recorded); `eval_translate.ulx`'s
+predates `ulx bench` learning to suspend gracefully on a mid-run escalation
+instead of aborting the whole run. Both are noted above — the source is
+current, the GIFs haven't been re-recorded yet.
 
 <details>
 <summary><code>translate.ulx</code> — judge-checked retry with human escalation</summary>

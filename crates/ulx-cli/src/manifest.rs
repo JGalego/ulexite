@@ -12,7 +12,18 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Serialize, Deserialize)]
 pub struct RunManifest {
     pub file: PathBuf,
+    /// The conversation this run invoked — empty and unused when
+    /// `benchmark` is `Some` (a benchmark run has no single conversation
+    /// name; `ulx approve`/`ulx deny` check `benchmark` first to decide
+    /// which of `run_conversation`/`run_benchmark` to re-invoke).
     pub conversation: String,
+    /// Set instead of (never alongside) `conversation` for a `ulx bench
+    /// --run-id <id>` run — the benchmark name to re-invoke via
+    /// `run_benchmark` on `ulx approve`/`ulx deny`. `#[serde(default)]` so
+    /// a manifest written before this field existed still deserializes as
+    /// an ordinary conversation run.
+    #[serde(default)]
+    pub benchmark: Option<String>,
     pub args: BTreeMap<String, String>,
     /// The `--provider name` selection (if any) `ulx run` was invoked
     /// with — persisted so `ulx approve`/`ulx deny`/`ulx replay` default to

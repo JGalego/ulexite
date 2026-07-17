@@ -77,7 +77,7 @@ The full design describes `snapshot expr as "<key>"` as Playwright-style visual-
 
 ## Reporting and aggregation
 
-The full design calls for `ulx test` to produce a structured JSON/JUnit-compatible report, with `metrics.pass_rate`/`metrics.percentile`-style aggregation available inside a `benchmark`'s own reporting block. **There is no `ulx test` command** — the real entry point is `ulx bench`, and its report is a plain in-memory pass/fail-per-row structure with no `metrics.*` aggregation and no JUnit/JSON output format. A row that hits a mid-benchmark judge escalation fails that row outright rather than suspending the whole benchmark for human approval, which is a real behavioral gap from `expect`'s own retry-until-converged design.
+The full design calls for `ulx test` to produce a structured JSON/JUnit-compatible report, with `metrics.pass_rate`/`metrics.percentile`-style aggregation available inside a `benchmark`'s own reporting block. **There is no `ulx test` command** — the real entry point is `ulx bench`, and its report is a plain in-memory pass/fail-per-row structure with no `metrics.*` aggregation and no JUnit/JSON output format. A row that hits a real `escalate(...)` mid-run does suspend gracefully rather than failing the whole benchmark — see [`ulx bench`](./tooling/cli-reference.md#ulx-bench) — but that's a different thing from `expect`'s own retry-until-converged polling (§16.3), which still isn't implemented.
 
 Every ordinary conversation run still produces a full trace by default, and that's true of a run invoked via `ulx bench` too — so a failing row is debuggable with `ulx trace` the same way any other run is; see the [CLI Reference](./tooling/cli-reference.md).
 

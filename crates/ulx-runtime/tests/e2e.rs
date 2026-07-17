@@ -635,18 +635,94 @@ fn benchmark_runs_once_per_dataset_row_and_reports_pass_fail() {
     // The failing row's `expect` check carries a reason a report can print;
     // the `assert` check on that same row still holds independently.
     let row1_expect = report.rows[1]
-        .checks
+        .checks()
         .iter()
         .find(|c| c.kind == "expect")
         .expect("row 1 should have an expect check");
     assert!(!row1_expect.passed);
     assert!(row1_expect.message.is_some());
     let row1_assert = report.rows[1]
-        .checks
+        .checks()
         .iter()
         .find(|c| c.kind == "assert")
         .expect("row 1 should have an assert check");
     assert!(row1_assert.passed);
+}
+
+/// Regression test for the bug this whole suspend-handling rework fixes:
+/// a benchmark row that hits a real `escalate(...)` used to propagate
+/// `RuntimeError::Suspended` straight out of `run_benchmark` via `?`,
+/// abandoning every other row's results. Now the suspended row is recorded
+/// as `BenchmarkRowOutcome::Suspended` and the *other* rows still run and
+/// report normally -- proven here with row 1 (of 3) escalating.
+#[test]
+fn a_suspended_row_does_not_abandon_the_other_rows() {
+    let tmp = tempfile::tempdir().unwrap();
+    let src = r#"
+        dataset Rows: [{source: text}] { from "rows.jsonl" }
+
+        conversation MaybeEscalate(source: text) -> text {
+          if source == "escalate-me" {
+            escalate(human_approval, reason: "needs a human decision")
+          } else {
+            source
+          }
+        }
+
+        benchmark MaybeEscalateBench {
+          dataset: Rows
+          run: MaybeEscalate(source: $.source) -> result
+          assert result != ""
+        }
+    "#;
+    std::fs::write(
+        tmp.path().join("rows.jsonl"),
+        "{\"source\": \"fine\"}\n\
+         {\"source\": \"escalate-me\"}\n\
+         {\"source\": \"also fine\"}\n",
+    )
+    .unwrap();
+    let program = setup(src, &tmp);
+    let ctx = make_ctx(&program, &tmp, "run_bench_suspend");
+
+    let report = ulx_runtime::run_benchmark(&ctx, "MaybeEscalateBench")
+        .expect("run_benchmark itself must not error even with a suspended row");
+    assert_eq!(report.total(), 3, "all three rows should be reported");
+    assert!(report.rows[0].passed(), "row 0 should complete and pass");
+    assert!(
+        report.rows[1].is_suspended(),
+        "row 1 should be suspended, not aborted"
+    );
+    assert!(
+        report.rows[2].passed(),
+        "row 2 must still have run despite row 1 suspending: {:#?}",
+        report.rows[2]
+    );
+    assert!(report.has_suspended());
+    assert!(
+        !report.all_passed(),
+        "a suspended row must not count as passed"
+    );
+
+    // Resolve row 1's decision under its own cache key and re-run — the
+    // same probe-then-inject-then-rerun mechanism `ulx approve` uses for an
+    // ordinary conversation (see `ulx-cli`'s `resume_benchmark`).
+    let ulx_runtime::BenchmarkRowOutcome::Suspended { cache_key, .. } = &report.rows[1].outcome
+    else {
+        unreachable!("just asserted this row is suspended");
+    };
+    ctx.cache
+        .put(cache_key, &Value::Text("human said: proceed".to_string()))
+        .unwrap();
+
+    let ctx2 = make_ctx(&program, &tmp, "run_bench_suspend"); // same run_id, fresh context
+    let resumed = ulx_runtime::run_benchmark(&ctx2, "MaybeEscalateBench")
+        .expect("resumed run_benchmark must succeed");
+    assert!(!resumed.has_suspended(), "row 1 should be resolved now");
+    assert!(
+        resumed.all_passed(),
+        "all three rows should now pass: {resumed:#?}"
+    );
 }
 
 #[test]

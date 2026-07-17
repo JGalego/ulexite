@@ -266,20 +266,57 @@ pub struct CheckResult {
     pub message: Option<String>,
 }
 
+/// What happened when a benchmark row's body ran: either it ran to
+/// completion (with whatever `expect`/`assert`/`snapshot` checks it
+/// produced), or it hit a real `escalate(...)` suspend point partway
+/// through (a `run:` conversation that itself needs a human decision) —
+/// distinct from a *judge's own* `Escalate` verdict, which
+/// `evaluate_expect_verdict` already treats as an ordinary failed check,
+/// not a suspend.
+#[derive(Debug, Clone)]
+pub enum BenchmarkRowOutcome {
+    Completed {
+        checks: Vec<CheckResult>,
+    },
+    Suspended {
+        cache_key: String,
+        reason: String,
+        target: String,
+    },
+}
+
 /// The outcome of running a `benchmark`'s body once for one dataset row
 /// (§16.2's "N cases, N reports" ergonomic).
 #[derive(Debug, Clone)]
 pub struct BenchmarkRowResult {
     pub row_index: usize,
-    pub checks: Vec<CheckResult>,
+    pub outcome: BenchmarkRowOutcome,
 }
 
 impl BenchmarkRowResult {
-    /// A row passes iff every check it produced passed (an empty check list
-    /// — a benchmark whose body is only `run:` statements — counts as a
-    /// pass, same as an empty `all()`).
+    /// A row passes iff it completed and every check it produced passed
+    /// (an empty check list — a benchmark whose body is only `run:`
+    /// statements — counts as a pass, same as an empty `all()`). A
+    /// suspended row is neither a pass nor a fail yet — it's pending, so
+    /// this reports `false` for it the same as a genuine failure would,
+    /// since a caller checking "did everything pass" should not treat
+    /// "still waiting on a human" as success.
     pub fn passed(&self) -> bool {
-        self.checks.iter().all(|c| c.passed)
+        match &self.outcome {
+            BenchmarkRowOutcome::Completed { checks } => checks.iter().all(|c| c.passed),
+            BenchmarkRowOutcome::Suspended { .. } => false,
+        }
+    }
+
+    pub fn is_suspended(&self) -> bool {
+        matches!(self.outcome, BenchmarkRowOutcome::Suspended { .. })
+    }
+
+    pub fn checks(&self) -> &[CheckResult] {
+        match &self.outcome {
+            BenchmarkRowOutcome::Completed { checks } => checks,
+            BenchmarkRowOutcome::Suspended { .. } => &[],
+        }
     }
 }
 
@@ -302,6 +339,16 @@ impl BenchmarkReport {
     pub fn all_passed(&self) -> bool {
         self.rows.iter().all(|r| r.passed())
     }
+
+    /// Every row still waiting on a human decision, in row order — the
+    /// first one is what `ulx approve`/`ulx deny` resolves next.
+    pub fn suspended_rows(&self) -> impl Iterator<Item = &BenchmarkRowResult> {
+        self.rows.iter().filter(|r| r.is_suspended())
+    }
+
+    pub fn has_suspended(&self) -> bool {
+        self.rows.iter().any(|r| r.is_suspended())
+    }
 }
 
 /// Executes a `benchmark` declaration (§16.4): resolves its `dataset:`
@@ -313,17 +360,34 @@ impl BenchmarkReport {
 /// call, and `assert`'s boolean expression.
 ///
 /// Scope, honestly: this is a narrower executor than §16 describes in
-/// full. `expect`'s "resample/re-evaluate until the verdict converges"
-/// polling (§16.3) isn't implemented — a judge call is evaluated exactly
-/// once, same as `match judge ... {}` elsewhere in this interpreter.
-/// `snapshot` (§16.5) doesn't record/compare against a golden baseline
-/// file yet — it evaluates its expression and key (so a real effectful
-/// subexpression still runs and any error still surfaces) and always
-/// reports "recorded", since there's no `--update-snapshots` flag or
-/// baseline store wired up. There's also no `metrics.*` aggregation
-/// (§16.6) or JUnit/JSON report format — `BenchmarkReport` is a plain
-/// in-memory pass/fail-per-row structure for `ulx bench` to print.
+/// full. There's no `metrics.*` aggregation (§16.6) or JUnit/JSON report
+/// format — `BenchmarkReport` is a plain in-memory per-row structure for
+/// `ulx bench` to print.
+///
+/// A row whose body hits a real `escalate(...)` suspend point (a `run:`
+/// conversation that needs a human decision) doesn't abort the whole
+/// benchmark — it's recorded as `BenchmarkRowOutcome::Suspended` and
+/// execution continues with the *next* row, so one pending human decision
+/// doesn't erase every other row's results. `ulx bench --run-id <id>` lets
+/// `ulx approve <id>`/`ulx deny <id>` resolve the first still-suspended
+/// row and re-run (same probe-then-inject-then-rerun mechanism `ulx run`
+/// uses) — repeat once per suspended row. Any *other* error (a real
+/// provider failure, a type error) still aborts the whole run immediately,
+/// same as before; only a suspend is treated as "come back to this later"
+/// rather than "something is broken."
 pub fn run_benchmark(ctx: &RunContext, name: &str) -> Result<BenchmarkReport, RuntimeError> {
+    // Same reset `run_conversation` does at its own entry, and for the
+    // same reason (see its comment): a single process can legitimately
+    // call `run_benchmark` more than once on the same thread — the
+    // probe-then-inject-then-rerun resume mechanism `ulx bench --run-id`
+    // now supports does exactly that. Without this reset, a second call
+    // would inherit the first call's already-advanced escalate-disambiguation
+    // counters and compute a *different* cache key for the same suspend
+    // point than the first call recorded, so an injected decision would
+    // never be found — the row would suspend again instead of resolving.
+    ESCALATE_PATH.with(|p| p.borrow_mut().clear());
+    ESCALATE_LOCAL_SEQ.with(|c| c.set(0));
+
     let benchmark = ctx
         .program
         .benchmarks
@@ -363,66 +427,98 @@ pub fn run_benchmark(ctx: &RunContext, name: &str) -> Result<BenchmarkReport, Ru
         rows: Vec::with_capacity(rows.len()),
     };
 
-    for (row_index, row) in rows.into_iter().enumerate() {
+    'rows: for (row_index, row) in rows.into_iter().enumerate() {
         let mut env = Env::new();
         env.declare("$", row);
         let mut checks = Vec::new();
 
         for step in &benchmark.steps {
-            match step {
-                IrBenchmarkStep::Dataset(_) => {}
-                IrBenchmarkStep::Run { expr, bind } => {
-                    let value = eval_expr(ctx, expr, &mut env)?;
-                    env.declare(bind.clone(), value);
+            // Wrapped in an immediately-invoked closure so a `Suspended`
+            // error can be caught right here and turned into "record this
+            // row as pending, move on to the next row" — a bare `?` would
+            // propagate straight out of `run_benchmark`, abandoning every
+            // other row's results the moment one row's `run:` conversation
+            // needed a human decision.
+            let step_result: Result<(), RuntimeError> = (|| {
+                match step {
+                    IrBenchmarkStep::Dataset(_) => {}
+                    IrBenchmarkStep::Run { expr, bind } => {
+                        let value = eval_expr(ctx, expr, &mut env)?;
+                        env.declare(bind.clone(), value);
+                    }
+                    IrBenchmarkStep::Expect {
+                        expr,
+                        judge,
+                        threshold,
+                    } => {
+                        // `expr` (the subject) is evaluated for effect/error
+                        // propagation even though its value isn't otherwise
+                        // used here directly — the judge call (almost always
+                        // `judge Fluency(result)`) references the same bound
+                        // name itself, so re-evaluating `expr` mirrors what a
+                        // hand-written `match judge Fluency(result) {...}`
+                        // would do.
+                        eval_expr(ctx, expr, &mut env)?;
+                        let verdict = eval_expr(ctx, judge, &mut env)?;
+                        let (passed, message) = evaluate_expect_verdict(&verdict, *threshold);
+                        checks.push(CheckResult {
+                            kind: "expect",
+                            passed,
+                            message,
+                        });
+                    }
+                    IrBenchmarkStep::Assert(expr) => {
+                        let value = eval_expr(ctx, expr, &mut env)?;
+                        let passed = value.truthy();
+                        let message = if passed {
+                            None
+                        } else {
+                            Some(format!("assertion failed (evaluated to {value})"))
+                        };
+                        checks.push(CheckResult {
+                            kind: "assert",
+                            passed,
+                            message,
+                        });
+                    }
+                    IrBenchmarkStep::Snapshot { expr, key } => {
+                        let value = eval_expr(ctx, expr, &mut env)?;
+                        let key_value = eval_expr(ctx, key, &mut env)?;
+                        checks.push(CheckResult {
+                            kind: "snapshot",
+                            passed: true,
+                            message: Some(format!("recorded `{key_value}`: {value}")),
+                        });
+                    }
                 }
-                IrBenchmarkStep::Expect {
-                    expr,
-                    judge,
-                    threshold,
-                } => {
-                    // `expr` (the subject) is evaluated for effect/error
-                    // propagation even though its value isn't otherwise
-                    // used here directly — the judge call (almost always
-                    // `judge Fluency(result)`) references the same bound
-                    // name itself, so re-evaluating `expr` mirrors what a
-                    // hand-written `match judge Fluency(result) {...}`
-                    // would do.
-                    eval_expr(ctx, expr, &mut env)?;
-                    let verdict = eval_expr(ctx, judge, &mut env)?;
-                    let (passed, message) = evaluate_expect_verdict(&verdict, *threshold);
-                    checks.push(CheckResult {
-                        kind: "expect",
-                        passed,
-                        message,
+                Ok(())
+            })();
+
+            match step_result {
+                Ok(()) => {}
+                Err(RuntimeError::Suspended {
+                    cache_key,
+                    reason,
+                    target,
+                }) => {
+                    report.rows.push(BenchmarkRowResult {
+                        row_index,
+                        outcome: BenchmarkRowOutcome::Suspended {
+                            cache_key,
+                            reason,
+                            target,
+                        },
                     });
+                    continue 'rows;
                 }
-                IrBenchmarkStep::Assert(expr) => {
-                    let value = eval_expr(ctx, expr, &mut env)?;
-                    let passed = value.truthy();
-                    let message = if passed {
-                        None
-                    } else {
-                        Some(format!("assertion failed (evaluated to {value})"))
-                    };
-                    checks.push(CheckResult {
-                        kind: "assert",
-                        passed,
-                        message,
-                    });
-                }
-                IrBenchmarkStep::Snapshot { expr, key } => {
-                    let value = eval_expr(ctx, expr, &mut env)?;
-                    let key_value = eval_expr(ctx, key, &mut env)?;
-                    checks.push(CheckResult {
-                        kind: "snapshot",
-                        passed: true,
-                        message: Some(format!("recorded `{key_value}`: {value}")),
-                    });
-                }
+                Err(e) => return Err(e),
             }
         }
 
-        report.rows.push(BenchmarkRowResult { row_index, checks });
+        report.rows.push(BenchmarkRowResult {
+            row_index,
+            outcome: BenchmarkRowOutcome::Completed { checks },
+        });
     }
 
     Ok(report)

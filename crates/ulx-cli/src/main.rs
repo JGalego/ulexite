@@ -2,15 +2,17 @@
 //!
 //! Implemented: `parse`, `check` (§20.7's diagnostics — also exposed live
 //! through `ulx-lsp`, §20.2's language server), `run`, `bench` (§16 —
-//! dataset-parametrized `benchmark` execution; see
-//! `ulx-runtime::run_benchmark` for the narrower-than-spec scope: no
-//! `expect`-polling/retry-until-converged, no golden-file `snapshot`
-//! comparison, no `metrics.*` aggregation or JUnit/JSON report — a
-//! plain-text per-row pass/fail report), `approve`/`deny` (§10.7's
-//! human-approval resume, v0.1-style — see `ulx-runtime`'s docs for how
-//! that actually works), `replay` (§18.3), `trace` (§20.6 — no viewer
-//! webview, but `--output mermaid`/`html` render a shareable diagram/page
-//! in its place; see `output.rs`).
+//! dataset-parametrized `benchmark` execution, `--run-id`-resumable when a
+//! row suspends on a real `escalate(...)`, same mechanism as `run`; see
+//! `ulx-runtime::run_benchmark` for the narrower-than-spec scope that's
+//! still real: no `expect`-polling/retry-until-converged, no golden-file
+//! `snapshot` comparison, no `metrics.*` aggregation or JUnit/JSON report
+//! — a plain-text per-row pass/fail/suspended report), `approve`/`deny`
+//! (§10.7's human-approval resume, v0.1-style, for both a conversation and
+//! a benchmark run — see `ulx-runtime`'s docs for how that actually
+//! works), `replay` (§18.3), `trace` (§20.6 — no viewer webview, but
+//! `--output mermaid`/`html` render a shareable diagram/page in its place;
+//! see `output.rs`).
 //!
 //! Also implemented: `plan` (§10.5 — a static, execution-free capability ->
 //! provider resolution plus a rough token/cost estimate off a small
@@ -115,6 +117,13 @@ enum Command {
     Bench {
         file: PathBuf,
         benchmark: String,
+        /// Reuse a specific run id — needed to resume a row that suspends
+        /// on a human-approval `escalate(...)` (`ulx approve <id>`/`ulx
+        /// deny <id>`, same as `ulx run`'s `--run-id`). Without this, a
+        /// fresh id is generated every time, so a suspended row can still
+        /// be inspected via the printed report but not resumed by id.
+        #[arg(long)]
+        run_id: Option<String>,
         #[arg(long = "provider", value_name = "NAME")]
         providers: Vec<String>,
         #[arg(long, conflicts_with = "providers")]
@@ -230,9 +239,10 @@ fn main() {
         Command::Bench {
             file,
             benchmark,
+            run_id,
             providers,
             mock,
-        } => cmd_bench(&file, &benchmark, &providers, mock),
+        } => cmd_bench(&file, &benchmark, run_id, &providers, mock),
         Command::Plan {
             file,
             conversation,
@@ -543,6 +553,7 @@ fn cmd_run(
         &manifest::RunManifest {
             file: file.to_path_buf(),
             conversation: conversation.to_string(),
+            benchmark: None,
             args: args.clone(),
             selected_providers: selected_providers.to_vec(),
             force_mock,
@@ -887,16 +898,83 @@ fn default_bench_run_id(file: &std::path::Path, benchmark: &str) -> String {
     ulx_runtime::value::hash_bytes(input.as_bytes())[..16].to_string()
 }
 
+/// Shared by `cmd_bench` and `resume_benchmark` so a freshly-run report and
+/// a just-resumed one print identically. A suspended row prints its own
+/// resume instructions (mirroring `execute`'s `suspended: ...`/`resume
+/// with: ulx approve ...` lines for an ordinary conversation run) rather
+/// than a PASS/FAIL verdict, since it hasn't reached one yet.
+fn print_benchmark_report(report: &ulx_runtime::BenchmarkReport, run_id: &str) {
+    for row in &report.rows {
+        match &row.outcome {
+            ulx_runtime::BenchmarkRowOutcome::Suspended { reason, target, .. } => {
+                println!(
+                    "row {}: SUSPENDED — waiting on `{target}` — {reason}",
+                    row.row_index
+                );
+            }
+            ulx_runtime::BenchmarkRowOutcome::Completed { .. } => {
+                let status = if row.passed() { "PASS" } else { "FAIL" };
+                println!("row {}: {status}", row.row_index);
+                for check in row.checks() {
+                    if !check.passed {
+                        let reason = check
+                            .message
+                            .as_deref()
+                            .map(|m| format!(": {m}"))
+                            .unwrap_or_default();
+                        println!("  - {} failed{reason}", check.kind);
+                    }
+                }
+            }
+        }
+    }
+    println!(
+        "{}: {}/{} row(s) passed{}",
+        report.name,
+        report.passed_count(),
+        report.total(),
+        if report.has_suspended() {
+            format!(
+                ", {} suspended",
+                report.rows.iter().filter(|r| r.is_suspended()).count()
+            )
+        } else {
+            String::new()
+        }
+    );
+    if let Some(row) = report.suspended_rows().next() {
+        println!(
+            "resume with: ulx approve {run_id} --value <text>   (or: ulx deny {run_id})   -- resolves row {}",
+            row.row_index
+        );
+    }
+}
+
 fn cmd_bench(
     file: &Path,
     benchmark: &str,
+    run_id: Option<String>,
     selected_providers: &[String],
     force_mock: bool,
 ) -> bool {
     let Some(loaded) = pipeline::load(file) else {
         return false;
     };
-    let run_id = default_bench_run_id(file, benchmark);
+    let run_id = run_id.unwrap_or_else(|| default_bench_run_id(file, benchmark));
+
+    if let Err(e) = manifest::save(
+        &run_id,
+        &manifest::RunManifest {
+            file: file.to_path_buf(),
+            conversation: String::new(),
+            benchmark: Some(benchmark.to_string()),
+            args: BTreeMap::new(),
+            selected_providers: selected_providers.to_vec(),
+            force_mock,
+        },
+    ) {
+        eprintln!("warning: could not persist run manifest: {e}");
+    }
 
     let providers = match providers::resolve_providers(
         file,
@@ -920,27 +998,144 @@ fn cmd_bench(
 
     match ulx_runtime::run_benchmark(&ctx, benchmark) {
         Ok(report) => {
-            for row in &report.rows {
-                let status = if row.passed() { "PASS" } else { "FAIL" };
-                println!("row {}: {status}", row.row_index);
-                for check in &row.checks {
-                    if !check.passed {
-                        let reason = check
-                            .message
-                            .as_deref()
-                            .map(|m| format!(": {m}"))
-                            .unwrap_or_default();
-                        println!("  - {} failed{reason}", check.kind);
-                    }
-                }
-            }
-            println!(
-                "{}: {}/{} row(s) passed",
-                report.name,
-                report.passed_count(),
-                report.total()
-            );
-            report.all_passed()
+            print_benchmark_report(&report, &run_id);
+            report.all_passed() && !report.has_suspended()
+        }
+        Err(e) => {
+            eprintln!("error: {e}");
+            false
+        }
+    }
+}
+
+/// Entry point for `cmd_approve`/`cmd_deny`: loads the manifest once to
+/// tell a benchmark run (`manifest.benchmark: Some(_)`, from `ulx bench
+/// --run-id`) apart from an ordinary conversation run, and dispatches to
+/// the matching resume path. `output` only applies to the conversation
+/// path — a benchmark's report has its own fixed text format regardless of
+/// `--output`, the same way `cmd_bench` doesn't take an `--output` flag
+/// today.
+fn resume_dispatch(
+    run_id: &str,
+    decision: Value,
+    selected_providers: &[String],
+    force_mock: bool,
+    output: OutputFormat,
+) -> bool {
+    let manifest = match manifest::load(run_id) {
+        Ok(m) => m,
+        Err(e) => {
+            eprintln!("error: no run manifest for `{run_id}`: {e}");
+            return false;
+        }
+    };
+    if manifest.benchmark.is_some() {
+        resume_benchmark(run_id, &manifest, decision, selected_providers, force_mock)
+    } else {
+        resume(run_id, decision, selected_providers, force_mock, output)
+    }
+}
+
+/// `ulx bench --run-id`'s resume path: the same probe-then-inject-then-
+/// rerun mechanism `resume` uses for a conversation (see its doc comment
+/// for exactly why two separate `RunContext`s are needed), but targeting
+/// `run_benchmark` and resolving the *first* still-suspended row's cache
+/// key rather than a single conversation-wide one — a benchmark can have
+/// more than one row pending, so this only ever resolves one per call;
+/// call `ulx approve`/`ulx deny` again with the same `run_id` for the next.
+fn resume_benchmark(
+    run_id: &str,
+    manifest: &manifest::RunManifest,
+    decision: Value,
+    selected_providers: &[String],
+    force_mock: bool,
+) -> bool {
+    let benchmark = manifest
+        .benchmark
+        .as_deref()
+        .expect("resume_benchmark only called when manifest.benchmark is Some");
+    let Some(loaded) = pipeline::load(&manifest.file) else {
+        return false;
+    };
+
+    let (selected_providers, force_mock): (&[String], bool) =
+        if selected_providers.is_empty() && !force_mock {
+            (manifest.selected_providers.as_slice(), manifest.force_mock)
+        } else {
+            (selected_providers, force_mock)
+        };
+
+    let probe_providers = match providers::resolve_providers(
+        &manifest.file,
+        &loaded.provider_decls,
+        selected_providers,
+        force_mock,
+    ) {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("error: {e}");
+            return false;
+        }
+    };
+    let probe_ctx = match build_context(
+        &loaded.ir,
+        probe_providers,
+        &manifest.file,
+        run_id,
+        false,
+        None,
+    ) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("error: could not set up run context: {e}");
+            return false;
+        }
+    };
+    let probe_report = match ulx_runtime::run_benchmark(&probe_ctx, benchmark) {
+        Ok(report) => report,
+        Err(e) => {
+            eprintln!("error: {e}");
+            return false;
+        }
+    };
+    let Some(row) = probe_report.suspended_rows().next() else {
+        eprintln!(
+            "benchmark run `{run_id}` has no suspended row to resolve \
+             (it already completed, or every pending row was already resolved)"
+        );
+        return false;
+    };
+    let ulx_runtime::BenchmarkRowOutcome::Suspended { cache_key, .. } = &row.outcome else {
+        unreachable!("suspended_rows() only yields Suspended rows");
+    };
+    if let Err(e) = probe_ctx.cache.put(cache_key, &decision) {
+        eprintln!("error: could not record decision: {e}");
+        return false;
+    }
+
+    let providers = match providers::resolve_providers(
+        &manifest.file,
+        &loaded.provider_decls,
+        selected_providers,
+        force_mock,
+    ) {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("error: {e}");
+            return false;
+        }
+    };
+    let ctx = match build_context(&loaded.ir, providers, &manifest.file, run_id, false, None) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("error: could not set up run context: {e}");
+            return false;
+        }
+    };
+    match ulx_runtime::run_benchmark(&ctx, benchmark) {
+        Ok(report) => {
+            print_benchmark_report(&report, run_id);
+            report.all_passed() && !report.has_suspended()
         }
         Err(e) => {
             eprintln!("error: {e}");
@@ -1074,7 +1269,7 @@ fn cmd_approve(
     force_mock: bool,
     output: OutputFormat,
 ) -> bool {
-    resume(
+    resume_dispatch(
         run_id,
         Value::Text(value.to_string()),
         selected_providers,
@@ -1101,7 +1296,7 @@ fn cmd_deny(
         println!("note: v0.1 does not distinguish deny-and-abort from deny-with-value at the type level (§24) —");
         println!("      the denial is recorded as the escalate's resolved value, same as an approval would be.");
     }
-    resume(
+    resume_dispatch(
         run_id,
         Value::Verdict(ulx_runtime::value::Verdict::Fail(reason)),
         selected_providers,

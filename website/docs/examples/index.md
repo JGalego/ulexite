@@ -9,7 +9,7 @@ Every program below ships in [`examples/`](https://github.com/JGalego/ulexite/tr
 
 Several examples declare their own `provider { ... }` blocks directly in source and pin capabilities to specific vendors — no `ulexite.toml` needed for those, just the env var(s) named in each section. The rest resolve providers from `ulexite.toml`; if more than one configured vendor serves the same capability, pass `--provider <name>` to disambiguate.
 
-The demos below were recorded with [VHS](https://github.com/charmbracelet/vhs) against real vendors — genuine output, not staged. `eval_translate.ulx`'s is left deliberately unflattering — it shows `ulx bench` failing outright on a mid-run judge escalation rather than suspending gracefully, called out below rather than smoothed over. `pdf_qa.ulx`'s recording predates `pdf.extract_text` becoming real (it was a canned placeholder when recorded) — the source below is the current, real version; the GIF hasn't been re-recorded yet.
+The demos below were recorded with [VHS](https://github.com/charmbracelet/vhs) against real vendors — genuine output, not staged. Two recordings now predate a real fix and haven't been re-recorded yet: `pdf_qa.ulx`'s predates `pdf.extract_text` becoming real (it was a canned placeholder when recorded), and `eval_translate.ulx`'s predates `ulx bench` learning to suspend gracefully on a mid-run escalation instead of aborting the whole run. The source below is current for both; only the GIFs are stale.
 
 ## `translate.ulx` — judge-checked retry with human escalation
 
@@ -212,7 +212,7 @@ ulx run batch.ulx TriageBacklog --provider anthropic
 
 ## `eval_translate.ulx` — benchmark with dataset, judge, and snapshot
 
-Reuses `translate.ulx`'s `Translate` conversation and `Fluency` judge (imported, not copy-pasted) against a golden dataset, with a judge threshold and a snapshot assertion. **Honest caveat**: `ulx bench` doesn't resume a mid-benchmark escalation today — a row that escalates fails the whole run rather than suspending it, and the demo shows exactly that rather than a cleaner path.
+Reuses `translate.ulx`'s `Translate` conversation and `Fluency` judge (imported, not copy-pasted) against a golden dataset, with a judge threshold and a snapshot assertion. A row whose `Translate` call escalates (the judge couldn't decide) now suspends that row gracefully instead of aborting the whole benchmark — the other rows still complete, and `ulx bench --run-id <id>` plus `ulx approve <id>`/`ulx deny <id>` resolves it.
 
 ```ulexite
 import conversation Translate from "translate.ulx"

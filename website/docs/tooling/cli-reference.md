@@ -70,14 +70,18 @@ ulx run rag.ulx Caption --arg photo=fixtures/sample.jpg --output mermaid
 Runs a `benchmark` declaration to completion: loads its `dataset:`, runs the benchmark body once per row, and prints a plain-text pass/fail report. Like `ulx run`, it errors if no provider is configured — pass `--mock` to use the offline mock instead.
 
 ```
-ulx bench <file> <benchmark> [--provider NAME]... [--mock]
+ulx bench <file> <benchmark> [--run-id ID] [--provider NAME]... [--mock]
 ```
 
 ```bash
 ulx bench eval_translate.ulx TranslateQuality --provider anthropic
 ```
 
-Note the scope is narrower than the full spec's `benchmark` design: there's no `expect`-polling/retry-until-converged, no golden-file `snapshot` comparison, and no `metrics.*` aggregation or JUnit/JSON report — just a plain-text per-row result. A row that hits a mid-benchmark judge escalation fails that row outright rather than suspending the whole benchmark for human approval.
+- **`--run-id ID`** — reuses a specific run id, the same way `ulx run --run-id` does. Needed to resume a row that suspends on a human-approval `escalate(...)` — without it, the report still shows which rows are pending, but there's no stable id for `ulx approve`/`ulx deny` to resume by.
+
+A row that hits a real `escalate(...)` (not a judge's own `Escalate` verdict, which is just an ordinary failed `expect` check) suspends gracefully rather than aborting the whole benchmark — the other rows still run and report normally. `ulx approve <run-id> --value ...`/`ulx deny <run-id>` resolves the first still-suspended row and re-runs; call it again with the same id if more than one row is pending.
+
+Note the scope is still narrower than the full spec's `benchmark` design in other ways: there's no `expect`-polling/retry-until-converged, no golden-file `snapshot` comparison, and no `metrics.*` aggregation or JUnit/JSON report — just a plain-text per-row result.
 
 ## `ulx plan`
 
