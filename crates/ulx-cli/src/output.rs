@@ -20,6 +20,7 @@
 
 use serde_json::{json, Value as Json};
 
+use ulx_runtime::provider::Message;
 use ulx_runtime::value::{DraftOutcome, Verdict};
 use ulx_runtime::{TraceRecord, Value};
 
@@ -292,7 +293,18 @@ pub struct DialogueTurn {
 /// `render_record_live` can render a single just-completed record without
 /// needing (or being able to apply) `dedup_for_diagram`'s cross-record
 /// collapsing.
-fn turns_for_record(r: &TraceRecord) -> Vec<DialogueTurn> {
+///
+/// `include_sent` controls whether a `chat`/`vision` record's `system`/
+/// `user` input turns are included alongside the `assistant` reply:
+/// `true` for the batch path (`dialogue_turns`, reading a whole trace back
+/// after the fact — there's no "already printed" state to avoid
+/// duplicating), `false` for the live path (`render_record_live` — by the
+/// time this record exists, `render_sent` has already printed those input
+/// turns the moment the call was *made*, well before this record's
+/// `assistant` turn becomes available when the call *completes*; printing
+/// them again here would duplicate them a beat after the real delay,
+/// undoing the whole point of streaming them early).
+fn turns_for_record_impl(r: &TraceRecord, include_sent: bool) -> Vec<DialogueTurn> {
     let status = status_of(r);
     let mut turns = Vec::new();
     match r.kind.as_str() {
@@ -312,12 +324,14 @@ fn turns_for_record(r: &TraceRecord) -> Vec<DialogueTurn> {
         }
         "effect" => match r.capability.as_deref() {
             Some("chat") | Some("vision") => {
-                for m in &r.input {
-                    turns.push(DialogueTurn {
-                        role: m.role.clone(),
-                        text: m.text.clone(),
-                        status: "sent",
-                    });
+                if include_sent {
+                    for m in &r.input {
+                        turns.push(DialogueTurn {
+                            role: m.role.clone(),
+                            text: m.text.clone(),
+                            status: "sent",
+                        });
+                    }
                 }
                 turns.push(DialogueTurn {
                     role: "assistant".to_string(),
@@ -368,6 +382,21 @@ fn turns_for_record(r: &TraceRecord) -> Vec<DialogueTurn> {
         _ => {}
     }
     turns
+}
+
+/// Batch form — every turn a completed record expands to, `system`/`user`
+/// included. Used by `dialogue_turns` (`ulx trace`/replay/`--output
+/// json`/`jsonl`/`mermaid`/`html`, all reading a whole trace back after
+/// the fact, with no live-streaming distinction to make).
+fn turns_for_record(r: &TraceRecord) -> Vec<DialogueTurn> {
+    turns_for_record_impl(r, true)
+}
+
+/// Live form — a `chat`/`vision` record's `system`/`user` turns are
+/// omitted, since `render_sent` already printed them when the call was
+/// made, not when it completed. Used by `render_record_live`.
+fn final_turns_for_record(r: &TraceRecord) -> Vec<DialogueTurn> {
+    turns_for_record_impl(r, false)
 }
 
 /// Turns a run's trace back into the dialogue it actually was — the
@@ -467,10 +496,50 @@ pub fn render_dialogue_plain(records: &[TraceRecord]) -> String {
 /// up when re-reading a trace *file* that spans more than one `ulx`
 /// invocation (`ulx approve` resuming a suspended `ulx run`), which is
 /// exactly the batch/after-the-fact case this function isn't used for.
-/// Empty string for a record that maps to no turn (nothing to print).
+/// Empty string for a record that maps to no turn (nothing to print). Uses
+/// `final_turns_for_record`, not `turns_for_record` — a `chat`/`vision`
+/// record's `system`/`user` turns are deliberately excluded here since
+/// `render_sent` already printed them before this record existed at all
+/// (see `main.rs`'s `dialogue_printers`, which wires both).
 pub fn render_record_live(r: &TraceRecord, plain: bool, color: bool) -> String {
     let sep = if plain { "\n" } else { "\n\n" };
-    turns_for_record(r)
+    final_turns_for_record(r)
+        .iter()
+        .map(|t| {
+            if plain {
+                format_turn_plain(t)
+            } else {
+                format_turn_text(t, color)
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(sep)
+}
+
+/// Renders the input side of a `chat`/`vision` call that's about to be
+/// made — its `system`/`user` messages — for `main.rs`'s live printer to
+/// show the instant the call is sent, rather than waiting for the whole
+/// (potentially seconds-long) real network round trip to finish before
+/// anything appears. Every other capability (`judge`, `escalate`, ...)
+/// already streams as a single atomic turn the moment its one call
+/// completes via `render_record_live` — there's no earlier "sent" moment
+/// worth splitting out for those the way there is for a multi-message
+/// chat/vision exchange, so this renders nothing for them. Empty string
+/// when there's nothing to print (same convention as `render_record_live`).
+pub fn render_sent(capability: &str, input: &[Message], plain: bool, color: bool) -> String {
+    let turns: Vec<DialogueTurn> = match capability {
+        "chat" | "vision" => input
+            .iter()
+            .map(|m| DialogueTurn {
+                role: m.role.clone(),
+                text: m.text.clone(),
+                status: "sent",
+            })
+            .collect(),
+        _ => Vec::new(),
+    };
+    let sep = if plain { "\n" } else { "\n\n" };
+    turns
         .iter()
         .map(|t| {
             if plain {
@@ -1031,7 +1100,7 @@ mod tests {
     }
 
     #[test]
-    fn render_record_live_matches_the_batch_render_for_a_single_record() {
+    fn render_record_live_omits_sent_turns_that_render_sent_already_printed() {
         let mut r = record(0, "chat", false, Some(Value::Text("Bonjour".into())), None);
         r.input = vec![
             ulx_runtime::provider::Message {
@@ -1043,22 +1112,46 @@ mod tests {
                 text: "Translate: hello".to_string(),
             },
         ];
-        // Plain: a lone record has nothing for `dedup_for_diagram` to
-        // collapse, so the live (per-record) and batch (whole-trace)
-        // renders must agree exactly.
+        // Live (per-record) and batch (whole-trace) renders deliberately
+        // *disagree* for a chat/vision record: batch has nothing earlier
+        // to have already streamed the input turns, so it includes them;
+        // live relies on `render_sent` having printed them already (see
+        // `main.rs`'s `dialogue_printers`, which calls both), so
+        // `render_record_live` only carries the assistant reply.
+        assert_eq!(render_record_live(&r, true, false), "assistant: Bonjour");
         assert_eq!(
-            render_record_live(&r, true, false),
-            render_dialogue_plain(std::slice::from_ref(&r))
+            render_dialogue_plain(std::slice::from_ref(&r)),
+            "system: You are a translator.\nuser: Translate: hello\nassistant: Bonjour"
         );
-        // Text: same parity, with color off (color output is exercised by
+
+        // Text: same split, with color off (color output is exercised by
         // `format_turn_text` through this same call).
         let live = render_record_live(&r, false, false);
-        assert!(live.contains("🧭 system: You are a translator."));
-        assert!(live.contains("🧑 user: Translate: hello"));
+        assert!(!live.contains("system: You are a translator."));
+        assert!(!live.contains("user: Translate: hello"));
         assert!(live.contains("🤖 assistant: Bonjour"));
-        // Text mode separates the record's own turns with a blank line —
-        // system/user/assistant, so two separators.
-        assert_eq!(live.matches("\n\n").count(), 2);
+
+        // `render_sent` carries exactly the two turns `render_record_live`
+        // now omits — together they reconstruct the same information the
+        // single pre-split live render used to carry in one call.
+        let sent = render_sent("chat", &r.input, false, false);
+        assert!(sent.contains("🧭 system: You are a translator."));
+        assert!(sent.contains("🧑 user: Translate: hello"));
+        assert_eq!(sent.matches("\n\n").count(), 1);
+    }
+
+    #[test]
+    fn render_sent_is_empty_for_a_non_chat_vision_capability() {
+        // A `judge`/`escalate`/other call already streams as one atomic
+        // turn via `render_record_live` the moment it completes — there's
+        // no earlier "sent" moment worth splitting out for those, unlike a
+        // multi-message chat/vision exchange.
+        let input = vec![ulx_runtime::provider::Message {
+            role: "subject".to_string(),
+            text: "some text".to_string(),
+        }];
+        assert_eq!(render_sent("judge", &input, false, false), "");
+        assert_eq!(render_sent("escalate", &input, true, false), "");
     }
 
     #[test]

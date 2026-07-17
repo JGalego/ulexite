@@ -75,12 +75,22 @@ fn validate_run_id(run_id: &str) -> std::io::Result<()> {
 /// from any of them.
 pub type RecordCallback = Box<dyn Fn(&TraceRecord) + Send + Sync>;
 
+/// Fires right before a capability call actually blocks on the real
+/// provider (`interp.rs`'s `invoke_cached`, before either the cache check
+/// or the call itself) — lets a caller print a `chat`/`vision` call's
+/// `system`/`user` messages the moment they're sent, rather than only once
+/// the whole call (including the real network latency the messages
+/// themselves have nothing to do with) has completed and `RecordCallback`
+/// fires. Same cross-thread-safety requirement as `RecordCallback`.
+pub type SendCallback = Box<dyn Fn(&str, &[Message]) + Send + Sync>;
+
 pub struct TraceWriter {
     run_id: String,
     path: PathBuf,
     file: Mutex<std::fs::File>,
     seq: Mutex<u64>,
     on_record: Option<RecordCallback>,
+    on_send: Option<SendCallback>,
 }
 
 impl TraceWriter {
@@ -98,6 +108,7 @@ impl TraceWriter {
             file: Mutex::new(file),
             seq: Mutex::new(0),
             on_record: None,
+            on_send: None,
         })
     }
 
@@ -109,6 +120,24 @@ impl TraceWriter {
     pub fn with_on_record(mut self, cb: RecordCallback) -> Self {
         self.on_record = Some(cb);
         self
+    }
+
+    /// Attaches a live pre-call callback (see `SendCallback`) — same
+    /// builder style and same opt-in reasoning as `with_on_record`.
+    pub fn with_on_send(mut self, cb: SendCallback) -> Self {
+        self.on_send = Some(cb);
+        self
+    }
+
+    /// Notifies the `on_send` callback, if any, that `capability` is about
+    /// to be invoked with `input` — called by `interp.rs`'s `invoke_cached`
+    /// before it knows yet whether this will be a cache hit or a real,
+    /// slow provider call. Not itself a trace record (nothing is persisted
+    /// here); purely a live notification.
+    pub fn notify_send(&self, capability: &str, input: &[Message]) {
+        if let Some(cb) = &self.on_send {
+            cb(capability, input);
+        }
     }
 
     pub fn path(&self) -> &Path {

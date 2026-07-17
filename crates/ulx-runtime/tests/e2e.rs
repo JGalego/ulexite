@@ -644,3 +644,113 @@ fn real_examples_run_or_fail_cleanly() {
         let _ = ulx_runtime::run_conversation(&ctx, &conv.name, args);
     }
 }
+
+/// Answers every `chat` call after an artificial delay — long enough to be
+/// unmistakable against timer jitter, short enough not to slow the test
+/// suite down noticeably.
+struct SlowProvider {
+    delay: std::time::Duration,
+}
+
+impl ulx_runtime::Provider for SlowProvider {
+    fn id(&self) -> &str {
+        "slow"
+    }
+    fn supports(&self, capability: &str) -> bool {
+        capability == "chat"
+    }
+    fn invoke(
+        &self,
+        _capability: &str,
+        _request: &ulx_runtime::provider::Invocation,
+    ) -> Result<Value, ulx_runtime::provider::ProviderError> {
+        std::thread::sleep(self.delay);
+        Ok(Value::Text("slow response".to_string()))
+    }
+}
+
+/// Real, wall-clock proof for the bug this pair of callbacks fixes (a
+/// `chat`/`vision` call's `system`/`user`/`assistant` dialogue turns used
+/// to all print together the instant the whole call completed, since only
+/// one `on_record`-style callback existed and it fired once, after the
+/// blocking provider call returned). `on_send` must fire near-instantly
+/// (proving it doesn't wait on the call), and `on_record` must only fire
+/// after the artificial delay has genuinely elapsed (proving the split
+/// didn't just make everything instant) — a rendering-level unit test
+/// (`ulx-cli`'s `output.rs` tests) can't demonstrate this, since nothing
+/// there ever actually blocks.
+#[test]
+fn on_send_fires_before_the_blocking_call_completes_on_record_fires_after() {
+    let tmp = tempfile::tempdir().unwrap();
+    let src = r#"
+        conversation Greet(name: text) -> text {
+          ask chat(provider: "slow") {
+            system: """You are a greeter."""
+            user: """Greet {name}."""
+          } -> reply: text
+          reply
+        }
+    "#;
+    let program = setup(src, &tmp);
+
+    let delay = std::time::Duration::from_millis(150);
+    let cache = Cache::new(tmp.path().join("cache")).unwrap();
+    let mut trace = TraceWriter::create(tmp.path().join("traces"), "run_slow").unwrap();
+
+    let events: std::sync::Arc<std::sync::Mutex<Vec<(&'static str, std::time::Instant)>>> =
+        std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+
+    let send_events = events.clone();
+    trace = trace.with_on_send(Box::new(move |_capability, _input| {
+        send_events
+            .lock()
+            .unwrap()
+            .push(("send", std::time::Instant::now()));
+    }));
+    let record_events = events.clone();
+    trace = trace.with_on_record(Box::new(move |_record| {
+        record_events
+            .lock()
+            .unwrap()
+            .push(("record", std::time::Instant::now()));
+    }));
+
+    let mut registry = ProviderRegistry::with_mock();
+    registry.register("slow", Box::new(SlowProvider { delay }));
+    let ctx = RunContext::new(
+        &program,
+        registry,
+        cache,
+        trace,
+        "run_slow".to_string(),
+        tmp.path().to_path_buf(),
+    );
+
+    let mut args = BTreeMap::new();
+    args.insert("name".to_string(), Value::Text("Ada".to_string()));
+    let before = std::time::Instant::now();
+    let result = ulx_runtime::run_conversation(&ctx, "Greet", args).expect("should succeed");
+    assert!(matches!(result, Value::Text(_)));
+
+    let events = events.lock().unwrap();
+    assert_eq!(
+        events.len(),
+        2,
+        "expected exactly one send and one record event: {events:?}"
+    );
+    assert_eq!(events[0].0, "send", "send must fire before record");
+    assert_eq!(events[1].0, "record");
+
+    let send_elapsed = events[0].1.duration_since(before);
+    assert!(
+        send_elapsed < delay / 2,
+        "on_send should fire almost immediately, not wait on the provider call: {send_elapsed:?}"
+    );
+
+    let record_elapsed = events[1].1.duration_since(events[0].1);
+    assert!(
+        record_elapsed >= delay,
+        "on_record should only fire once the provider call has actually \
+         returned, at least `delay` after on_send fired: {record_elapsed:?}"
+    );
+}

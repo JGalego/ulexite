@@ -1149,6 +1149,7 @@ fn invoke_cached(
     model: Option<&str>,
     call: impl FnOnce() -> Result<Value, RuntimeError>,
 ) -> Result<Value, RuntimeError> {
+    ctx.trace.notify_send(capability, input);
     if !ctx.no_cache {
         if let Some(v) = ctx.cache.get(key) {
             ctx.trace.record(

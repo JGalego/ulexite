@@ -36,8 +36,8 @@ use std::path::{Path, PathBuf};
 use clap::{Parser, Subcommand};
 use output::{OutputFormat, RunOutcome};
 use ulx_runtime::{
-    Cache, ProviderRegistry, RecordCallback, RunContext, RuntimeError, TraceRecord, TraceWriter,
-    Value,
+    Cache, ProviderRegistry, RecordCallback, RunContext, RuntimeError, SendCallback, TraceRecord,
+    TraceWriter, Value,
 };
 
 #[derive(Parser)]
@@ -436,8 +436,8 @@ fn default_run_id(
 /// CLI's `--provider`/`--mock` flags and the loaded `provider_decls`) is the
 /// caller's job, so `cmd_replay` can special-case its own fallback path.
 ///
-/// `on_record`, when given, streams the run's dialogue live (see
-/// `dialogue_printer`) — `None` for callers that must not print anything
+/// `printers`, when given, stream the run's dialogue live (see
+/// `dialogue_printers`) — `None` for callers that must not print anything
 /// (`cmd_bench`'s own PASS/FAIL report, `resume`'s discovery-only probe
 /// context) or that render some other way (`--output json`/`jsonl`/
 /// `mermaid`/`html`, which only ever read the whole trace back after the
@@ -448,12 +448,12 @@ fn build_context<'a>(
     file: &std::path::Path,
     run_id: &str,
     no_cache: bool,
-    on_record: Option<RecordCallback>,
+    printers: Option<(SendCallback, RecordCallback)>,
 ) -> std::io::Result<RunContext<'a>> {
     let cache = Cache::new(manifest::cache_dir())?;
     let mut trace = TraceWriter::create(manifest::traces_dir(), run_id)?;
-    if let Some(cb) = on_record {
-        trace = trace.with_on_record(cb);
+    if let Some((on_send, on_record)) = printers {
+        trace = trace.with_on_send(on_send).with_on_record(on_record);
     }
     let ctx = RunContext::new(
         ir,
@@ -466,27 +466,30 @@ fn build_context<'a>(
     Ok(if no_cache { ctx.without_cache() } else { ctx })
 }
 
-/// Builds `build_context`'s `on_record` for `--output text`/`plain` —
-/// prints each `DialogueTurn` a trace record expands to (`output::
-/// render_record_live`) the moment that record is written, i.e. as each
-/// `ask`/`judge`/`escalate` call actually completes, rather than `execute`
-/// only being able to render the transcript after `run_conversation`
-/// returns in full. `None` for every other format, which reads the trace
-/// back whole instead. `Text`'s blank line between turns is reproduced by
-/// printing each record's block with a trailing blank line; `Plain` prints
-/// with no spacing at all, matching `render_dialogue_plain`'s fully-joined
-/// form (`execute` adds back the one separator blank line `Plain` needs
-/// before the final value/status, since none of the per-record prints put
-/// one there).
-fn dialogue_printer(output: OutputFormat) -> Option<RecordCallback> {
+/// Builds `build_context`'s live-streaming pair for `--output text`/
+/// `plain`: `on_send` prints a `chat`/`vision` call's `system`/`user`
+/// messages (`output::render_sent`) the instant the call is made, and
+/// `on_record` prints each record's remaining turn(s) (`output::
+/// render_record_live`) the instant it completes — together, a run's
+/// dialogue streams turn by turn as it actually happens, rather than
+/// `execute` only being able to render the transcript after
+/// `run_conversation` returns in full, and rather than a `chat`/`vision`
+/// call's `system`/`user`/`assistant` turns all landing at once the moment
+/// the (potentially seconds-long) call finishes. `None` for every other
+/// format, which reads the trace back whole instead. `Text`'s blank line
+/// between turns is reproduced by printing each block with a trailing
+/// blank line; `Plain` prints with no spacing at all, matching
+/// `render_dialogue_plain`'s fully-joined form (`execute` adds back the
+/// one separator blank line `Plain` needs before the final value/status,
+/// since none of the per-record prints put one there).
+fn dialogue_printers(output: OutputFormat) -> Option<(SendCallback, RecordCallback)> {
     let plain = match output {
         OutputFormat::Text => false,
         OutputFormat::Plain => true,
         _ => return None,
     };
     let color = !plain && use_color();
-    Some(Box::new(move |r: &TraceRecord| {
-        let s = output::render_record_live(r, plain, color);
+    let print = move |s: String| {
         if s.is_empty() {
             return;
         }
@@ -495,7 +498,16 @@ fn dialogue_printer(output: OutputFormat) -> Option<RecordCallback> {
         } else {
             println!("{s}\n");
         }
-    }))
+    };
+    let on_send: SendCallback = Box::new(
+        move |capability: &str, input: &[ulx_runtime::provider::Message]| {
+            print(output::render_sent(capability, input, plain, color));
+        },
+    );
+    let on_record: RecordCallback = Box::new(move |r: &TraceRecord| {
+        print(output::render_record_live(r, plain, color));
+    });
+    Some((on_send, on_record))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -573,7 +585,7 @@ fn cmd_run(
         file,
         &run_id,
         no_cache,
-        dialogue_printer(output),
+        dialogue_printers(output),
     ) {
         Ok(c) => c,
         Err(e) => {
@@ -627,7 +639,7 @@ fn run_interactive(
             file,
             run_id,
             no_cache,
-            dialogue_printer(OutputFormat::Plain),
+            dialogue_printers(OutputFormat::Plain),
         ) {
             Ok(c) => c,
             Err(e) => {
@@ -781,13 +793,15 @@ fn cmd_plan(
 /// conversation, not a bare final value) followed by the same final-value/
 /// suspended/error lines `ulx` printed before `--output`/the dialogue
 /// transcript existed. The transcript itself is streamed live, turn by
-/// turn, as each capability call actually completes — via `on_record`
-/// (`dialogue_printer`), attached to the `RunContext`'s `TraceWriter`
+/// turn — a `chat`/`vision` call's `system`/`user` messages print the
+/// instant the call is *made* (`on_send`), and every call's remaining
+/// turn(s) print the instant it *completes* (`on_record`) — via
+/// `dialogue_printers`, attached to the `RunContext`'s `TraceWriter`
 /// before this function is ever called — rather than read back and
 /// printed in one block after `run_conversation` returns; `execute` only
 /// re-reads the trace file afterward for the metadata footer, which needs
 /// the whole run to compute (every capability/provider it touched).
-/// `Plain` differs from `Text` only in what `dialogue_printer` streamed
+/// `Plain` differs from `Text` only in what `dialogue_printers` streamed
 /// (no emoji, no color, no blank-line spacing) — see its doc comment for
 /// why only `Plain` needs one blank line added back here. Every other
 /// format is rendered by `output.rs`: `Json` embeds the same dialogue as a
@@ -1042,7 +1056,7 @@ fn resume(
         &manifest.file,
         run_id,
         false,
-        dialogue_printer(output),
+        dialogue_printers(output),
     ) {
         Ok(c) => c,
         Err(e) => {
@@ -1132,7 +1146,7 @@ fn cmd_replay(run_id: &str, output: OutputFormat) -> bool {
         &manifest.file,
         run_id,
         false,
-        dialogue_printer(output),
+        dialogue_printers(output),
     ) {
         Ok(c) => c.replaying(),
         Err(e) => {
