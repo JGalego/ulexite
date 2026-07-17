@@ -203,7 +203,40 @@ fn trace_record_to_json(r: &TraceRecord) -> Json {
         "output": r.output.as_ref().map(value_to_json),
         "error": r.error,
         "timestamp_ms": r.timestamp_ms,
+        "parent_run_id": r.parent_run_id,
     })
+}
+
+/// The `seq` of the "call" trace record `r.parent_run_id` (§18.2, §19.4)
+/// points back at, if any — `parent_run_id` is the synthetic
+/// `"{run_id}:{seq}"` string `crate::trace::push_call_frame` mints, and
+/// every record sharing one trace file shares one `run_id`, so only the
+/// suffix after the last `:` is ever needed here.
+fn parent_seq(r: &TraceRecord) -> Option<u64> {
+    r.parent_run_id
+        .as_deref()
+        .and_then(|p| p.rsplit(':').next())
+        .and_then(|s| s.parse::<u64>().ok())
+}
+
+/// One nesting depth per record, aligned index-for-index with `records` —
+/// 0 at the top level, incrementing by one per enclosing nested-conversation
+/// call. `ulx trace`'s default text table indents by this to render the
+/// call stack §19.4 describes navigating, straight from the trace log
+/// rather than a separate debugger data structure.
+pub fn call_depths(records: &[TraceRecord]) -> Vec<usize> {
+    let mut depth_by_seq: std::collections::HashMap<u64, usize> = std::collections::HashMap::new();
+    records
+        .iter()
+        .map(|r| {
+            let depth = parent_seq(r)
+                .and_then(|s| depth_by_seq.get(&s))
+                .map(|d| d + 1)
+                .unwrap_or(0);
+            depth_by_seq.insert(r.seq, depth);
+            depth
+        })
+        .collect()
 }
 
 fn status_of(r: &TraceRecord) -> &'static str {
@@ -810,6 +843,7 @@ mod tests {
             output,
             error: error.map(str::to_string),
             timestamp_ms: 0,
+            parent_run_id: None,
         }
     }
 
@@ -982,6 +1016,20 @@ mod tests {
         let json_all = render_trace(OutputFormat::Json, &records);
         let parsed: Vec<Json> = serde_json::from_str(&json_all).expect("valid JSON array");
         assert_eq!(parsed.len(), 3);
+    }
+
+    #[test]
+    fn call_depths_nests_by_parent_run_id_chain() {
+        let mut r0 = record(0, "call", false, None, None);
+        r0.parent_run_id = None;
+        let mut r1 = record(1, "call", false, None, None);
+        r1.parent_run_id = Some("run123:0".to_string());
+        let mut r2 = record(2, "chat", false, Some(Value::Text("hi".into())), None);
+        r2.parent_run_id = Some("run123:1".to_string());
+        let mut r3 = record(3, "chat", false, Some(Value::Text("bye".into())), None);
+        r3.parent_run_id = None;
+
+        assert_eq!(call_depths(&[r0, r1, r2, r3]), vec![0, 1, 2, 0]);
     }
 
     #[test]

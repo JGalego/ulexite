@@ -877,6 +877,127 @@ fn expect_gives_up_after_the_fixed_retry_budget_when_the_judge_never_converges()
     assert!(message.contains("3 resample attempts"), "{message}");
 }
 
+/// `parent_run_id` (§18.2, §19.4): a nested conversation call's own "call"
+/// trace record, and every record produced inside that conversation's
+/// body, should carry a `parent_run_id` pointing back at the "call" record
+/// that invoked it — reconstructing a call stack from a flat trace file
+/// rather than a separate debugger data structure. Two levels deep
+/// (`Root` calls `Middle` calls `Leaf`) to prove the frame stack nests
+/// correctly, not just tags everything with one fixed "am I nested at
+/// all" bit.
+#[test]
+fn nested_conversation_calls_carry_a_parent_run_id_chain() {
+    let tmp = tempfile::tempdir().unwrap();
+    let src = r#"
+        conversation Leaf(x: text) -> text {
+          x
+        }
+
+        conversation Middle(x: text) -> text {
+          Leaf(x: x)
+        }
+
+        conversation Root(x: text) -> text {
+          Middle(x: x)
+        }
+    "#;
+    let program = setup(src, &tmp);
+    let ctx = make_ctx(&program, &tmp, "nested_calls");
+
+    let mut args = BTreeMap::new();
+    args.insert("x".to_string(), Value::Text("hi".to_string()));
+    let result = ulx_runtime::run_conversation(&ctx, "Root", args).expect("should succeed");
+    assert_eq!(result, Value::Text("hi".to_string()));
+
+    let records = ulx_runtime::read_trace(tmp.path().join("traces"), "nested_calls").unwrap();
+    let calls: Vec<_> = records.iter().filter(|r| r.kind == "call").collect();
+    assert_eq!(
+        calls.len(),
+        2,
+        "expected one `call` record per nested conversation invocation: {calls:#?}"
+    );
+
+    let middle_call = calls
+        .iter()
+        .find(|r| r.capability.as_deref() == Some("Middle"))
+        .expect("a call record for Middle");
+    assert_eq!(
+        middle_call.parent_run_id, None,
+        "Root -> Middle is a top-level call, no enclosing conversation"
+    );
+
+    let leaf_call = calls
+        .iter()
+        .find(|r| r.capability.as_deref() == Some("Leaf"))
+        .expect("a call record for Leaf");
+    assert_eq!(
+        leaf_call.parent_run_id,
+        Some(format!("nested_calls:{}", middle_call.seq)),
+        "Middle -> Leaf should point back at Middle's own call record"
+    );
+}
+
+/// The same, but across a real `with`-block-spawned OS thread: a branch
+/// that itself calls a nested conversation must still compute the correct
+/// `parent_run_id`, proving `eval_parallel` really does seed the freshly
+/// spawned thread's call stack from the parent thread's stack rather than
+/// leaving it empty (which would silently report every branch's nested
+/// calls as top-level).
+#[test]
+fn nested_conversation_calls_inside_a_with_block_branch_still_get_a_parent_run_id() {
+    let tmp = tempfile::tempdir().unwrap();
+    let src = r#"
+        conversation Leaf(x: text) -> text {
+          x
+        }
+
+        conversation Branch(x: text) -> text {
+          Leaf(x: x)
+        }
+
+        conversation Root(x: text) -> text {
+          with {
+            a = Branch(x: x)
+            b = Branch(x: x)
+          }
+          a
+        }
+    "#;
+    let program = setup(src, &tmp);
+    let ctx = make_ctx(&program, &tmp, "nested_with");
+
+    let mut args = BTreeMap::new();
+    args.insert("x".to_string(), Value::Text("hi".to_string()));
+    ulx_runtime::run_conversation(&ctx, "Root", args).expect("should succeed");
+
+    let records = ulx_runtime::read_trace(tmp.path().join("traces"), "nested_with").unwrap();
+    let branch_calls: Vec<_> = records
+        .iter()
+        .filter(|r| r.kind == "call" && r.capability.as_deref() == Some("Branch"))
+        .collect();
+    assert_eq!(
+        branch_calls.len(),
+        2,
+        "both with-block branches should have called Branch"
+    );
+    for branch_call in &branch_calls {
+        assert_eq!(
+            branch_call.parent_run_id, None,
+            "each Branch call is itself top-level (Root doesn't wrap it in another call)"
+        );
+        let leaf_call = records.iter().find(|r| {
+            r.kind == "call"
+                && r.capability.as_deref() == Some("Leaf")
+                && r.parent_run_id.as_deref() == Some(&format!("nested_with:{}", branch_call.seq))
+        });
+        assert!(
+            leaf_call.is_some(),
+            "expected a Leaf call whose parent_run_id points back at Branch call #{}: {records:#?}",
+            branch_call.seq
+        );
+    }
+}
+
 /// Regression test for the bug this whole suspend-handling rework fixes:
 /// a benchmark row that hits a real `escalate(...)` used to propagate
 /// `RuntimeError::Suspended` straight out of `run_benchmark` via `?`,

@@ -70,7 +70,14 @@ Because every statement is meant to be a checkpoint, the spec describes jumping 
 
 ### Root-cause navigation across nested conversations
 
-The spec describes the debugger rendering nested conversations (one conversation calling another) as a navigable call stack, keyed off a `parent_run_id` carried by each trace record. **Trace records don't carry a `parent_run_id` field today** — a `TraceRecord` has `run_id`, `seq`, `kind`, `capability`, cache/provider/model metadata, `input`, `output`, `error`, and a timestamp, but nothing linking a child conversation's trace back to its parent's. If your program nests conversations, their calls appear in the trace as ordinary sequential records, not as a navigable call stack.
+The spec describes the debugger rendering nested conversations (one conversation calling another) as a navigable call stack, keyed off a `parent_run_id` carried by each trace record. **The `parent_run_id` field is real today; the interactive debugger around it isn't.** Every `TraceRecord` carries `parent_run_id: Option<String>` — `None` at the top level, or the enclosing "call" record's own `{run_id}:{seq}` when produced while a nested conversation's body is executing (including across a `with` block's concurrently spawned branches). `ulx trace`'s default text output already renders this as an indented call stack straight from the trace log:
+
+```text
+#0   [miss] Middle
+#1   [miss]   Leaf
+```
+
+`--output json`/`jsonl` also include `parent_run_id` on every record, so a script or external tool can reconstruct the same tree. What's still missing is the rest of §19.4's picture: there's no interactive debugger to navigate that stack with (see `ulx debug` above), and nested calls still share one flat trace file/`run_id` rather than each getting its own genuinely separate, independently-replayable run the way the full design describes.
 
 ### Live attach for in-flight conversations
 

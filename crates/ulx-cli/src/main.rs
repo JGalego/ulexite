@@ -1384,7 +1384,12 @@ fn cmd_trace(run_id: &str, output: OutputFormat) -> bool {
     match ulx_runtime::read_trace(manifest::traces_dir(), run_id) {
         Ok(records) => {
             if let OutputFormat::Text = output {
-                for r in &records {
+                // Indented by nesting depth (§18.2/§19.4) — a nested
+                // conversation's records visually fall under the "call"
+                // record that invoked them, the same call stack a debugger
+                // would render, straight from the trace log.
+                let depths = output::call_depths(&records);
+                for (r, depth) in records.iter().zip(depths) {
                     let status = if r.cache_hit {
                         "hit "
                     } else if r.error.is_some() {
@@ -1399,8 +1404,9 @@ fn cmd_trace(run_id: &str, output: OutputFormat) -> bool {
                         .map(|v| v.to_string())
                         .or_else(|| r.error.clone())
                         .unwrap_or_default();
+                    let indent = "  ".repeat(depth);
                     println!(
-                        "#{:<3} [{status}] {:<10} {}",
+                        "#{:<3} [{status}] {indent}{:<10} {}",
                         r.seq,
                         cap,
                         output::truncate(&out, 100)

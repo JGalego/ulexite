@@ -2,6 +2,7 @@
 //! (§18.3), debugging, and audit from a single source of truth rather than
 //! three unrelated systems (§18.1's stated goal, at v0.1 fidelity).
 
+use std::cell::RefCell;
 use std::io::{BufRead, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
@@ -11,6 +12,72 @@ use serde::{Deserialize, Serialize};
 
 use crate::provider::Message;
 use crate::value::Value;
+
+thread_local! {
+    /// The chain of enclosing nested-conversation "call" frame ids, root to
+    /// leaf, for *this* thread — empty at the top level of a run. §18.2's
+    /// full design gives every nested conversation invocation its own
+    /// `run_id`, with a `parent_run_id` linking a child run back to its
+    /// parent; this interpreter runs every nested conversation call in the
+    /// same flat trace file under the one top-level `run_id` (there's no
+    /// separate replay-capable sub-run per call), so a frame id here is a
+    /// synthetic `"{run_id}:{call_record_seq}"` string identifying one
+    /// specific "call" trace record rather than a wholly separate run —
+    /// enough to reconstruct a call stack (§19.4) without the much larger
+    /// work of giving every nested call a genuinely separate trace file.
+    static CALL_STACK: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
+}
+
+/// Enters a nested-conversation call frame — pushed by `interp.rs`'s
+/// `eval_conversation_call` right after it records that call's own "call"
+/// trace record (using that record's `seq`, so the frame id points back at
+/// an actual, findable record), popped again once that conversation's body
+/// finishes (success or error alike).
+pub(crate) fn push_call_frame(frame_id: String) {
+    CALL_STACK.with(|s| s.borrow_mut().push(frame_id));
+}
+
+pub(crate) fn pop_call_frame() {
+    CALL_STACK.with(|s| {
+        s.borrow_mut().pop();
+    });
+}
+
+/// The innermost enclosing call frame's id on *this* thread, if any — read
+/// by `TraceWriter::record` to fill a fresh record's `parent_run_id`.
+pub(crate) fn current_call_frame() -> Option<String> {
+    CALL_STACK.with(|s| s.borrow().last().cloned())
+}
+
+/// The full call stack on *this* thread, root to leaf — read by
+/// `eval_parallel` before spawning a `with`-block branch, so `seed_call_stack`
+/// can hand the *entire* chain (not just the innermost frame) to the new
+/// thread; a branch that itself calls a nested conversation and later
+/// returns needs the whole chain to pop back to correctly.
+pub(crate) fn current_stack() -> Vec<String> {
+    CALL_STACK.with(|s| s.borrow().clone())
+}
+
+/// Mirrors `interp.rs`'s `ESCALATE_PATH`/`ESCALATE_LOCAL_SEQ` reset: called
+/// at the top of `run_conversation`/`run_benchmark` so a second same-thread
+/// call (both ends of `--interactive`'s suspend/resume loop, this crate's
+/// own tests) doesn't inherit a stale call stack left over from a previous
+/// run on the same thread.
+pub(crate) fn reset_call_stack() {
+    CALL_STACK.with(|s| s.borrow_mut().clear());
+}
+
+/// A freshly spawned `with`-block branch is a genuine new OS thread (see
+/// `interp.rs`'s `eval_parallel`), so its `CALL_STACK` starts back at empty
+/// and must be explicitly seeded with the spawning thread's stack at spawn
+/// time — it is never inherited automatically. Unlike `ESCALATE_PATH`,
+/// every sibling branch seeds from the exact same parent stack (no
+/// per-branch index appended): the call stack describes which
+/// conversations enclose this point, which is identical for every branch
+/// of the same `with` block.
+pub(crate) fn seed_call_stack(stack: Vec<String>) {
+    CALL_STACK.with(|s| *s.borrow_mut() = stack);
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TraceRecord {
@@ -41,6 +108,13 @@ pub struct TraceRecord {
     pub output: Option<Value>,
     pub error: Option<String>,
     pub timestamp_ms: u128,
+    /// §18.2/§19.4: identifies the enclosing nested-conversation "call"
+    /// record, for reconstructing a call stack across nested conversations
+    /// — `"{run_id}:{seq}"` of that "call" record, `None` at the top
+    /// level. `#[serde(default)]` so a trace file written before this
+    /// field existed still deserializes (as `None`, i.e. top-level).
+    #[serde(default)]
+    pub parent_run_id: Option<String>,
 }
 
 /// `run_id` always ends up as one path component under `traces_dir` —
@@ -183,6 +257,7 @@ impl TraceWriter {
             output: output.cloned(),
             error: error.map(str::to_string),
             timestamp_ms: now_ms(),
+            parent_run_id: current_call_frame(),
         };
         let line = serde_json::to_string(&record).expect("TraceRecord always serializes");
         let mut file = self.file.lock().unwrap_or_else(|p| p.into_inner());

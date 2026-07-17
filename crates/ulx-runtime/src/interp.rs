@@ -78,6 +78,7 @@ pub fn run_conversation(ctx: &RunContext, name: &str, args: Args) -> Result<Valu
     // `escalate` cache keys than the first call recorded.
     ESCALATE_PATH.with(|p| p.borrow_mut().clear());
     ESCALATE_LOCAL_SEQ.with(|c| c.set(0));
+    crate::trace::reset_call_stack();
 
     let conv = ctx
         .program
@@ -405,6 +406,7 @@ pub fn run_benchmark(ctx: &RunContext, name: &str) -> Result<BenchmarkReport, Ru
     ESCALATE_PATH.with(|p| p.borrow_mut().clear());
     ESCALATE_LOCAL_SEQ.with(|c| c.set(0));
     EXPECT_ATTEMPT.with(|c| c.set(0));
+    crate::trace::reset_call_stack();
 
     let benchmark = ctx
         .program
@@ -832,6 +834,12 @@ fn eval_parallel(
     // anything -- so every branch below is seeded from the same parent
     // path regardless of how the branches themselves get scheduled.
     let parent_path = ESCALATE_PATH.with(|p| p.borrow().clone());
+    // Same reasoning for the enclosing nested-conversation call stack
+    // (`crate::trace`): every branch runs inside whatever conversation
+    // call(s) enclose this `with` block, so every branch seeds from the
+    // *same* full stack (unlike `ESCALATE_PATH`, nothing per-branch is
+    // appended here — the call stack doesn't distinguish sibling branches).
+    let parent_call_stack = crate::trace::current_stack();
     let results: Vec<(String, Result<Value, RuntimeError>)> = std::thread::scope(|scope| {
         // Paired with its own name up front, since a panicking closure
         // never gets to return `(name.clone(), r)` itself -- the name has
@@ -846,8 +854,10 @@ fn eval_parallel(
                 let mut local_env = env.clone();
                 let mut branch_path = parent_path.clone();
                 branch_path.push(branch_index);
+                let branch_call_stack = parent_call_stack.clone();
                 let handle = scope.spawn(move || {
                     ESCALATE_PATH.with(|p| *p.borrow_mut() = branch_path);
+                    crate::trace::seed_call_stack(branch_call_stack);
                     eval_expr(ctx, expr, &mut local_env)
                 });
                 (name.clone(), handle)
@@ -1335,7 +1345,7 @@ fn eval_conversation_call(
             text: v.to_string(),
         })
         .collect();
-    ctx.trace.record(
+    let call_seq = ctx.trace.record(
         "call",
         Some(name),
         None,
@@ -1346,7 +1356,16 @@ fn eval_conversation_call(
         None,
         None,
     );
-    eval_block(ctx, &conv.body, &mut call_env)
+    // Every trace record produced while `conv`'s body runs (including a
+    // nested "call" record for a conversation *it* calls) should carry a
+    // `parent_run_id` pointing back at this exact "call" record — pushed
+    // before, popped after, unconditionally (so an error/suspend inside
+    // the body doesn't leave a stale frame for whatever runs next on this
+    // thread — see `crate::trace::push_call_frame`'s docs).
+    crate::trace::push_call_frame(format!("{}:{call_seq}", ctx.run_id));
+    let result = eval_block(ctx, &conv.body, &mut call_env);
+    crate::trace::pop_call_frame();
+    result
 }
 
 fn role_name(role: MessageRole) -> &'static str {
