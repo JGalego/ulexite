@@ -38,6 +38,7 @@
 
 mod debug;
 mod diagnostics;
+mod git_dep;
 mod manifest;
 mod output;
 mod pipeline;

@@ -1,10 +1,15 @@
 //! `ulexite.toml` (§14.1): package metadata, dependencies, provider
-//! config, and runtime config. Parsing/validation only — dependency
-//! *resolution* (a registry, a lockfile, semver-contract checks at publish
-//! time, §14.2–§14.4) is real, sizable infrastructure this v0.1 doesn't
-//! build; only `git`/`path` dependencies make sense to even parse without
-//! a registry to resolve named versions against. See
-//! `docs/spec/24-limitations.md`.
+//! config, and runtime config — parsing/validation only, this module never
+//! touches disk beyond reading the manifest itself. `git`/`path`
+//! dependency *resolution* is real (see `crate::git_dep`/`pipeline.rs`'s
+//! `dependency_paths`) — a `path` entry is joined against the manifest's
+//! directory, and a `git` entry is actually cloned/checked-out via the
+//! system `git` binary into a local vendored directory. What's still not
+//! built: a central registry (§14.3's `packages.ulexite.dev` — real server
+//! infrastructure this repo doesn't have, so a bare version string can't
+//! resolve to anything), a lockfile pinning transitive dependency content
+//! hashes (§14.2), and semver-contract checking at publish time (§14.4).
+//! See `docs/spec/24-limitations.md`.
 
 use std::collections::BTreeMap;
 use std::path::Path;

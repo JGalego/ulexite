@@ -37,10 +37,16 @@ fn known_manifest_providers(file: &Path) -> Result<Option<HashSet<String>>, Stri
 /// discovery convention as `known_manifest_providers` above) — `path`
 /// entries are joined against the manifest's own directory (so a relative
 /// `path = "../other-pkg"` is resolved the same way a human reading the
-/// manifest would expect), everything else (a bare version string, or a
-/// `git` table with no `path`) becomes an `unresolvable` name so a
-/// cross-package import referencing it gets a clear error instead of
-/// silently falling through to relative-path resolution.
+/// manifest would expect); a `git` entry is actually cloned/checked-out
+/// via `crate::git_dep::resolve` (§14.2's real escape hatch, no hosted
+/// registry) into a local vendored directory, which then resolves exactly
+/// like a `path` dependency. A bare version string (no `git`/`path` at
+/// all — there's no registry to resolve a named version against) becomes
+/// an `unresolvable` name so a cross-package import referencing it gets a
+/// clear error instead of silently falling through to relative-path
+/// resolution. A `git` dependency that fails to clone/check out is a hard
+/// error here, immediately, rather than deferred to whatever import
+/// happens to reference it first.
 fn dependency_paths(file: &Path) -> Result<ulx_sema::DependencyPaths, String> {
     let dir = crate::manifest::base_dir_of(file);
     let manifest = project_manifest::discover(&dir).map_err(|e| e.to_string())?;
@@ -54,6 +60,15 @@ fn dependency_paths(file: &Path) -> Result<ulx_sema::DependencyPaths, String> {
                 path: Some(path), ..
             } => {
                 deps.path_deps.insert(name.clone(), dir.join(path));
+            }
+            project_manifest::Dependency::Detailed {
+                git: Some(url),
+                tag,
+                ..
+            } => {
+                let checkout = crate::git_dep::resolve(&dir, url, tag.as_deref())
+                    .map_err(|e| format!("dependency `{name}`: {e}"))?;
+                deps.path_deps.insert(name.clone(), checkout);
             }
             _ => {
                 deps.unresolvable.insert(name.clone());
@@ -260,10 +275,12 @@ mod tests {
 
     /// `dependency_paths` should turn `ulexite.toml`'s `[dependencies]`
     /// table into `ulx-sema`'s `DependencyPaths`: `path` entries resolved
-    /// relative to the manifest's own directory, and every other kind
-    /// (bare version string, or `git` with no `path`) recorded as
-    /// `unresolvable` so import resolution can reject it with a clear
-    /// error instead of mishandling it.
+    /// relative to the manifest's own directory, and a bare version string
+    /// (no registry to resolve it against) recorded as `unresolvable` so
+    /// import resolution can reject it with a clear error instead of
+    /// mishandling it. `git` dependencies are covered separately below,
+    /// since they need a real (if local-only, offline) git repo to
+    /// resolve against.
     #[test]
     fn builds_path_and_unresolvable_entries_from_manifest() {
         let dir = std::env::temp_dir().join(format!(
@@ -282,7 +299,6 @@ mod tests {
             [dependencies]
             local-thing = { path = "../local-thing" }
             versioned-thing = "^2.1"
-            git-thing = { git = "https://example.com/git-thing.git", tag = "v1.0.0" }
             "#,
         )
         .unwrap();
@@ -295,9 +311,73 @@ mod tests {
             Some(&dir.join("../local-thing"))
         );
         assert!(deps.unresolvable.contains("versioned-thing"));
-        assert!(deps.unresolvable.contains("git-thing"));
         assert!(!deps.path_deps.contains_key("versioned-thing"));
-        assert!(!deps.path_deps.contains_key("git-thing"));
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// A `git` dependency is now really cloned (§14.2) — proved here
+    /// against a throwaway local upstream repo (a local path is a
+    /// legitimate `git clone` source, so this stays fully offline) rather
+    /// than a real network host. The resolved path ends up in
+    /// `path_deps`, exactly like an ordinary `path` dependency, with the
+    /// tagged commit's actual content on disk.
+    #[test]
+    fn git_dependency_is_really_cloned_and_lands_in_path_deps() {
+        let dir = std::env::temp_dir().join(format!(
+            "ulexite-cli-git-dependency-test-{}",
+            std::process::id()
+        ));
+        let upstream = dir.join("upstream");
+        std::fs::create_dir_all(&upstream).unwrap();
+        let run = |args: &[&str]| {
+            let status = std::process::Command::new("git")
+                .args(args)
+                .current_dir(&upstream)
+                .status()
+                .expect("git must be installed to run this test");
+            assert!(status.success(), "git {args:?} failed");
+        };
+        run(&["init", "--quiet", "-b", "main"]);
+        run(&["config", "user.email", "test@example.com"]);
+        run(&["config", "user.name", "Test"]);
+        std::fs::write(
+            upstream.join("lib.ulx"),
+            "conversation Lib() -> text { \"hi\" }",
+        )
+        .unwrap();
+        run(&["add", "."]);
+        run(&["commit", "--quiet", "-m", "initial"]);
+        run(&["tag", "v1.0.0"]);
+
+        let project = dir.join("project");
+        std::fs::create_dir_all(&project).unwrap();
+        std::fs::write(
+            project.join("ulexite.toml"),
+            format!(
+                r#"
+                [package]
+                name = "tiny"
+                version = "0.1.0"
+                ulexite = "^0.1"
+
+                [dependencies]
+                git-thing = {{ git = "{}", tag = "v1.0.0" }}
+                "#,
+                upstream.display()
+            ),
+        )
+        .unwrap();
+        let file = project.join("main.ulx");
+        std::fs::write(&file, "conversation Foo() -> text { \"hi\" }").unwrap();
+
+        let deps = dependency_paths(&file).expect("git dependency should resolve");
+        let resolved = deps
+            .path_deps
+            .get("git-thing")
+            .expect("git-thing should be in path_deps, not unresolvable");
+        let content = std::fs::read_to_string(resolved.join("lib.ulx")).unwrap();
+        assert!(content.contains("conversation Lib"));
 
         std::fs::remove_dir_all(&dir).ok();
     }
