@@ -51,6 +51,15 @@ thread_local! {
     /// the same role the old run-wide sequence counter played before a
     /// `with` block's parallel branches could race for the next value.
     static ESCALATE_LOCAL_SEQ: Cell<u64> = const { Cell::new(0) };
+    /// Which resample attempt (§16.3) a `benchmark`'s `expect ...
+    /// satisfies judge ...` step is currently on — read by
+    /// `eval_rubric_call`'s `Judge` branch and folded into that call's
+    /// cache key only when nonzero, so an ordinary `match judge Name(x)
+    /// {...}` call elsewhere in a conversation body (attempt always 0)
+    /// computes exactly the cache key it always has. `run_benchmark`'s
+    /// `Expect` step sets this once per resample and resets it to 0
+    /// afterward; nothing else in the interpreter touches it.
+    static EXPECT_ATTEMPT: Cell<u64> = const { Cell::new(0) };
 }
 
 pub fn run_conversation(ctx: &RunContext, name: &str, args: Args) -> Result<Value, RuntimeError> {
@@ -367,6 +376,10 @@ impl BenchmarkReport {
 /// `Value` equality rather than §16.5's semantic diff — a snapshot fails
 /// the moment non-deterministic model output drifts at all, so it suits
 /// deterministic subexpressions far better than raw `ask`/`judge` output.
+/// `expect` (§16.3) does resample a failing judge verdict now too, up to
+/// a fixed 3-attempt budget rather than a per-statement-configurable one
+/// (no grammar exists for the latter yet) — see `EXPECT_ATTEMPT` and the
+/// `Expect` step below for the resample loop itself.
 ///
 /// A row whose body hits a real `escalate(...)` suspend point (a `run:`
 /// conversation that needs a human decision) doesn't abort the whole
@@ -391,6 +404,7 @@ pub fn run_benchmark(ctx: &RunContext, name: &str) -> Result<BenchmarkReport, Ru
     // never be found — the row would suspend again instead of resolving.
     ESCALATE_PATH.with(|p| p.borrow_mut().clear());
     ESCALATE_LOCAL_SEQ.with(|c| c.set(0));
+    EXPECT_ATTEMPT.with(|c| c.set(0));
 
     let benchmark = ctx
         .program
@@ -455,16 +469,66 @@ pub fn run_benchmark(ctx: &RunContext, name: &str) -> Result<BenchmarkReport, Ru
                         judge,
                         threshold,
                     } => {
-                        // `expr` (the subject) is evaluated for effect/error
-                        // propagation even though its value isn't otherwise
-                        // used here directly — the judge call (almost always
-                        // `judge Fluency(result)`) references the same bound
-                        // name itself, so re-evaluating `expr` mirrors what a
-                        // hand-written `match judge Fluency(result) {...}`
-                        // would do.
-                        eval_expr(ctx, expr, &mut env)?;
-                        let verdict = eval_expr(ctx, judge, &mut env)?;
-                        let (passed, message) = evaluate_expect_verdict(&verdict, *threshold);
+                        // §16.3: resample the judge up to a fixed retry
+                        // budget until the verdict passes, rather than
+                        // grading a single sample once. The budget is a
+                        // fixed constant, not something a `benchmark` can
+                        // tune per `expect` statement (no grammar for that
+                        // exists), but each resample attempt does get a
+                        // genuinely distinct judge cache key (`EXPECT_ATTEMPT`,
+                        // read by `eval_rubric_call`'s `Judge` branch), so a
+                        // real (non-mock) provider call actually reruns
+                        // instead of returning the identical cached verdict
+                        // every attempt — a deterministic mock provider will
+                        // of course keep returning the same verdict on
+                        // every attempt, since it has no real sampling
+                        // variance to converge across.
+                        //
+                        // `expr` (the subject) is re-evaluated each attempt
+                        // for effect/error propagation even though its value
+                        // isn't otherwise used here directly — the judge
+                        // call (almost always `judge Fluency(result)`)
+                        // references the same bound name itself, so this
+                        // mirrors what a hand-written `match judge
+                        // Fluency(result) {...}` would do.
+                        //
+                        // Wrapped in its own inner closure (rather than a
+                        // bare loop) purely so `EXPECT_ATTEMPT` can be reset
+                        // back to 0 unconditionally afterward — including
+                        // when a resample attempt itself errors (e.g. a
+                        // real `escalate(...)` reached via `expr`) — before
+                        // that error propagates via `outcome?`. Without
+                        // this, a mid-loop error would leave a stale nonzero
+                        // attempt counter to silently perturb the next,
+                        // unrelated judge call's cache key.
+                        const MAX_ATTEMPTS: u64 = 3;
+                        let mut passed = false;
+                        let mut message = None;
+                        let mut attempts = 0;
+                        let outcome: Result<(), RuntimeError> = (|| {
+                            for attempt in 0..MAX_ATTEMPTS {
+                                EXPECT_ATTEMPT.with(|c| c.set(attempt));
+                                eval_expr(ctx, expr, &mut env)?;
+                                let verdict = eval_expr(ctx, judge, &mut env)?;
+                                let (this_passed, this_message) =
+                                    evaluate_expect_verdict(&verdict, *threshold);
+                                attempts = attempt + 1;
+                                passed = this_passed;
+                                message = this_message;
+                                if passed {
+                                    break;
+                                }
+                            }
+                            Ok(())
+                        })();
+                        EXPECT_ATTEMPT.with(|c| c.set(0));
+                        outcome?;
+                        if !passed && attempts > 1 {
+                            message = Some(format!(
+                                "{} (after {attempts} resample attempts)",
+                                message.unwrap_or_default()
+                            ));
+                        }
                         checks.push(CheckResult {
                             kind: "expect",
                             passed,
@@ -565,13 +629,15 @@ pub fn run_benchmark(ctx: &RunContext, name: &str) -> Result<BenchmarkReport, Ru
     Ok(report)
 }
 
-/// Interprets an `expect ... satisfies judge ... with threshold(t)`
-/// verdict into a pass/fail (§16.4): `Pass` always passes, `Fail(reason)`
-/// always fails with that reason, `Score(s)` passes iff `s >= threshold`
-/// (or `s > 0.0` when no threshold was written), and `Escalate` — a judge
-/// declining to decide — fails, since there's no human-in-the-loop
-/// resolution inside a benchmark row (§16.3's polling/retry-until-converged
-/// semantics aren't implemented either; a judge call happens exactly once).
+/// Interprets one resample attempt's `expect ... satisfies judge ... with
+/// threshold(t)` verdict into a pass/fail (§16.4): `Pass` always passes,
+/// `Fail(reason)` always fails with that reason, `Score(s)` passes iff it
+/// meets `threshold` (or is greater than `0.0` when no threshold was
+/// written), and `Escalate` — a judge declining to decide — fails, since
+/// there's no human-in-the-loop resolution inside a benchmark row. Called
+/// once per attempt by `run_benchmark`'s `Expect` step, which retries a
+/// failing verdict up to a fixed budget (§16.3's retry-until-converged)
+/// before giving up — see that call site for the resample loop itself.
 fn evaluate_expect_verdict(verdict: &Value, threshold: Option<f64>) -> (bool, Option<String>) {
     match verdict {
         Value::Verdict(Verdict::Pass) => (true, None),
@@ -1043,7 +1109,20 @@ fn eval_rubric_call(
                     ("rubric".to_string(), rubric_text.clone()),
                 ]),
             };
-            let key = cache_key("judge", provider.id(), &[&subject, &rubric_text], &[name]);
+            // A resample attempt beyond the first (`EXPECT_ATTEMPT`, set by
+            // `run_benchmark`'s `Expect` step) folds its attempt number into
+            // the key so each resample is a genuine fresh call rather than
+            // an immediate cache hit on the exact same key — attempt 0
+            // computes the identical key this always has, so an ordinary
+            // (non-`expect`) judge call is completely unaffected.
+            let attempt = EXPECT_ATTEMPT.with(|c| c.get());
+            let attempt_tag = attempt.to_string();
+            let extra: &[&str] = if attempt == 0 {
+                &[name]
+            } else {
+                &[name, &attempt_tag]
+            };
+            let key = cache_key("judge", provider.id(), &[&subject, &rubric_text], extra);
             let judge_input = [
                 Message {
                     role: "subject".to_string(),

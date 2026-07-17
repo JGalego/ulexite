@@ -7,8 +7,9 @@
 //! `ulx-runtime::run_benchmark` for the narrower-than-spec scope that's
 //! still real: `snapshot` compares against a persisted golden baseline
 //! (`--update-snapshots` accepts a new one) via exact value equality
-//! rather than §16.5's semantic diff; there's still no `expect`-polling/
-//! retry-until-converged and no `metrics.*` aggregation or JUnit/JSON
+//! rather than §16.5's semantic diff; `expect` resamples a failing judge
+//! verdict up to a fixed (not yet per-statement-configurable) 3-attempt
+//! budget; there's still no `metrics.*` aggregation or JUnit/JSON
 //! report — a plain-text per-row pass/fail/suspended report), `approve`/`deny`
 //! (§10.7's human-approval resume, v0.1-style, for both a conversation and
 //! a benchmark run — see `ulx-runtime`'s docs for how that actually

@@ -1,4 +1,6 @@
 use std::collections::BTreeMap;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 
 use ulx_ir::lower_program;
 use ulx_runtime::value::{Value, Verdict};
@@ -738,6 +740,141 @@ fn snapshot_compares_against_a_real_golden_baseline() {
     assert!(report.rows[0].passed());
     let check = snap_check(&report);
     assert!(check.message.as_deref().unwrap().contains("matches"));
+}
+
+/// A fake `judge`-only `Provider` that fails its first `flips_after` calls
+/// and passes every call after that — used to prove `expect`'s
+/// retry-until-converged loop (§16.3) makes genuinely distinct provider
+/// calls per resample attempt, rather than replaying one cached verdict.
+struct FlakyJudgeProvider {
+    calls: Arc<AtomicUsize>,
+    flips_after: usize,
+}
+
+impl ulx_runtime::Provider for FlakyJudgeProvider {
+    fn id(&self) -> &str {
+        "flaky-judge"
+    }
+    fn supports(&self, capability: &str) -> bool {
+        capability == "judge"
+    }
+    fn invoke(
+        &self,
+        _capability: &str,
+        _request: &ulx_runtime::provider::Invocation,
+    ) -> Result<Value, ulx_runtime::provider::ProviderError> {
+        let n = self.calls.fetch_add(1, Ordering::SeqCst);
+        if n < self.flips_after {
+            Ok(Value::Verdict(Verdict::Fail(
+                "not fluent enough yet".to_string(),
+            )))
+        } else {
+            Ok(Value::Verdict(Verdict::Pass))
+        }
+    }
+}
+
+const RESAMPLE_BENCH_SRC: &str = r#"
+    conversation Echo(source: text) -> text {
+      source
+    }
+
+    judge Fluency(subject: text) -> Verdict {
+      rubric: """Is this fluent?"""
+    }
+
+    dataset Rows: [{source: text}] { from "rows.jsonl" }
+
+    benchmark ResampleBench {
+      dataset: Rows
+      run: Echo(source: $.source) -> result
+      expect result satisfies judge Fluency(result)
+    }
+"#;
+
+/// `expect ... satisfies judge ...` (§16.3): a judge that fails its first
+/// two calls and passes its third converges within the fixed 3-attempt
+/// retry budget, and the row passes — proving the loop actually resamples
+/// (a fixed, single-shot `expect` could never converge here, since the
+/// judge only starts passing on its 3rd real invocation).
+#[test]
+fn expect_resamples_a_failing_judge_until_it_converges() {
+    let tmp = tempfile::tempdir().unwrap();
+    std::fs::write(tmp.path().join("rows.jsonl"), "{\"source\": \"hello\"}\n").unwrap();
+    let program = setup(RESAMPLE_BENCH_SRC, &tmp);
+
+    let calls = Arc::new(AtomicUsize::new(0));
+    let mut registry = ProviderRegistry::new();
+    registry.register(
+        "flaky-judge",
+        Box::new(FlakyJudgeProvider {
+            calls: calls.clone(),
+            flips_after: 2,
+        }),
+    );
+    let cache = Cache::new(tmp.path().join("cache")).unwrap();
+    let trace = TraceWriter::create(tmp.path().join("traces"), "resample_ok").unwrap();
+    let ctx = RunContext::new(
+        &program,
+        registry,
+        cache,
+        trace,
+        "resample_ok".to_string(),
+        tmp.path().to_path_buf(),
+    );
+
+    let report = ulx_runtime::run_benchmark(&ctx, "ResampleBench").expect("must run");
+    assert!(report.rows[0].passed(), "{:#?}", report.rows[0]);
+    assert_eq!(
+        calls.load(Ordering::SeqCst),
+        3,
+        "expected exactly 3 real judge calls (2 failing resamples + the converging attempt)"
+    );
+}
+
+/// The other half: a judge that never passes exhausts the fixed retry
+/// budget (3 attempts, no more, no fewer) and the row fails, with the
+/// failure message noting how many resample attempts were made.
+#[test]
+fn expect_gives_up_after_the_fixed_retry_budget_when_the_judge_never_converges() {
+    let tmp = tempfile::tempdir().unwrap();
+    std::fs::write(tmp.path().join("rows.jsonl"), "{\"source\": \"hello\"}\n").unwrap();
+    let program = setup(RESAMPLE_BENCH_SRC, &tmp);
+
+    let calls = Arc::new(AtomicUsize::new(0));
+    let mut registry = ProviderRegistry::new();
+    registry.register(
+        "flaky-judge",
+        Box::new(FlakyJudgeProvider {
+            calls: calls.clone(),
+            flips_after: usize::MAX,
+        }),
+    );
+    let cache = Cache::new(tmp.path().join("cache")).unwrap();
+    let trace = TraceWriter::create(tmp.path().join("traces"), "resample_fail").unwrap();
+    let ctx = RunContext::new(
+        &program,
+        registry,
+        cache,
+        trace,
+        "resample_fail".to_string(),
+        tmp.path().to_path_buf(),
+    );
+
+    let report = ulx_runtime::run_benchmark(&ctx, "ResampleBench").expect("must run");
+    assert!(!report.rows[0].passed(), "{:#?}", report.rows[0]);
+    assert_eq!(
+        calls.load(Ordering::SeqCst),
+        3,
+        "expected exactly 3 real judge calls, not an infinite or single-shot loop"
+    );
+    let expect_check = report.rows[0]
+        .checks()
+        .iter()
+        .find(|c| c.kind == "expect")
+        .expect("expect check");
+    let message = expect_check.message.as_deref().unwrap();
+    assert!(message.contains("3 resample attempts"), "{message}");
 }
 
 /// Regression test for the bug this whole suspend-handling rework fixes:

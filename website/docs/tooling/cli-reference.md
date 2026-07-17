@@ -82,7 +82,11 @@ ulx bench eval_translate.ulx TranslateQuality --provider anthropic
 
 A row that hits a real `escalate(...)` (not a judge's own `Escalate` verdict, which is just an ordinary failed `expect` check) suspends gracefully rather than aborting the whole benchmark — the other rows still run and report normally. `ulx approve <run-id> --value ...`/`ulx deny <run-id>` resolves the first still-suspended row and re-runs; call it again with the same id if more than one row is pending.
 
-`snapshot expr as "<key>"` records a golden baseline on first run (one JSON file per key, under `<package-dir>/snapshots/<benchmark>/`, meant to be committed alongside the source) and compares against it on every later run — a real regression gate, not just a recorded artifact. Note the comparison is exact `Value` equality, not §16.5's semantic diff, so it suits deterministic subexpressions better than raw non-deterministic model output. Also note the scope is still narrower than the full spec's `benchmark` design in other ways: there's no `expect`-polling/retry-until-converged, and no `metrics.*` aggregation or JUnit/JSON report — just a plain-text per-row result.
+`snapshot expr as "<key>"` records a golden baseline on first run (one JSON file per key, under `<package-dir>/snapshots/<benchmark>/`, meant to be committed alongside the source) and compares against it on every later run — a real regression gate, not just a recorded artifact. Note the comparison is exact `Value` equality, not §16.5's semantic diff, so it suits deterministic subexpressions better than raw non-deterministic model output.
+
+`expect result satisfies judge ... with threshold(...)` resamples a failing judge verdict up to a fixed 3-attempt budget before giving up, rather than grading a single sample once — each attempt is a genuinely fresh judge call. The budget isn't yet configurable per statement (no grammar for that exists).
+
+Also note the scope is still narrower than the full spec's `benchmark` design in other ways: there's no `metrics.*` aggregation or JUnit/JSON report — just a plain-text per-row result.
 
 ## `ulx plan`
 
