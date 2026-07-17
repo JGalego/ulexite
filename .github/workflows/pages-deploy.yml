@@ -1,0 +1,92 @@
+name: Deploy website
+
+# Path-filtered so an unrelated Rust/tooling change doesn't trigger a
+# rebuild+redeploy of the site -- only touching the site itself, the WASM
+# playground crate, or the spec/examples content the site's docs are
+# adapted from should. workflow_dispatch lets you force a redeploy (e.g.
+# after editing GitHub Pages settings) without an empty commit.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "website/**"
+      - "crates/ulx-wasm/**"
+      - "docs/spec/**"
+      - "examples/**"
+      - ".github/workflows/pages-deploy.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Only one deploy in flight at a time; a newer push should win over a
+# stale one still building, not queue behind it.
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: Build (wasm-pack + Docusaurus)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain (wasm32 target)
+        run: |
+          rustup target add wasm32-unknown-unknown
+
+      - name: Cache cargo registry and build artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> target"
+
+      - name: Install wasm-pack
+        uses: jetli/wasm-pack-action@v0.4.0
+        with:
+          version: "v0.13.1"
+
+      # Output lands directly in website/static/wasm, which the Playground
+      # component (website/src/components/Playground) loads at runtime via
+      # a native dynamic import of its built URL -- not through webpack's
+      # module graph, so it must be a plain static asset, not bundled
+      # source. See that component's doc comment for why.
+      - name: Build ulx-wasm
+        run: wasm-pack build crates/ulx-wasm --target web --out-dir ../../website/static/wasm
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: website/package-lock.json
+
+      - name: Install website dependencies
+        working-directory: website
+        run: npm ci
+
+      - name: Build website
+        working-directory: website
+        run: npm run build
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: website/build
+
+  deploy:
+    name: Deploy to GitHub Pages
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy
+        id: deployment
+        uses: actions/deploy-pages@v4

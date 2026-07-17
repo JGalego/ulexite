@@ -44,6 +44,22 @@ check-examples:
         ./target/debug/ulx check "$f"
     done
 
+# Build the WASM playground crate + the Docusaurus site — mirrored as raw
+# commands in .github/workflows/pages-deploy.yml's `build` job (not
+# invoked directly, same reasoning as `ci` above); keep the two in sync
+# by hand. Needs Node >=20 on PATH (Docusaurus 3.10's requirement) and
+# `wasm-pack` installed (`cargo install wasm-pack`).
+docs-build:
+    wasm-pack build crates/ulx-wasm --target web --out-dir ../../website/static/wasm
+    cd website && npm ci && npm run build
+
+# Same build as `docs-build`, then serve it locally with hot reload —
+# for iterating on site content/the playground without a full rebuild
+# per change.
+docs-serve:
+    wasm-pack build crates/ulx-wasm --target web --out-dir ../../website/static/wasm
+    cd website && npm install && npm start
+
 # Remove build artifacts and local runtime state (.ulexite/).
 clean:
     cargo clean

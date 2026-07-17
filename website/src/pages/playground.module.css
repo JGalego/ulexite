@@ -1,0 +1,9 @@
+.main {
+  padding: 2rem 0 4rem;
+}
+
+.intro {
+  max-width: 800px;
+  margin-bottom: 1.5rem;
+  opacity: 0.9;
+}

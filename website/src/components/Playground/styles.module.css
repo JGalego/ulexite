@@ -1,0 +1,103 @@
+.playground {
+  display: grid;
+  grid-template-columns: 1.4fr 1fr;
+  gap: 1rem;
+  min-height: 480px;
+}
+
+@media screen and (max-width: 900px) {
+  .playground {
+    grid-template-columns: 1fr;
+  }
+}
+
+.editorPane {
+  display: flex;
+  flex-direction: column;
+}
+
+.editor {
+  flex: 1;
+  min-height: 480px;
+  width: 100%;
+  font-family: var(--ifm-font-family-monospace);
+  font-size: 0.9rem;
+  line-height: 1.5;
+  padding: 1rem;
+  border: 1px solid var(--ifm-color-emphasis-300);
+  border-radius: 8px;
+  background: var(--ifm-code-background);
+  color: var(--ifm-font-color-base);
+  resize: vertical;
+  tab-size: 2;
+}
+
+.editor:disabled {
+  opacity: 0.6;
+}
+
+.diagnosticsPane {
+  border: 1px solid var(--ifm-color-emphasis-300);
+  border-radius: 8px;
+  padding: 1rem;
+  overflow-y: auto;
+  max-height: 560px;
+}
+
+.diagnosticsPane h3 {
+  margin-top: 0;
+}
+
+.diagnosticList {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.diagnosticList li {
+  padding: 0.5rem 0.75rem;
+  border-radius: 6px;
+  font-size: 0.9rem;
+  border-left: 3px solid transparent;
+}
+
+.error {
+  background: var(--ifm-color-danger-contrast-background);
+  border-left-color: var(--ifm-color-danger);
+}
+
+.warning {
+  background: var(--ifm-color-warning-contrast-background);
+  border-left-color: var(--ifm-color-warning);
+}
+
+.location {
+  font-family: var(--ifm-font-family-monospace);
+  font-weight: bold;
+  opacity: 0.8;
+}
+
+.severityTag {
+  text-transform: uppercase;
+  font-size: 0.75rem;
+  font-weight: bold;
+  opacity: 0.7;
+}
+
+.okText {
+  color: var(--ifm-color-success);
+  font-weight: bold;
+}
+
+.errorText {
+  color: var(--ifm-color-danger);
+}
+
+.hint {
+  opacity: 0.7;
+  font-size: 0.85rem;
+  margin-top: 0.5rem;
+}

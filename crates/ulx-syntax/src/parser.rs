@@ -878,3 +878,29 @@ pub fn parse_source(src: &str) -> PResult<Program> {
     let stream = chumsky::Stream::from_iter(eoi, tokens.into_iter());
     program_p().parse(stream)
 }
+
+/// Renders a parse error as one human-readable line — "found X but
+/// expected one of: A, B" or "unexpected X" when there's nothing expected
+/// worth listing. `Err`'s `Simple<Token>` carries enough structure for
+/// `ariadne`'s span-aware reports (`ulx-cli`'s `ulx parse`/`ulx check`),
+/// but every consumer that just needs a plain `String` — `ulx-lsp`'s
+/// diagnostics, `ulx-wasm`'s browser playground — was independently
+/// re-deriving this exact message, so it lives here once instead.
+pub fn format_error(e: &Err) -> String {
+    let expected: Vec<String> = e
+        .expected()
+        .map(|tok| match tok {
+            Some(t) => format!("{t}"),
+            None => "end of input".to_string(),
+        })
+        .collect();
+    let found = e
+        .found()
+        .map(|t| format!("{t}"))
+        .unwrap_or_else(|| "end of input".to_string());
+    if expected.is_empty() {
+        format!("unexpected {found}")
+    } else {
+        format!("found {found} but expected one of: {}", expected.join(", "))
+    }
+}
