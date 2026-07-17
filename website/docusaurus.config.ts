@@ -13,8 +13,11 @@ const config: Config = {
     v4: true, // Improve compatibility with the upcoming Docusaurus v4
   },
 
-  url: 'https://jgalego.github.io',
-  baseUrl: '/ulexite/',
+  // Custom domain (see website/static/CNAME) -- served at the domain root,
+  // not under a /ulexite/ subpath the way the default
+  // jgalego.github.io/ulexite/ project-pages URL would be.
+  url: 'https://ulexite.dev',
+  baseUrl: '/',
 
   organizationName: 'JGalego',
   projectName: 'ulexite',
