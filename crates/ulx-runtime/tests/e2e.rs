@@ -469,6 +469,77 @@ fn dataset_and_vector_nearest_work_end_to_end() {
     assert!(matches!(result, Value::Text(_)));
 }
 
+/// End-to-end proof (through the real interpreter's stdlib dispatch, not a
+/// unit test calling the extraction helper directly) that `pdf.extract_text`
+/// is real: it finds the actual story text in the project's own PDF
+/// fixture, not a canned placeholder string.
+#[test]
+fn pdf_extract_text_is_real_not_mocked() {
+    let tmp = tempfile::tempdir().unwrap();
+    let src = r#"
+        import "pdf" as pdf
+
+        conversation ExtractOnly(doc: pdf) -> text {
+          pdf.extract_text(doc)
+        }
+    "#;
+    let program = setup(src, &tmp);
+    let ctx = make_ctx(&program, &tmp, "run_pdf_extract");
+
+    let fixture =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/fixtures/sample.pdf");
+    let mut args = BTreeMap::new();
+    args.insert(
+        "doc".to_string(),
+        Value::Text(fixture.to_str().unwrap().to_string()),
+    );
+
+    let result = ulx_runtime::run_conversation(&ctx, "ExtractOnly", args).expect("should succeed");
+    match result {
+        Value::Text(s) => assert!(
+            s.contains("Little Red Riding Hood"),
+            "expected real extracted text, got: {s}"
+        ),
+        other => panic!("expected Text, got {other:?}"),
+    }
+}
+
+/// `pdf.to_images` genuinely isn't implemented (see `stdlib.rs`'s module
+/// docs for why) -- proves it surfaces as a clear, named error rather than
+/// either a fake success or a panic.
+#[test]
+fn pdf_to_images_is_an_honest_not_implemented_error() {
+    let tmp = tempfile::tempdir().unwrap();
+    let src = r#"
+        import "pdf" as pdf
+
+        conversation RasterizeOnly(doc: pdf) -> list<text> {
+          pdf.to_images(doc)
+        }
+    "#;
+    let program = setup(src, &tmp);
+    let ctx = make_ctx(&program, &tmp, "run_pdf_to_images");
+
+    let fixture =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/fixtures/sample.pdf");
+    let mut args = BTreeMap::new();
+    args.insert(
+        "doc".to_string(),
+        Value::Text(fixture.to_str().unwrap().to_string()),
+    );
+
+    let err = ulx_runtime::run_conversation(&ctx, "RasterizeOnly", args).unwrap_err();
+    match err {
+        RuntimeError::NotImplemented(msg) => {
+            assert!(
+                msg.contains("rendering engine"),
+                "unexpected message: {msg}"
+            )
+        }
+        other => panic!("expected NotImplemented, got {other:?}"),
+    }
+}
+
 #[test]
 fn validator_regex_is_real_not_mocked() {
     let tmp = tempfile::tempdir().unwrap();

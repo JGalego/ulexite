@@ -4,11 +4,51 @@
 //! bailing out with "not implemented" on every non-trivial program. Most of
 //! §15's modules (http, python/javascript/shell FFI, dataset writers, ...)
 //! are honestly not implemented yet — see `docs/spec/24-limitations.md`.
+//!
+//! `pdf.extract_text` is real text extraction (via the pure-Rust
+//! `pdf-extract` crate — no system library, so it cross-compiles for every
+//! `release.yml` target the same as everything else here) — a local file
+//! path or a `data:application/pdf;base64,...` URI both work; an
+//! `http(s)://` reference is a clear `NotImplemented` rather than a silent
+//! network fetch this module doesn't otherwise make. `pdf.to_images` is
+//! honestly NOT real: rasterizing a PDF page to a bitmap needs an actual
+//! rendering engine (pdfium/poppler/mupdf), none of which are pure Rust —
+//! every option needs a real, several-hundred-KB platform-specific binary
+//! bundled per `release.yml` target, which is a packaging decision bigger
+//! than swapping in a crate. Left as a clear, named `NotImplemented` error
+//! instead of a fake "[mock rasterized pdf page]" string.
 
 use crate::error::RuntimeError;
 use crate::provider::{Invocation, Message};
 use crate::value::Value;
 use crate::RunContext;
+
+/// Reads a `pdf`-typed reference's bytes: a local file path, or a
+/// `data:application/pdf;base64,...` URI decoded in place — same two forms
+/// `crate::provider::artifact::resolve_document` accepts for a real vendor
+/// call, so `pdf.extract_text` understands exactly what a `doc: pdf`
+/// parameter can actually contain. An `http(s)://` reference is refused
+/// with a clear message rather than fetched — this module makes no network
+/// calls of its own.
+fn read_pdf_bytes(reference: &str) -> Result<Vec<u8>, RuntimeError> {
+    if reference.starts_with("http://") || reference.starts_with("https://") {
+        return Err(RuntimeError::NotImplemented(format!(
+            "pdf.extract_text: fetching a remote PDF (`{reference}`) isn't supported — \
+             download it locally first, or pass a data: URI"
+        )));
+    }
+    if let Some(rest) = reference.strip_prefix("data:") {
+        let (_mime, payload) = rest.split_once(";base64,").ok_or_else(|| {
+            RuntimeError::TypeError(format!(
+                "pdf.extract_text: `{reference}` isn't a `;base64,`-encoded data: URI"
+            ))
+        })?;
+        return base64::Engine::decode(&base64::engine::general_purpose::STANDARD, payload)
+            .map_err(|e| RuntimeError::TypeError(format!("pdf.extract_text: bad base64: {e}")));
+    }
+    std::fs::read(reference)
+        .map_err(|e| RuntimeError::Io(format!("could not read PDF file `{reference}`: {e}")))
+}
 
 /// One call argument: an optional name (for `f(name: value)` call sites)
 /// paired with its evaluated value, in original source order.
@@ -33,16 +73,27 @@ pub fn call(
 ) -> Result<Option<Value>, RuntimeError> {
     match (module, function) {
         ("pdf", "extract_text") => {
-            let tag = get(args, "doc", 0)
-                .map(Value::content_hash)
-                .unwrap_or_default();
-            Ok(Some(Value::Text(format!(
-                "[mock pdf text extraction of {tag}]"
-            ))))
+            let reference = get(args, "doc", 0)
+                .and_then(Value::as_text)
+                .ok_or_else(|| {
+                    RuntimeError::TypeError(
+                        "pdf.extract_text requires a `doc` argument".to_string(),
+                    )
+                })?;
+            let bytes = read_pdf_bytes(reference)?;
+            let text = pdf_extract::extract_text_from_mem(&bytes).map_err(|e| {
+                RuntimeError::TypeError(format!(
+                    "pdf.extract_text: could not extract text from `{reference}`: {e}"
+                ))
+            })?;
+            Ok(Some(Value::Text(text)))
         }
-        ("pdf", "to_images") => Ok(Some(Value::List(vec![Value::Text(
-            "[mock rasterized pdf page]".to_string(),
-        )]))),
+        ("pdf", "to_images") => Err(RuntimeError::NotImplemented(
+            "pdf.to_images: rasterizing a PDF page to a bitmap needs a real rendering engine \
+             (pdfium/poppler/mupdf) — none are pure Rust, so this isn't implemented rather than \
+             faked; pdf.extract_text is real and covers PDFs that have a text layer"
+                .to_string(),
+        )),
         ("embedding", "of") => {
             let text = get(args, "text", 0)
                 .and_then(Value::as_text)
@@ -146,5 +197,56 @@ fn as_f64(v: &Value) -> Option<f64> {
         Value::Float(f) => Some(*f),
         Value::Int(i) => Some(*i as f64),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sample_pdf_path() -> std::path::PathBuf {
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/fixtures/sample.pdf")
+    }
+
+    #[test]
+    fn read_pdf_bytes_reads_a_real_local_file() {
+        let path = sample_pdf_path();
+        let bytes = read_pdf_bytes(path.to_str().unwrap()).expect("should read the fixture");
+        assert!(
+            bytes.starts_with(b"%PDF-"),
+            "not a real PDF: {:?}",
+            &bytes[..8.min(bytes.len())]
+        );
+    }
+
+    #[test]
+    fn read_pdf_bytes_decodes_a_data_uri() {
+        let raw = std::fs::read(sample_pdf_path()).unwrap();
+        let b64 = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &raw);
+        let uri = format!("data:application/pdf;base64,{b64}");
+        let decoded = read_pdf_bytes(&uri).expect("should decode the data URI");
+        assert_eq!(decoded, raw);
+    }
+
+    #[test]
+    fn read_pdf_bytes_refuses_a_remote_url() {
+        let err = read_pdf_bytes("https://example.com/doc.pdf").unwrap_err();
+        assert!(matches!(err, RuntimeError::NotImplemented(_)));
+    }
+
+    #[test]
+    fn read_pdf_bytes_rejects_malformed_data_uri() {
+        let err = read_pdf_bytes("data:application/pdf,not-base64-shaped").unwrap_err();
+        assert!(matches!(err, RuntimeError::TypeError(_)));
+    }
+
+    #[test]
+    fn extract_text_from_the_real_fixture_finds_real_story_text() {
+        let bytes = std::fs::read(sample_pdf_path()).unwrap();
+        let text = pdf_extract::extract_text_from_mem(&bytes).expect("should extract real text");
+        assert!(
+            text.contains("Little Red Riding Hood"),
+            "expected real extracted text, got: {text}"
+        );
     }
 }

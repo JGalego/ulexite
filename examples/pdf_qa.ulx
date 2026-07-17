@@ -3,11 +3,19 @@
 //
 // Same vendor split as summarize.ulx: `vision` (the OCR fallback) on
 // Anthropic, `chat` on Groq. Self-contained, no ulexite.toml needed —
-// export ANTHROPIC_API_KEY/GROQ_API_KEY to run it for real. Note:
-// `pdf.extract_text`/`pdf.to_images` are always the same canned stdlib
-// placeholder today regardless of provider (§15.5 isn't implemented for
-// real yet), so `text_layer.length > 0` is always true and the `vision`
-// branch never actually executes — declared/pinned here for when it does.
+// export ANTHROPIC_API_KEY/GROQ_API_KEY to run it for real.
+//
+// `pdf.extract_text` is real (pure-Rust text extraction — see
+// crates/ulx-runtime/src/stdlib.rs) and finds `fixtures/sample.pdf`'s
+// actual text layer, so the `vision` OCR branch never fires for this
+// fixture — that's correct behavior, not a limitation, for a PDF that
+// already has a text layer. `pdf.to_images` genuinely isn't implemented
+// (rasterizing a PDF page needs a real rendering engine, none of which are
+// pure Rust) — deliberately called only inside the `else` branch, not
+// unconditionally in a `with` block, so a text-layer PDF like this one
+// never touches it at all. Point `doc` at a scanned, no-text-layer PDF to
+// see that branch's honest `NotImplemented` error instead of a silent fake
+// OCR result.
 
 import "pdf" as pdf
 import "vision" as vision
@@ -25,11 +33,11 @@ provider Groq {
 }
 
 conversation PdfQA(doc: pdf, question: text) -> text {
-  with {
-    text_layer   = pdf.extract_text(doc)
-    page_images  = pdf.to_images(doc)
-  }
-  ocr_text = if text_layer.length > 0 { text_layer } else {
+  text_layer = pdf.extract_text(doc)
+  ocr_text = if text_layer.length > 0 {
+    text_layer
+  } else {
+    page_images = pdf.to_images(doc)
     ask vision(page_images, provider: "Anthropic") { user: """Transcribe all text in these pages.""" }
   }
   ask chat(provider: "Groq") {

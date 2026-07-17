@@ -9,7 +9,7 @@ Every program below ships in [`examples/`](https://github.com/JGalego/ulexite/tr
 
 Several examples declare their own `provider { ... }` blocks directly in source and pin capabilities to specific vendors — no `ulexite.toml` needed for those, just the env var(s) named in each section. The rest resolve providers from `ulexite.toml`; if more than one configured vendor serves the same capability, pass `--provider <name>` to disambiguate.
 
-The demos below were recorded with [VHS](https://github.com/charmbracelet/vhs) against real vendors — genuine output, not staged. Two are left deliberately unflattering: `pdf_qa.ulx` shows today's `pdf.extract_text` placeholder limitation, and `eval_translate.ulx` shows `ulx bench` failing outright on a mid-run judge escalation rather than suspending gracefully. Both are called out below rather than smoothed over.
+The demos below were recorded with [VHS](https://github.com/charmbracelet/vhs) against real vendors — genuine output, not staged. `eval_translate.ulx`'s is left deliberately unflattering — it shows `ulx bench` failing outright on a mid-run judge escalation rather than suspending gracefully, called out below rather than smoothed over. `pdf_qa.ulx`'s recording predates `pdf.extract_text` becoming real (it was a canned placeholder when recorded) — the source below is the current, real version; the GIF hasn't been re-recorded yet.
 
 ## `translate.ulx` — judge-checked retry with human escalation
 
@@ -72,18 +72,18 @@ ulx run summarize.ulx Summarize --arg doc=fixtures/sample.pdf
 
 ## `pdf_qa.ulx` — OCR fallback for PDF question-answering
 
-Deterministic text extraction first; falls back to `vision` on page images only when there's no text layer. **Honest caveat**: `pdf.extract_text` is a placeholder today, so the `vision` fallback branch never actually fires in the current implementation — the demo shows this as-is rather than hiding it.
+Deterministic text extraction first; falls back to `vision` on page images only when there's no text layer. `pdf.extract_text` is real (pure-Rust PDF text extraction), so for a PDF that has a text layer — like the shipped `fixtures/sample.pdf` — the `vision` fallback branch is never reached at all. `pdf.to_images` is honestly not implemented (real PDF rasterization needs a bundled rendering engine — see [Standard Library](../standard-library.md)), which is exactly why it's called only inside the `else` branch rather than unconditionally: a genuinely scanned, no-text-layer PDF would hit that branch's clear error instead of a silent fake result.
 
 ```ulexite
 import "pdf" as pdf
 import "vision" as vision
 
 conversation PdfQA(doc: pdf, question: text) -> text {
-  with {
-    text_layer   = pdf.extract_text(doc)
-    page_images  = pdf.to_images(doc)
-  }
-  ocr_text = if text_layer.length > 0 { text_layer } else {
+  text_layer = pdf.extract_text(doc)
+  ocr_text = if text_layer.length > 0 {
+    text_layer
+  } else {
+    page_images = pdf.to_images(doc)
     ask vision(page_images) { user: """Transcribe all text in these pages.""" }
   }
   ask chat() {

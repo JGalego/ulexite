@@ -7,7 +7,7 @@ description: The stdlib modules Ulexite ships or plans — capability kinds, jud
 
 The standard library is where technique that keeps evolving lives — separately from the language grammar. DSPy-style prompt optimization, RAG retrieval recipes, and provider-specific quirks are stdlib concerns, versioned and upgradable independently of the compiler, so an improvement to *how* you retrieve or optimize lands as a library version bump, not a language break.
 
-This page surveys every module the design calls for. Read the callouts carefully: **a small, real slice of this is implemented today** — `pdf`, `embedding`, and `vector` have working code behind them (with one important caveat on `pdf`), and everything else described below is the intended design, not yet wired up to the runtime. Where a module isn't implemented, the underlying capability is usually still reachable a different way — through an explicit `ask <capability>(...)` call rather than a stdlib helper function — and this page says so each time.
+This page surveys every module the design calls for. Read the callouts carefully: **a small, real slice of this is implemented today** — `pdf.extract_text`, `embedding`, and `vector` have real working code behind them, `pdf.to_images` is honestly not implemented (see the caveat below), and everything else described below is the intended design, not yet wired up to the runtime. Where a module isn't implemented, the underlying capability is usually still reachable a different way — through an explicit `ask <capability>(...)` call rather than a stdlib helper function — and this page says so each time.
 
 ## What's real right now
 
@@ -15,15 +15,15 @@ Import a module with `import "name" as name`, then call `module.function(...)`. 
 
 | Call | What it does |
 |---|---|
-| `pdf.extract_text(doc)` | Returns a **canned placeholder string**, not real text extraction — see the caveat below |
-| `pdf.to_images(doc)` | Returns a **canned placeholder image**, not real page rasterization — same caveat |
+| `pdf.extract_text(doc)` | **Real text extraction** (via the pure-Rust `pdf-extract` crate) — a local file path or a `data:application/pdf;base64,...` URI both work |
+| `pdf.to_images(doc)` | Honestly **not implemented** — see the caveat below |
 | `embedding.of(text, model: capability(embed), provider: "...")` | A real call: resolves an `embed`-capable provider and returns a live embedding vector |
 | `vector.cosine_similarity(a, b)` | A real, deterministic similarity computation over two embedding lists |
 | `vector.nearest(query: ..., index: ..., k: ...)` | A real, deterministic top-k search over a dataset of `{..., embedding: ...}` rows |
 
 Everything else named in the sections below — every `judge.*` helper, `vision.*`/`image.*`, `audio.*`/`video.*`, `json`/`xml`/`html`/`csv`, `http`, `trace.*`, most of `dataset.*`, `cache.*`, `retry.*`, the `python`/`javascript`/`shell` FFI, `optimize.*`, `metrics.*`/`assert.*` helpers, and `llm.pin`/`cheapest`/`fastest` — calls into the stdlib dispatcher and gets a clear "not implemented" error naming the exact call, rather than silently doing nothing. None of this is hidden: the runtime's own source comments point at this gap directly.
 
-**The `pdf` caveat, concretely**: [`examples/pdf_qa.ulx`](https://github.com/JGalego/ulexite/tree/main/examples/pdf_qa.ulx) calls `pdf.extract_text(doc)` and `pdf.to_images(doc)`, and both always return the same placeholder string/image regardless of what `doc` actually contains. That means a branch like `if text_layer.length > 0 { text_layer } else { ask vision(page_images) {...} }` always takes the "real text layer" branch in practice — the vision-OCR fallback is declared and pinned in the example for when real extraction lands, but never actually executes today.
+**The `pdf.to_images` caveat, concretely**: rasterizing a PDF page to a bitmap needs a real rendering engine (pdfium/poppler/mupdf) — none of them are pure Rust, and every option needs a real, several-hundred-KB platform-specific binary bundled per release target, which is a packaging decision bigger than swapping in a crate. Calling it returns a clear `NotImplemented` error rather than a fake image. [`examples/pdf_qa.ulx`](https://github.com/JGalego/ulexite/tree/main/examples/pdf_qa.ulx) calls `pdf.to_images` only inside the `else` branch of `if text_layer.length > 0 { ... } else { ... }` — for a PDF that has a real text layer (like the shipped `fixtures/sample.pdf`), `pdf.extract_text` alone succeeds and `to_images` is never reached; only a genuinely scanned, no-text-layer PDF would hit that branch's honest error today.
 
 ## `llm` — capability declarations and chat
 
@@ -43,7 +43,7 @@ Planned: `audio.transcribe(audio) -> text`, `audio.synthesize(text, voice: text)
 
 ## `pdf`
 
-Planned: `pdf.extract_text(pdf) -> text`, `pdf.extract_tables(pdf) -> list<csv>`, `pdf.to_images(pdf) -> list<image>` for page rasterization ahead of a vision-capability QA pass over scanned documents. `extract_text` and `to_images` exist as stdlib calls today, but — as described above — both return a fixed placeholder rather than real extraction/rasterization. `extract_tables` isn't implemented at all.
+`pdf.extract_text(pdf) -> text` is real (see above). Planned but not implemented: `pdf.extract_tables(pdf) -> list<csv>`, and `pdf.to_images(pdf) -> list<image>` for page rasterization ahead of a vision-capability QA pass over scanned documents — both still call into the stdlib dispatcher and get a clear "not implemented" error.
 
 ## `json` / `xml` / `html` / `csv`
 
