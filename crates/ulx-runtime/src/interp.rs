@@ -1023,6 +1023,19 @@ fn eval_ask(
         let v = eval_expr(ctx, &a.value, env)?;
         invocation_args.insert(a.name.clone().unwrap_or_else(|| "_".to_string()), v);
     }
+    // An unsettled `Draft<T>` fed straight into another `ask` as a plain
+    // value (no `match` in between) propagates rather than being handed to
+    // the provider — every vendor adapter's argument extraction (e.g.
+    // `artifact::first_artifact_arg`) only recognizes `Value::Text`, so an
+    // `Unsettled` here would otherwise look identical to a missing
+    // argument and surface as a confusing "call has no X argument" error
+    // instead of the outcome that actually produced it.
+    if let Some(outcome) = invocation_args.values().find_map(|v| match v {
+        Value::Unsettled(o) => Some(o.clone()),
+        _ => None,
+    }) {
+        return Ok(Value::Unsettled(outcome));
+    }
     let invocation = Invocation {
         messages: evaluated_messages,
         args: invocation_args,

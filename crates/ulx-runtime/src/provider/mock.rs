@@ -47,6 +47,14 @@ impl Provider for MockProvider {
                     .map(|m| format!("{}: {}", m.role, m.text))
                     .collect::<Vec<_>>()
                     .join(" | ");
+                // Same idea as the MOCK_JUDGE_FAIL/MOCK_JUDGE_ESCALATE
+                // markers below, for the other side of §9.3: this is the
+                // only way to deterministically exercise an unsettled
+                // `Draft<T>` (timeout/rate-limit/refusal) offline, since
+                // every real error path only fires against a live vendor.
+                if combined.contains("MOCK_TIMEOUT") {
+                    return Err(ProviderError::Timeout);
+                }
                 Ok(Value::Text(format!(
                     "[mock:{}] response to -> {}",
                     capability,

@@ -3,7 +3,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
 use ulx_ir::lower_program;
-use ulx_runtime::value::{Value, Verdict};
+use ulx_runtime::value::{DraftOutcome, Value, Verdict};
 use ulx_runtime::{Cache, ProviderRegistry, RunContext, RuntimeError, TraceWriter};
 
 fn setup(src: &str, tmp: &tempfile::TempDir) -> ulx_ir::IrProgram {
@@ -143,6 +143,42 @@ fn judge_escalate_suspends_then_resumes_after_approval() {
         result,
         Value::Text("approved: use the last draft".to_string())
     );
+}
+
+const CHAINED_UNSETTLED_SRC: &str = r#"
+conversation ChainedUnsettled(prompt: text) -> text {
+  ask chat() { user: """{prompt}""" } -> step1: text
+  ask chat(step1) { user: """follow up""" } -> step2: text
+  step2
+}
+"#;
+
+/// Regression test for a real bug: an unsettled `Draft<T>` (timeout/
+/// rate-limit/refusal, §9.3) fed straight into a later `ask` as a plain
+/// value — no `match` in between — used to be evaluated into the next
+/// invocation's args and handed to the provider anyway. Every vendor
+/// adapter's argument extraction only recognizes `Value::Text`, so the
+/// `Unsettled` looked identical to a *missing* argument and surfaced as a
+/// confusing "call has no X argument" provider error instead of the
+/// timeout that actually caused it. `eval_ask` now short-circuits before
+/// invoking the provider at all: an unsettled input propagates as the
+/// same unsettled `Draft`, exactly as if the second `ask` itself had
+/// timed out.
+#[test]
+fn unsettled_draft_fed_into_next_ask_propagates_instead_of_erroring() {
+    let tmp = tempfile::tempdir().unwrap();
+    let program = setup(CHAINED_UNSETTLED_SRC, &tmp);
+    let ctx = make_ctx(&program, &tmp, "run_unsettled");
+
+    let mut args = BTreeMap::new();
+    args.insert(
+        "prompt".to_string(),
+        Value::Text("MOCK_TIMEOUT please".to_string()),
+    );
+
+    let result = ulx_runtime::run_conversation(&ctx, "ChainedUnsettled", args)
+        .expect("should propagate, not error");
+    assert_eq!(result, Value::Unsettled(DraftOutcome::Timeout));
 }
 
 /// Regression test for a real bug: escalate cache keys didn't mix in
