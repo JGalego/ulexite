@@ -751,6 +751,7 @@ fn run_interactive(
                 cache_key,
                 reason,
                 target,
+                ..
             }) => match prompt_decision(&target, &reason) {
                 Some(decision) => {
                     if let Err(e) = ctx.cache.put(&cache_key, &decision) {

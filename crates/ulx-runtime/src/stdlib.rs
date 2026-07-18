@@ -30,6 +30,7 @@ use crate::RunContext;
 /// parameter can actually contain. An `http(s)://` reference is refused
 /// with a clear message rather than fetched — this module makes no network
 /// calls of its own.
+#[cfg(feature = "real-providers")]
 fn read_pdf_bytes(reference: &str) -> Result<Vec<u8>, RuntimeError> {
     if reference.starts_with("http://") || reference.starts_with("https://") {
         return Err(RuntimeError::NotImplemented(format!(
@@ -72,6 +73,7 @@ pub fn call(
     args: &[StdlibArg],
 ) -> Result<Option<Value>, RuntimeError> {
     match (module, function) {
+        #[cfg(feature = "real-providers")]
         ("pdf", "extract_text") => {
             let reference = get(args, "doc", 0)
                 .and_then(Value::as_text)
@@ -88,6 +90,12 @@ pub fn call(
             })?;
             Ok(Some(Value::Text(text)))
         }
+        #[cfg(not(feature = "real-providers"))]
+        ("pdf", "extract_text") => Err(RuntimeError::NotImplemented(
+            "pdf.extract_text: not available in this build (no local filesystem/`pdf-extract` — \
+             e.g. the in-browser playground)"
+                .to_string(),
+        )),
         ("pdf", "to_images") => Err(RuntimeError::NotImplemented(
             "pdf.to_images: rasterizing a PDF page to a bitmap needs a real rendering engine \
              (pdfium/poppler/mupdf) — none are pure Rust, so this isn't implemented rather than \
@@ -200,7 +208,7 @@ fn as_f64(v: &Value) -> Option<f64> {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "real-providers"))]
 mod tests {
     use super::*;
 

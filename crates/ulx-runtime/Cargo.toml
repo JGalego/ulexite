@@ -4,6 +4,20 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+[features]
+default = ["real-providers", "parallel-threads"]
+# Real, HTTP-backed vendor adapters (`ureq`) and local file access
+# (`pdf-extract`'s `pdf.extract_text`) — neither targets
+# `wasm32-unknown-unknown`, so the in-browser build (`ulx-wasm`) disables
+# this and gets only `MockProvider`/`BrowserLocalProvider`.
+real-providers = ["dep:ureq", "dep:pdf-extract"]
+# `with { ... }` blocks run each branch on a genuine OS thread
+# (`std::thread::scope`) — unavailable on `wasm32-unknown-unknown`; with
+# this off, `eval_parallel` falls back to running branches sequentially
+# (see its module docs for why that's an honest, not a degraded, fallback
+# for a browser backend that can only run one model call at a time anyway).
+parallel-threads = []
+
 [dependencies]
 ulx-ast = { workspace = true }
 ulx-ir = { workspace = true }
@@ -11,9 +25,13 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 sha2 = { workspace = true }
 regex = "1"
-ureq = { version = "2", features = ["json"] }
+ureq = { version = "2", features = ["json"], optional = true }
 base64 = "0.22"
-pdf-extract = "0.12"
+pdf-extract = { version = "0.12", optional = true }
+# A `std::time::SystemTime`/`Instant` drop-in that uses `Date.now()`/
+# `Performance.now()` on `wasm32-unknown-unknown` instead of panicking —
+# `trace.rs`'s `now_ms()` needs this to run in-browser at all.
+web-time = "1"
 
 [dev-dependencies]
 ulx-syntax = { workspace = true }

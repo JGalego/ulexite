@@ -27,21 +27,63 @@ use serde::{Deserialize, Serialize};
 
 use crate::value::Value;
 
+// Real HTTP-backed vendor adapters all go through `ureq` (blocking HTTP),
+// which doesn't target `wasm32-unknown-unknown` — gated behind
+// `real-providers` (on by default, off for the in-browser `ulx-wasm` build)
+// so the crate compiles for wasm at all. `judge`/`mock`/`browser` are pure
+// logic with no I/O, so they're always available.
+#[cfg(feature = "real-providers")]
 mod anthropic;
+#[cfg(feature = "real-providers")]
 mod artifact;
+#[cfg(feature = "real-providers")]
 mod azure_openai;
+mod browser;
+#[cfg(feature = "real-providers")]
 mod cohere;
+#[cfg(feature = "real-providers")]
 mod factory;
+#[cfg(feature = "real-providers")]
 mod gemini;
 mod judge;
 mod mock;
+#[cfg(feature = "real-providers")]
 mod ollama;
+#[cfg(feature = "real-providers")]
 mod openai_compat;
+#[cfg(feature = "real-providers")]
 mod openai_shape;
+#[cfg(feature = "real-providers")]
 mod transport;
 
+pub use browser::BrowserLocalProvider;
+#[cfg(feature = "real-providers")]
 pub use factory::{build_provider, ProviderBuildError, ProviderSpec};
 pub use mock::MockProvider;
+
+/// The chat-ready `{role, text}` prompt for a rubric-evaluation ("judge")
+/// call, built from the same shared `judge::build_prompt` every real
+/// vendor's `judge` match arm feeds into `judge_via_chat` — exposed here so
+/// `interp.rs` can hand it to an out-of-band resolver (an in-browser model,
+/// via `RuntimeError::Suspended`) without duplicating the prompt format or
+/// reaching into a private module.
+pub(crate) fn judge_prompt_messages(request: &Invocation) -> Vec<Message> {
+    judge::build_prompt(request).messages
+}
+
+/// Parses a suspended `judge` call's raw model reply into the same
+/// `Value::Verdict` shape a real vendor's `invoke("judge", ...)` would have
+/// produced and cached. Public (unlike `judge_prompt_messages`) because
+/// `ulx-wasm`'s in-browser driver needs it from outside this crate: once a
+/// `RuntimeError::Suspended { target: "judge", .. }` hands the driver a
+/// chat-ready prompt and it gets raw completion text back from its local
+/// model, that text has to be parsed into a `Verdict` before being written
+/// into the cache — a `Value::Text` there would break the interpreter's own
+/// `match judge Name(x) { Pass => ..., Fail(reason) => ... }` handling,
+/// which expects `Value::Verdict`.
+pub fn judge_reply_to_value(text: &str) -> Value {
+    Value::Verdict(judge::parse_verdict(text))
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Message {
@@ -192,6 +234,24 @@ impl ProviderRegistry {
         r
     }
 
+    /// Same "override whatever's declared" trick as `with_mock_named`, for
+    /// the in-browser driver: every provider name a loaded `.ulx` source
+    /// declares (regardless of that decl's own `vendor:`) resolves to the
+    /// same `BrowserLocalProvider` — no `ulexite.toml`/`ProviderSpec`
+    /// parsing involved at all.
+    pub fn with_browser_local_named(names: impl IntoIterator<Item = String>) -> Self {
+        let mut r = Self::new();
+        let mut any = false;
+        for name in names {
+            r.register(name.clone(), Box::new(BrowserLocalProvider::new(name)));
+            any = true;
+        }
+        if !any {
+            r.register("local", Box::new(BrowserLocalProvider::new("local")));
+        }
+        r
+    }
+
     pub fn register(&mut self, name: impl Into<String>, provider: Box<dyn Provider>) {
         self.providers.push((name.into(), provider));
     }
@@ -249,6 +309,7 @@ impl Default for ProviderRegistry {
 /// manifest-level `params` defaults (`ulexite.toml`'s `[providers.*.params]`,
 /// §14.1) — shared by every real adapter so each one only deals with
 /// mapping the resolved value into its own vendor-specific JSON shape.
+#[cfg(feature = "real-providers")]
 pub(crate) fn resolve_model(args: &BTreeMap<String, Value>, default_model: &str) -> String {
     args.get("model")
         .and_then(Value::as_text)
@@ -256,6 +317,7 @@ pub(crate) fn resolve_model(args: &BTreeMap<String, Value>, default_model: &str)
         .to_string()
 }
 
+#[cfg(feature = "real-providers")]
 pub(crate) fn resolve_param<'a>(
     args: &'a BTreeMap<String, Value>,
     defaults: &'a BTreeMap<String, Value>,
@@ -264,6 +326,7 @@ pub(crate) fn resolve_param<'a>(
     args.get(key).or_else(|| defaults.get(key))
 }
 
+#[cfg(feature = "real-providers")]
 pub(crate) fn resolve_f64(
     args: &BTreeMap<String, Value>,
     defaults: &BTreeMap<String, Value>,
@@ -276,6 +339,7 @@ pub(crate) fn resolve_f64(
     }
 }
 
+#[cfg(feature = "real-providers")]
 pub(crate) fn resolve_i64(
     args: &BTreeMap<String, Value>,
     defaults: &BTreeMap<String, Value>,

@@ -6,9 +6,13 @@ use std::cell::RefCell;
 use std::io::{BufRead, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
+// `std::time::SystemTime::now()` panics at runtime on
+// `wasm32-unknown-unknown` — `web-time` is a drop-in replacement that uses
+// `Date.now()` there and is a plain passthrough to `std::time` everywhere
+// else.
+use web_time::{SystemTime, UNIX_EPOCH};
 
 use crate::provider::Message;
 use crate::value::Value;
@@ -161,7 +165,7 @@ pub type SendCallback = Box<dyn Fn(&str, &[Message]) + Send + Sync>;
 pub struct TraceWriter {
     run_id: String,
     path: PathBuf,
-    file: Mutex<std::fs::File>,
+    file: Mutex<Box<dyn Write + Send>>,
     seq: Mutex<u64>,
     on_record: Option<RecordCallback>,
     on_send: Option<SendCallback>,
@@ -179,11 +183,27 @@ impl TraceWriter {
         Ok(TraceWriter {
             run_id: run_id.to_string(),
             path,
-            file: Mutex::new(file),
+            file: Mutex::new(Box::new(file)),
             seq: Mutex::new(0),
             on_record: None,
             on_send: None,
         })
+    }
+
+    /// No filesystem exists on `wasm32-unknown-unknown` — the in-browser
+    /// driver has no use for a durable JSONL log anyway (there's no second
+    /// process to replay it later), so records are simply discarded after
+    /// `on_record`/`on_send` callbacks fire. Use `with_on_record` to observe
+    /// a run live instead.
+    pub fn in_memory(run_id: &str) -> Self {
+        TraceWriter {
+            run_id: run_id.to_string(),
+            path: PathBuf::new(),
+            file: Mutex::new(Box::new(std::io::sink())),
+            seq: Mutex::new(0),
+            on_record: None,
+            on_send: None,
+        }
     }
 
     /// Attaches a live callback, fired with each newly-written record (see

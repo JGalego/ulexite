@@ -386,8 +386,10 @@ fn parallel_with_block_escalates_get_distinct_deterministic_cache_keys() {
 /// `h.join().unwrap_or_else(...)`), and that the *other*, well-behaved
 /// branch still completes normally rather than getting dragged down with
 /// it.
+#[cfg(feature = "parallel-threads")]
 struct PanickyProvider;
 
+#[cfg(feature = "parallel-threads")]
 impl ulx_runtime::Provider for PanickyProvider {
     fn id(&self) -> &str {
         "panicky"
@@ -404,6 +406,12 @@ impl ulx_runtime::Provider for PanickyProvider {
     }
 }
 
+// Only meaningful with real OS threads: the sequential fallback
+// (`parallel-threads` off) has no thread boundary to catch a panic at all,
+// so a panicking branch panics the whole process, same as any other bug —
+// an honest consequence of that fallback (see `eval_parallel`'s docs), not
+// a regression to guard here.
+#[cfg(feature = "parallel-threads")]
 #[test]
 fn with_block_panic_in_one_branch_does_not_abort_the_process_or_the_other_branch() {
     let tmp = tempfile::tempdir().unwrap();
@@ -511,6 +519,7 @@ fn dataset_and_vector_nearest_work_end_to_end() {
 /// unit test calling the extraction helper directly) that `pdf.extract_text`
 /// is real: it finds the actual story text in the project's own PDF
 /// fixture, not a canned placeholder string.
+#[cfg(feature = "real-providers")]
 #[test]
 fn pdf_extract_text_is_real_not_mocked() {
     let tmp = tempfile::tempdir().unwrap();
@@ -1388,4 +1397,125 @@ fn on_send_fires_before_the_blocking_call_completes_on_record_fires_after() {
         "on_record should only fire once the provider call has actually \
          returned, at least `delay` after on_send fired: {record_elapsed:?}"
     );
+}
+
+/// Proves the in-browser suspend/resume generalization end to end, entirely
+/// in-process (no filesystem, no OS threads) — the exact mechanism
+/// `ulx-wasm`'s `step()`/`provideAnswer()` exports will drive from JS,
+/// standing in for wllama with a canned reply per suspend. `Translate` has
+/// two sequential provider calls in its happy path (the `ask chat` for
+/// `draft`, then `judge Fluency`), so a clean run should suspend exactly
+/// twice before completing.
+#[test]
+fn browser_suspend_on_provider_miss_resumes_via_in_memory_cache() {
+    let tmp = tempfile::tempdir().unwrap();
+    let program = setup(TRANSLATE_SRC, &tmp);
+
+    let cache = Cache::in_memory();
+    let trace = TraceWriter::in_memory("browser_run");
+    let ctx = RunContext::new(
+        &program,
+        ProviderRegistry::with_browser_local_named(std::iter::empty()),
+        cache,
+        trace,
+        "browser_run".to_string(),
+        tmp.path().to_path_buf(),
+    )
+    .with_suspend_on_provider_miss();
+
+    let mut args = BTreeMap::new();
+    args.insert("source".to_string(), Value::Text("hello".to_string()));
+    args.insert("target_lang".to_string(), Value::Text("fr".to_string()));
+
+    let mut steps = 0;
+    loop {
+        steps += 1;
+        assert!(steps <= 10, "suspend/resume loop should converge quickly");
+        match ulx_runtime::run_conversation(&ctx, "Translate", args.clone()) {
+            Ok(Value::Text(s)) => {
+                assert_eq!(s, "a draft translation");
+                break;
+            }
+            Ok(other) => panic!("expected Text, got {other:?}"),
+            Err(RuntimeError::Suspended {
+                cache_key,
+                target,
+                messages,
+                ..
+            }) => {
+                assert!(
+                    !messages.is_empty(),
+                    "a chat/judge suspend should carry messages"
+                );
+                // Stand in for wllama plus, for a judge suspend, the same
+                // reply-parsing `provideAnswer()` would call in `ulx-wasm` —
+                // written under the exact cache key the suspend reported.
+                let value = if target == "judge" {
+                    ulx_runtime::provider::judge_reply_to_value("PASS")
+                } else {
+                    Value::Text("a draft translation".to_string())
+                };
+                ctx.cache.put(&cache_key, &value).unwrap();
+            }
+            Err(other) => panic!("expected Ok or Suspended, got {other:?}"),
+        }
+    }
+    assert_eq!(
+        steps, 3,
+        "one suspend for the ask chat call, one for the judge call, then a completing resume"
+    );
+}
+
+/// The judge path suspends too, with a chat-ready system/user prompt (not
+/// the subject/rubric trace-display pair) — this is what lets an in-browser
+/// model actually answer it. Forces the `ask chat` call to resolve from the
+/// cache directly (skipping the first suspend) so this test isolates the
+/// judge call's suspend behavior specifically.
+#[test]
+fn browser_suspend_on_judge_call_carries_a_chat_ready_prompt() {
+    let tmp = tempfile::tempdir().unwrap();
+    let program = setup(TRANSLATE_SRC, &tmp);
+
+    let cache = Cache::in_memory();
+    let trace = TraceWriter::in_memory("browser_judge");
+    let ctx = RunContext::new(
+        &program,
+        ProviderRegistry::with_browser_local_named(std::iter::empty()),
+        cache,
+        trace,
+        "browser_judge".to_string(),
+        tmp.path().to_path_buf(),
+    )
+    .with_suspend_on_provider_miss();
+
+    let mut args = BTreeMap::new();
+    args.insert("source".to_string(), Value::Text("hello".to_string()));
+    args.insert("target_lang".to_string(), Value::Text("fr".to_string()));
+
+    // First suspend: the `ask chat` call. Resolve it directly.
+    let err = ulx_runtime::run_conversation(&ctx, "Translate", args.clone()).unwrap_err();
+    let RuntimeError::Suspended { cache_key, .. } = err else {
+        panic!("expected the first suspend to be the ask chat call");
+    };
+    ctx.cache
+        .put(&cache_key, &Value::Text("a draft translation".to_string()))
+        .unwrap();
+
+    // Second suspend: `judge Fluency(draft)` — this is the one under test.
+    let err = ulx_runtime::run_conversation(&ctx, "Translate", args).unwrap_err();
+    match err {
+        RuntimeError::Suspended {
+            target, messages, ..
+        } => {
+            assert_eq!(target, "judge");
+            assert_eq!(messages.len(), 2, "expects a system + user message");
+            assert_eq!(messages[0].role, "system");
+            assert_eq!(messages[1].role, "user");
+            assert!(
+                messages[1].text.contains("a draft translation"),
+                "the user message should embed the subject being judged: {messages:?}"
+            );
+        }
+        other => panic!("expected the second suspend to be the judge call, got {other:?}"),
+    }
 }

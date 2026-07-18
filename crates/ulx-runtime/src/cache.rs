@@ -13,47 +13,113 @@
 //! caller-supplied content hash instead of JSON-serialized `Value`s keyed
 //! by `cache_key()`.
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 
 use crate::value::Value;
 
+enum Store {
+    Disk(PathBuf),
+    /// No filesystem exists on `wasm32-unknown-unknown` — the in-browser
+    /// driver's whole run lives in one page session, so a plain in-process
+    /// map is sufficient (no need to survive a reload, unlike the CLI's
+    /// disk-backed cache surviving across separate `ulx` invocations).
+    /// `Arc<Mutex<_>>` rather than `Rc<RefCell<_>>` so `Cache` stays
+    /// `Send + Sync` on every target, and so it's cheaply `.clone()`-able —
+    /// the in-browser driver rebuilds a fresh `RunContext` each `step()`
+    /// call while the cache contents persist across the whole run, the same
+    /// pattern `ulx-cli`'s resume loop uses for its disk-backed cache.
+    Memory(Arc<Mutex<HashMap<String, Value>>>),
+}
+
 pub struct Cache {
-    root: PathBuf,
+    store: Store,
+}
+
+impl Clone for Cache {
+    fn clone(&self) -> Self {
+        match &self.store {
+            Store::Disk(root) => Cache {
+                store: Store::Disk(root.clone()),
+            },
+            Store::Memory(map) => Cache {
+                store: Store::Memory(map.clone()),
+            },
+        }
+    }
 }
 
 impl Cache {
     pub fn new(root: impl Into<PathBuf>) -> std::io::Result<Self> {
         let root = root.into();
         std::fs::create_dir_all(&root)?;
-        Ok(Cache { root })
+        Ok(Cache {
+            store: Store::Disk(root),
+        })
     }
 
-    fn path_for(&self, key: &str) -> PathBuf {
+    pub fn in_memory() -> Self {
+        Cache {
+            store: Store::Memory(Arc::new(Mutex::new(HashMap::new()))),
+        }
+    }
+
+    fn path_for(&self, root: &Path, key: &str) -> PathBuf {
         let (prefix, rest) = key.split_at(key.len().min(2));
-        self.root.join(prefix).join(rest)
+        root.join(prefix).join(rest)
     }
 
     pub fn get(&self, key: &str) -> Option<Value> {
-        let path = self.path_for(key);
-        let bytes = std::fs::read(path).ok()?;
-        serde_json::from_slice(&bytes).ok()
+        match &self.store {
+            Store::Disk(root) => {
+                let path = self.path_for(root, key);
+                let bytes = std::fs::read(path).ok()?;
+                serde_json::from_slice(&bytes).ok()
+            }
+            Store::Memory(map) => map
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .get(key)
+                .cloned(),
+        }
     }
 
     pub fn put(&self, key: &str, value: &Value) -> std::io::Result<()> {
-        let path = self.path_for(key);
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)?;
+        match &self.store {
+            Store::Disk(root) => {
+                let path = self.path_for(root, key);
+                if let Some(parent) = path.parent() {
+                    std::fs::create_dir_all(parent)?;
+                }
+                let bytes = serde_json::to_vec_pretty(value).expect("Value always serializes");
+                std::fs::write(path, bytes)
+            }
+            Store::Memory(map) => {
+                map.lock()
+                    .unwrap_or_else(|p| p.into_inner())
+                    .insert(key.to_string(), value.clone());
+                Ok(())
+            }
         }
-        let bytes = serde_json::to_vec_pretty(value).expect("Value always serializes");
-        std::fs::write(path, bytes)
     }
 
     pub fn has(&self, key: &str) -> bool {
-        self.path_for(key).exists()
+        match &self.store {
+            Store::Disk(root) => self.path_for(root, key).exists(),
+            Store::Memory(map) => map
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .contains_key(key),
+        }
     }
 
-    pub fn root(&self) -> &Path {
-        &self.root
+    /// Only meaningful for a disk-backed cache — `None` for `in_memory()`.
+    pub fn root(&self) -> Option<&Path> {
+        match &self.store {
+            Store::Disk(root) => Some(root),
+            Store::Memory(_) => None,
+        }
     }
 }
 

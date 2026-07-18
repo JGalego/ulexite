@@ -10,7 +10,7 @@ export default function PlaygroundPage(): ReactNode {
   return (
     <Layout
       title="Playground"
-      description="Try Ulexite's parser and type checker live in your browser, compiled to WebAssembly.">
+      description="Try Ulexite's parser, type checker, and a real local model live in your browser, compiled to WebAssembly.">
       <main className={styles.main}>
         <div className="container">
           <Heading as="h1">Playground</Heading>
@@ -18,11 +18,14 @@ export default function PlaygroundPage(): ReactNode {
             Edit the source on the left — diagnostics from the real{' '}
             <code>ulx-syntax</code> parser and <code>ulx-sema</code> semantic
             analyzer update as you type, compiled to WebAssembly and running
-            entirely in your browser. Nothing is sent anywhere; there's no
-            network call, no provider, and no execution — this is "try the
-            compiler," not "run a conversation." See{' '}
+            entirely in your browser. Hit <strong>Run</strong> in the panel on
+            the right to actually execute the conversation against a real,
+            small local model — no API key, no account, and no data ever
+            leaves your browser for a provider call; the only network traffic
+            is a one-time, opt-in download of the model file itself (from
+            Hugging Face's public CDN), cached afterward. See{' '}
             <Link to="/docs/getting-started">Getting Started</Link> for how
-            to actually run one.
+            to run one against a full-size model instead.
           </p>
           <Playground />
         </div>

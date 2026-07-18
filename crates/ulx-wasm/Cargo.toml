@@ -9,8 +9,19 @@ crate-type = ["cdylib"]
 
 [dependencies]
 ulx-ast = { workspace = true }
+ulx-ir = { workspace = true }
 ulx-syntax = { workspace = true }
 ulx-sema = { workspace = true }
+# A direct (non-`workspace = true`) path dependency, deliberately: Cargo
+# silently ignores a member's `default-features = false` override on a
+# workspace-inherited dependency unless `[workspace.dependencies]` itself
+# already sets `default-features = false` — and every other consumer
+# (`ulx-cli`) needs those defaults on. `default-features = false` here turns
+# off `real-providers` (`ureq`, `pdf-extract`) and `parallel-threads`
+# (`std::thread::scope`) — neither targets `wasm32-unknown-unknown`; see
+# `ulx-runtime`'s Cargo.toml.
+ulx-runtime = { path = "../ulx-runtime", default-features = false }
 serde = { workspace = true }
+serde_json = { workspace = true }
 wasm-bindgen = "0.2"
 serde-wasm-bindgen = "0.6"

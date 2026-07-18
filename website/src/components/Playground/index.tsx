@@ -6,6 +6,7 @@ import {useColorMode} from '@docusaurus/theme-common';
 import {Highlight, Prism, themes} from 'prism-react-renderer';
 
 import registerUlexite from '@site/src/prism-ulexite';
+import RunPanel, {type WasmRunApi} from './RunPanel';
 
 import styles from './styles.module.css';
 
@@ -15,11 +16,15 @@ import styles from './styles.module.css';
 // its own `prism` instance rather than reading the swizzled global one.
 registerUlexite(Prism);
 
-// The playground runs `ulx-syntax`/`ulx-sema` compiled to WASM, right in
-// the browser — the same single-file parse + semantic-analysis fast path
+// Diagnostics run `ulx-syntax`/`ulx-sema` compiled to WASM, right in the
+// browser — the same single-file parse + semantic-analysis fast path
 // `ulx-lsp` runs on every keystroke (see `crates/ulx-lsp/src/analysis.rs`).
-// It doesn't execute anything: no import resolution, no providers, no
-// live LLM calls. See `crates/ulx-wasm` for the Rust side.
+// Run (see `RunPanel.tsx`) genuinely executes the conversation, against a
+// real local model (`wllama.ts`) driven entirely from JS — no import
+// resolution and no real HTTP-backed vendor adapters (`ulx-runtime` compiles
+// for wasm with those features off; see `crates/ulx-wasm/src/run.rs`), but
+// a real `chat`/`judge` capability call, not a demo. See `crates/ulx-wasm`
+// for the Rust side.
 const DEFAULT_SOURCE = `judge Fluency(subject: text) -> Verdict {
   rubric: """Is this an accurate, fluent translation of the source?
              Answer Pass, Fail(reason), or Escalate if you cannot tell."""
@@ -54,6 +59,10 @@ type Diagnostic = {
 type CheckFn = (source: string) => Diagnostic[];
 type Status = 'loading' | 'ready' | 'error';
 
+// `check` runs on every keystroke; the rest (`WasmRunApi`, see
+// `RunPanel.tsx`) is only touched once the Run panel actually starts a run.
+type WasmModule = WasmRunApi & {check: CheckFn};
+
 function PlaygroundInner(): ReactNode {
   // `web`-target wasm-bindgen output, served as a static asset (not run
   // through webpack's module graph) — see the `webpackIgnore` import
@@ -67,6 +76,7 @@ function PlaygroundInner(): ReactNode {
   const [status, setStatus] = useState<Status>('loading');
   const [loadError, setLoadError] = useState<string | null>(null);
   const checkRef = useRef<CheckFn | null>(null);
+  const wasmRef = useRef<WasmModule | null>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const highlightRef = useRef<HTMLPreElement | null>(null);
   const {colorMode} = useColorMode();
@@ -90,6 +100,7 @@ function PlaygroundInner(): ReactNode {
         await mod.default();
         if (cancelled) return;
         checkRef.current = mod.check as CheckFn;
+        wasmRef.current = mod as unknown as WasmModule;
         setStatus('ready');
       } catch (err) {
         if (cancelled) return;
@@ -188,9 +199,15 @@ function PlaygroundInner(): ReactNode {
         <p className={styles.hint}>
           This runs the real parser and single-file semantic analyzer, compiled
           to WebAssembly — the same checks <code>ulx check</code> and{' '}
-          <code>ulx-lsp</code> run. It doesn't resolve imports or execute
-          anything against a provider.
+          <code>ulx-lsp</code> run.
         </p>
+        {status === 'ready' && wasmRef.current && (
+          <RunPanel
+            wasm={wasmRef.current}
+            source={source}
+            canRun={diagnostics !== null && diagnostics.every((d) => d.severity !== 'error')}
+          />
+        )}
       </div>
     </div>
   );

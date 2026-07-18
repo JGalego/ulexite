@@ -607,6 +607,7 @@ pub fn run_benchmark(ctx: &RunContext, name: &str) -> Result<BenchmarkReport, Ru
                     cache_key,
                     reason,
                     target,
+                    ..
                 }) => {
                     report.rows.push(BenchmarkRowResult {
                         row_index,
@@ -843,6 +844,8 @@ fn eval_parallel(
     // *same* full stack (unlike `ESCALATE_PATH`, nothing per-branch is
     // appended here — the call stack doesn't distinguish sibling branches).
     let parent_call_stack = crate::trace::current_stack();
+
+    #[cfg(feature = "parallel-threads")]
     let results: Vec<(String, Result<Value, RuntimeError>)> = std::thread::scope(|scope| {
         // Paired with its own name up front, since a panicking closure
         // never gets to return `(name.clone(), r)` itself -- the name has
@@ -889,6 +892,40 @@ fn eval_parallel(
             })
             .collect()
     });
+
+    // No OS threads on `wasm32-unknown-unknown` (no `parallel-threads`
+    // feature) — branches run sequentially on this same thread instead.
+    // This is an honest, not a degraded, fallback for that target
+    // specifically: a browser backend can only ever run one model call at a
+    // time regardless, so "true concurrency" was never achievable there
+    // even with real OS threads. Each branch still gets its own env clone
+    // and its own `branch_index`-seeded `ESCALATE_PATH`/fresh
+    // `ESCALATE_LOCAL_SEQ`, mirroring what a freshly spawned thread would
+    // start with, so escalate/suspend cache keys match the threaded build's
+    // shape; both thread-locals are restored to this thread's own
+    // (`parent_path`/0) state afterward since — unlike a real spawned
+    // thread — this loop runs on the *same* thread the rest of the
+    // conversation continues on.
+    #[cfg(not(feature = "parallel-threads"))]
+    let results: Vec<(String, Result<Value, RuntimeError>)> = members
+        .iter()
+        .enumerate()
+        .map(|(branch_index, (name, expr))| {
+            let mut local_env = env.clone();
+            let mut branch_path = parent_path.clone();
+            branch_path.push(branch_index);
+            ESCALATE_PATH.with(|p| *p.borrow_mut() = branch_path);
+            ESCALATE_LOCAL_SEQ.with(|c| c.set(0));
+            crate::trace::seed_call_stack(parent_call_stack.clone());
+            let r = eval_expr(ctx, expr, &mut local_env);
+            (name.clone(), r)
+        })
+        .collect();
+    #[cfg(not(feature = "parallel-threads"))]
+    {
+        ESCALATE_PATH.with(|p| *p.borrow_mut() = parent_path.clone());
+        crate::trace::seed_call_stack(parent_call_stack.clone());
+    }
 
     let mut last = Value::Unit;
     for (name, r) in results {
@@ -1066,6 +1103,7 @@ fn eval_ask(
         capability,
         &key,
         &invocation.messages,
+        &invocation.messages,
         Some(provider.id()),
         provider.model(),
         || settle(provider.invoke(capability, &invocation)),
@@ -1205,11 +1243,19 @@ fn invoke_rubric_with_subject(
                     text: rubric_text.to_string(),
                 },
             ];
+            // The trace's `input` stays the subject/rubric pair above (its
+            // documented shape for a judge record) — the actual chat-ready
+            // system/user prompt is only needed if this call suspends (an
+            // in-browser driver needs to know exactly what to send its
+            // local model), so it's built separately from the same shared
+            // `judge::build_prompt` every real vendor's `judge_via_chat` uses.
+            let chat_messages = crate::provider::judge_prompt_messages(&invocation);
             invoke_cached(
                 ctx,
                 "judge",
                 &key,
                 &judge_input,
+                &chat_messages,
                 Some(provider.id()),
                 provider.model(),
                 || settle(provider.invoke("judge", &invocation)),
@@ -1362,6 +1408,7 @@ fn eval_escalate(
         cache_key: key,
         reason,
         target: target.to_string(),
+        messages: Vec::new(),
     })
 }
 
@@ -1437,11 +1484,13 @@ fn role_name(role: MessageRole) -> &'static str {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn invoke_cached(
     ctx: &RunContext,
     capability: &str,
     key: &str,
     input: &[Message],
+    chat_messages: &[Message],
     provider: Option<&str>,
     model: Option<&str>,
     call: impl FnOnce() -> Result<Value, RuntimeError>,
@@ -1462,6 +1511,25 @@ fn invoke_cached(
             );
             return Ok(v);
         }
+    }
+    if ctx.suspend_on_provider_miss {
+        ctx.trace.record(
+            "effect",
+            Some(capability),
+            Some(key),
+            false,
+            input,
+            provider,
+            model,
+            None,
+            Some("suspended"),
+        );
+        return Err(RuntimeError::Suspended {
+            cache_key: key.to_string(),
+            reason: format!("no cached result yet for `{capability}` call"),
+            target: capability.to_string(),
+            messages: chat_messages.to_vec(),
+        });
     }
     if ctx.replay_only {
         return Err(RuntimeError::ReplayMiss(format!(

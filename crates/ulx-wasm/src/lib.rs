@@ -1,16 +1,18 @@
-//! WASM bindings exposing Ulexite's parser and single-file semantic
-//! analysis to the browser, for the website's live playground
-//! (`website/src/components/Playground`). Deliberately narrow: no import
-//! resolution, no provider/manifest awareness — `ulx_sema::analyze`, the
-//! same single-file fast path `ulx-lsp` runs on every keystroke (see
-//! `crates/ulx-lsp/src/analysis.rs`'s `analyze_buffer`) — and no
-//! execution at all. `ulx-runtime` depends on `ureq` (blocking HTTP) and
-//! `std::thread::scope`, neither of which targets
-//! `wasm32-unknown-unknown`, so "run a conversation" is out of scope for
-//! this crate; the playground is "try the compiler," not "run a
-//! provider."
+//! WASM bindings for the website's live playground
+//! (`website/src/components/Playground`): `check` (this file) exposes
+//! Ulexite's parser and single-file semantic analysis — deliberately
+//! narrow, no import resolution or provider/manifest awareness, the same
+//! single-file fast path `ulx-lsp` runs on every keystroke (see
+//! `crates/ulx-lsp/src/analysis.rs`'s `analyze_buffer`). `run` (`run.rs`)
+//! exposes real execution against a local, in-browser model — see its
+//! module docs for how that's possible at all given `ulx-runtime`'s
+//! `ureq`/`std::thread::scope` dependencies, neither of which targets
+//! `wasm32-unknown-unknown`.
 
 mod line_index;
+mod run;
+
+pub use run::{conversation_names, conversation_params, ulx_start, UlxRun};
 
 use std::ops::Range;
 

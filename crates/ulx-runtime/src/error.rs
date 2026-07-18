@@ -1,4 +1,4 @@
-use crate::provider::{ProviderError, ResolveError};
+use crate::provider::{Message, ProviderError, ResolveError};
 
 #[derive(Debug, Clone)]
 pub enum RuntimeError {
@@ -21,6 +21,12 @@ pub enum RuntimeError {
         cache_key: String,
         reason: String,
         target: String,
+        /// The chat-ready `{role, text}` messages an out-of-band resolver
+        /// (a human, for `escalate`; an in-browser model, for a suspended
+        /// `ask`/`judge` call) needs to actually answer this suspend point —
+        /// empty for `escalate`'s own single `{target, reason}` message,
+        /// which is carried in `reason`/`target` instead.
+        messages: Vec<Message>,
     },
     RetriesExhausted,
     TypeError(String),

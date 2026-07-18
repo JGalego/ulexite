@@ -34,10 +34,9 @@ pub use interp::{
     run_benchmark, run_conversation, BenchmarkReport, BenchmarkRowOutcome, BenchmarkRowResult,
     CheckResult,
 };
-pub use provider::{
-    build_provider, MockProvider, Provider, ProviderBuildError, ProviderRegistry, ProviderSpec,
-    ResolveError,
-};
+#[cfg(feature = "real-providers")]
+pub use provider::{build_provider, ProviderBuildError, ProviderSpec};
+pub use provider::{BrowserLocalProvider, MockProvider, Provider, ProviderRegistry, ResolveError};
 pub use trace::{read_trace, RecordCallback, SendCallback, TraceRecord, TraceWriter};
 pub use value::Value;
 
@@ -87,6 +86,18 @@ pub struct RunContext<'a> {
     /// statement unconditionally overwrites its stored golden baseline with
     /// the freshly-evaluated value instead of comparing against it.
     pub update_snapshots: bool,
+    /// Set only by an in-browser driver (`ulx-wasm`): a cache miss on any
+    /// `ask`/`judge` call suspends via `RuntimeError::Suspended` — same as
+    /// `escalate`'s existing suspend/resume — instead of invoking the
+    /// resolved provider synchronously (`invoke_cached`, `interp.rs`). The
+    /// registered provider is a `BrowserLocalProvider` standing in for an
+    /// async, in-browser model call that cannot be made synchronously from
+    /// Rust at all; its `invoke()` is never actually called with this flag
+    /// set. The driver resolves the call out-of-band (e.g. awaiting a local
+    /// model) and writes the result into the cache before re-invoking the
+    /// run, exactly like `ulx approve`/`--interactive` already do for a
+    /// human decision.
+    pub suspend_on_provider_miss: bool,
 }
 
 impl<'a> RunContext<'a> {
@@ -108,6 +119,7 @@ impl<'a> RunContext<'a> {
             replay_only: false,
             no_cache: false,
             update_snapshots: false,
+            suspend_on_provider_miss: false,
         }
     }
 
@@ -123,6 +135,11 @@ impl<'a> RunContext<'a> {
 
     pub fn with_update_snapshots(mut self) -> Self {
         self.update_snapshots = true;
+        self
+    }
+
+    pub fn with_suspend_on_provider_miss(mut self) -> Self {
+        self.suspend_on_provider_miss = true;
         self
     }
 }

@@ -8,7 +8,9 @@
 
 use crate::value::{Value, Verdict};
 
-use super::{Invocation, Message, ProviderError};
+#[cfg(feature = "real-providers")]
+use super::ProviderError;
+use super::{Invocation, Message};
 
 const JUDGE_SYSTEM_PROMPT: &str = "You are an evaluator judging whether a subject satisfies a rubric. \
 Respond with exactly one line and no other text:\n\
@@ -17,7 +19,7 @@ Respond with exactly one line and no other text:\n\
 - `SCORE: <n>` where <n> is a number between 0.0 and 1.0, only if the rubric itself asks for a numeric score rather than a pass/fail judgment.\n\
 - `ESCALATE` if you genuinely cannot tell from the rubric and subject given.";
 
-fn build_prompt(request: &Invocation) -> Invocation {
+pub(crate) fn build_prompt(request: &Invocation) -> Invocation {
     let rubric = request
         .args
         .get("rubric")
@@ -47,7 +49,7 @@ fn build_prompt(request: &Invocation) -> Invocation {
 /// match the `PASS`/`FAIL: reason`/`SCORE: n`/`ESCALATE` shape asked for in
 /// `JUDGE_SYSTEM_PROMPT` is treated as `Escalate` — the same "cannot tell"
 /// semantics the rubric itself uses — rather than silently guessing.
-fn parse_verdict(text: &str) -> Verdict {
+pub(crate) fn parse_verdict(text: &str) -> Verdict {
     let trimmed = text.trim();
 
     if trimmed.eq_ignore_ascii_case("pass") {
@@ -84,6 +86,7 @@ fn parse_verdict(text: &str) -> Verdict {
 /// vendor-specific chat method — the `judge` capability shares the same
 /// underlying chat request shape, just a different model per
 /// `ulexite.toml`'s `[providers.*].judge` entry), and parses the reply.
+#[cfg(feature = "real-providers")]
 pub(crate) fn judge_via_chat(
     request: &Invocation,
     chat: impl FnOnce(&Invocation) -> Result<Value, ProviderError>,
@@ -146,6 +149,7 @@ mod tests {
         assert_eq!(parse_verdict(""), Verdict::Escalate);
     }
 
+    #[cfg(feature = "real-providers")]
     #[test]
     fn judge_via_chat_wraps_chat_response_into_a_verdict() {
         let request = Invocation {
