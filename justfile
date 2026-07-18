@@ -32,7 +32,8 @@ ci: fmt-check clippy build test
 install:
     cargo install --path crates/ulx-cli --locked
 
-# `ulx check` every example under examples/ — mirrored as raw commands in
+# `ulx check` every example under examples/ (both hand-written .ulx and
+# .md compiled via `ulx from-md`) — mirrored as raw commands in
 # .github/workflows/ci.yml's `spec-examples` job (not invoked directly,
 # same reasoning as `ci` above); keep the two in sync by hand.
 check-examples:
@@ -42,6 +43,14 @@ check-examples:
     for f in examples/*.ulx; do
         echo "checking $f"
         ./target/debug/ulx check "$f"
+    done
+    for f in examples/*.md; do
+        [ "$(basename "$f")" = "README.md" ] && continue
+        echo "checking $f"
+        out="$(mktemp --suffix .ulx)"
+        ./target/debug/ulx from-md "$f" -o "$out"
+        ./target/debug/ulx check "$out"
+        rm -f "$out"
     done
 
 # Build the WASM playground crate + the Docusaurus site — mirrored as raw

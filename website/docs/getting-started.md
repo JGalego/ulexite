@@ -126,4 +126,4 @@ ulx run translate.ulx Translate --arg source="MOCK_JUDGE_ESCALATE please" --arg 
 - [Language Syntax](./language/syntax.md) — every declaration kind, in detail.
 - [Examples gallery](./examples/index.md) — twelve complete, runnable programs.
 - [CLI Reference](./tooling/cli-reference.md) — every `ulx` subcommand.
-- [Playground](/playground) — try the parser and type checker live, right in your browser, no install needed.
+- [Playground](/playground) — edit, check, and actually run a conversation against a real local model, live in your browser, no install needed.

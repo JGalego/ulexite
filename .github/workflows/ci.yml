@@ -114,3 +114,11 @@ jobs:
             echo "checking $f"
             ./target/debug/ulx check "$f"
           done
+          for f in examples/*.md; do
+            [ "$(basename "$f")" = "README.md" ] && continue
+            echo "checking $f"
+            out="$(mktemp --suffix .ulx)"
+            ./target/debug/ulx from-md "$f" -o "$out"
+            ./target/debug/ulx check "$out"
+            rm -f "$out"
+          done

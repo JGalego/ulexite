@@ -32,6 +32,22 @@ to disambiguate, as shown below.
 | [`custom_provider.ulx`](custom_provider.ulx) | `Greet(name)` | Declaring a `provider` directly in `.ulx` source, no `ulexite.toml` needed (deliberately `vendor: "mock"`, to show the mechanism itself) | [21.12](../docs/spec/21-examples.md#2112-declaring-a-provider-directly-in-ulx-source) |
 | [`prompt_from_file.ulx`](prompt_from_file.ulx) | `Greet(name, occasion)` | Loading prompt text from disk (`file(...)` / `@path`) instead of inline `"""..."""` blocks | [`08-grammar.md`](../docs/spec/08-grammar.md) `file_expr` |
 
+## Prefer Markdown?
+
+`ulx from-md` compiles the simplified Markdown format ([`docs/simple-format.md`](../docs/simple-format.md)) into `.ulx` — no braces, no type annotations, no keywords. Each of these is checked by `just check-examples`/CI the same way the `.ulx` files above are:
+
+| File | Entry-point conversation | Demonstrates |
+|---|---|---|
+| [`explain_simply.md`](explain_simply.md) | `ExplainSimply(topic)` | The bare minimum: a title and a paragraph, no sections at all |
+| [`brainstorm_names.md`](brainstorm_names.md) | `BrainstormNames(business_type)` | `## System` + the implicit body as `## Ask` |
+| [`write_haiku.md`](write_haiku.md) | `WriteHaiku(theme)` | A `ulx-meta` block overriding the conversation name derived from an awkward title |
+| [`reply_to_review.md`](reply_to_review.md) | `ReplyToReview(review)` | All three sections — system, ask, and a judge-checked retry, the same shape `translate.ulx` hand-writes |
+
+```sh
+ulx from-md reply_to_review.md -o reply_to_review.ulx
+ulx run reply_to_review.ulx ReplyToReview --arg review="Loved the book but shipping took 2 weeks" --mock
+```
+
 ## Running one
 
 Self-contained (own `provider` decls — just export the env var(s) named in

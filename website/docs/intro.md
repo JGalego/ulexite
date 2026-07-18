@@ -36,7 +36,7 @@ Three things have changed since the current generation of LLM libraries were des
 2. **Multi-turn, multi-agent, multi-provider is the default case, not the exception.** Frameworks like LangGraph and OpenAI's Agents SDK have independently converged on "conversation as a persisted, replayable object" — evidence the industry already wants this, without anyone making it a language-level guarantee instead of an SDK feature.
 3. **Evaluation and testing are the operational bottleneck, not the model call.** Tools like Promptfoo and OpenAI Evals prove teams want matrix testing, LLM-as-judge grading, and golden datasets — but they remain config-file test *runners* bolted onto a separate orchestration codebase, rather than a language where `expect`, `judge`, and `dataset` are as native as `if` and `for`.
 
-Ready to see it in practice? Continue to [Getting Started](./getting-started.md), or jump straight to the [Playground](/playground) to try the parser and type checker in your browser.
+Ready to see it in practice? Continue to [Getting Started](./getting-started.md), or jump straight to the [Playground](/playground) to run a conversation against a real local model, live in your browser.
 
 ---
 

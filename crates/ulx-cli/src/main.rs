@@ -33,6 +33,10 @@
 //! shape is narrower than §17.1's own example). `eval`'s other
 //! subcommands (`shadow`/`trend`/`sweep`) aren't implemented.
 //!
+//! Also implemented, outside the spec's own command list: `from-md` —
+//! compiles the simplified Markdown authoring format `docs/simple-format.md`
+//! describes (see `md.rs`) into `.ulx` source.
+//!
 //! Not implemented: `doc`/`repl` (§20), `ulx fork`, `ulx attach`. See
 //! `docs/spec/25-future-directions.md`.
 
@@ -40,6 +44,7 @@ mod debug;
 mod diagnostics;
 mod git_dep;
 mod manifest;
+mod md;
 mod output;
 mod pipeline;
 mod plan;
@@ -239,6 +244,16 @@ enum Command {
         #[arg(long)]
         check: bool,
     },
+    /// Compile a simplified Markdown conversation (see `docs/simple-format.md`)
+    /// into `.ulx` source — a title and a paragraph is enough; `## System`/
+    /// `## Judge` sections and a ```ulx-meta` block are opt-in escape
+    /// hatches. Prints to stdout unless `--output` is given.
+    #[command(name = "from-md")]
+    FromMd {
+        file: PathBuf,
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -343,6 +358,7 @@ fn main() {
         Command::Init { name, dir } => cmd_init(&name, &dir),
         Command::Manifest { file } => cmd_manifest(&file),
         Command::Fmt { file, check } => cmd_fmt(&file, check),
+        Command::FromMd { file, output } => cmd_from_md(&file, output.as_deref()),
     };
     if !ok {
         std::process::exit(1);
@@ -426,6 +442,53 @@ fn cmd_fmt(file: &PathBuf, check: bool) -> bool {
         println!("formatted {}", file.display());
         true
     }
+}
+
+/// `ulx from-md`: parses the Markdown dialect `md.rs` documents and prints
+/// (or writes) the `.ulx` it compiles to. Mirrors `cmd_fmt`'s safety net —
+/// the generated source is always re-parsed before it's handed back, so a
+/// bug in the generator surfaces as a clear internal error here rather than
+/// as a confusing parse failure the next time someone runs `ulx check` on
+/// the output.
+fn cmd_from_md(file: &Path, output: Option<&Path>) -> bool {
+    let src = match std::fs::read_to_string(file) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("error: could not read {}: {e}", file.display());
+            return false;
+        }
+    };
+    let conv = match md::parse_md(&src) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("error: {}: {e}", file.display());
+            return false;
+        }
+    };
+    let ulx = md::render_ulx(&conv);
+
+    if let Err(errors) = ulx_syntax::parse_source(&ulx) {
+        eprintln!(
+            "error: internal error: the .ulx generated from {} does not parse",
+            file.display()
+        );
+        for e in &errors {
+            diagnostics::report_parse_error("(generated)", &ulx, e);
+        }
+        return false;
+    }
+
+    match output {
+        Some(path) => {
+            if let Err(e) = std::fs::write(path, &ulx) {
+                eprintln!("error: could not write {}: {e}", path.display());
+                return false;
+            }
+            println!("wrote {}", path.display());
+        }
+        None => print!("{ulx}"),
+    }
+    true
 }
 
 fn parse_args(raw: &[String]) -> Result<BTreeMap<String, String>, String> {

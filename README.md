@@ -8,12 +8,54 @@
 <a href="LICENSE"><img alt="License: Apache-2.0" src="https://img.shields.io/badge/license-Apache--2.0-blue.svg"></a>
 <a href="Cargo.toml"><img alt="Rust 2021" src="https://img.shields.io/badge/rust-2021-orange.svg"></a>
 <img alt="Status: experimental" src="https://img.shields.io/badge/status-experimental-yellow.svg">
+<a href="https://ulexite.dev/playground"><img alt="Playground" src="https://img.shields.io/badge/try_it-playground-brightgreen.svg"></a>
 </p>
 </div>
 
 Ulexite is a programming language for conversational AI interactions. Its primary abstraction is the `Conversation`, not the prompt, the model, or the agent — with deterministic execution where possible, reproducible traces, and first-class testing.
 
 > **Why "Ulexite"?** Ulexite is a real mineral, nicknamed the "TV rock" — it grows as a bundle of parallel fibers that pipe an image undistorted from one face of the stone to the other. Fitting for a language whose job is carrying a conversation faithfully from one end to the other.
+
+## What is Ulexite?
+
+Today, an LLM pipeline is usually a pile of string-templated prompts and glue code, with no guarantees about what happens when a model hesitates, a judge disagrees, or a person needs to step in. Ulexite treats the conversation itself — not the prompt, not the surrounding agent framework — as the thing you write and check, the same way you'd write and check any other program.
+
+A `.ulx` program describes a conversation as a flow: ask the model something, optionally have a judge grade the answer, retry or hand off to a human if it doesn't pass, and return a result you can rely on and replay later.
+
+```mermaid
+flowchart LR
+    U[You ask] --> M[Model answers]
+    M --> J{Judge grades it}
+    J -->|Pass| R[Result]
+    J -->|Fail| Retry[Retry with feedback] --> M
+    J -->|Escalate| H[Human approval] --> R
+```
+
+That's the whole shape of [`examples/translate.ulx`](examples/translate.ulx) — here's the smaller cousin, [`examples/custom_provider.ulx`](examples/custom_provider.ulx)'s conversation, with no judge or retry at all:
+
+```
+conversation Greet(name: text) -> text {
+  user: """Say hello to {name}."""
+  assistant -> greeting: text
+  greeting
+}
+```
+
+**[▶ Run this in the Playground](https://ulexite.dev/playground)** — no install, no API key, no account. It compiles and runs entirely in your browser against a small local model.
+
+Don't want to write `.ulx` syntax by hand yet? `ulx from-md` compiles a title and a paragraph of plain Markdown straight into it:
+
+```markdown
+# Greet
+
+Say hello to {name} and ask how their day is going.
+```
+
+```sh
+ulx from-md greet.md -o greet.ulx
+```
+
+`{name}` becomes a parameter automatically — see [`docs/simple-format.md`](docs/simple-format.md) for adding a system prompt or a judge the same way.
 
 ## Install
 
