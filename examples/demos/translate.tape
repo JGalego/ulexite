@@ -8,10 +8,17 @@ Set Padding 20
 Set TypingSpeed 40ms
 Set Framerate 24
 
+Hide
 Type "cd examples"
 Enter
+Type "export PS1='$ '"
+Enter
+Type "clear"
+Enter
+Show
 Sleep 500ms
 
 Type "ulx run translate.ulx Translate --arg source=hello --arg target_lang=fr --provider anthropic --no-cache"
 Enter
-Sleep 10s
+Wait+Line@90s /\$$/
+Sleep 3s

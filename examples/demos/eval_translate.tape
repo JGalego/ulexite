@@ -8,10 +8,17 @@ Set Padding 20
 Set TypingSpeed 40ms
 Set Framerate 24
 
+Hide
 Type "cd examples"
 Enter
+Type "export PS1='$ '"
+Enter
+Type "clear"
+Enter
+Show
 Sleep 500ms
 
 Type "ulx bench eval_translate.ulx TranslateQuality --provider anthropic"
 Enter
-Sleep 25s
+Wait+Line@240s /\$$/
+Sleep 3s

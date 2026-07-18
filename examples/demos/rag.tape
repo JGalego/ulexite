@@ -8,14 +8,22 @@ Set Padding 20
 Set TypingSpeed 40ms
 Set Framerate 24
 
+Hide
 Type "cd examples"
 Enter
+Type "export PS1='$ '"
+Enter
+Type "clear"
+Enter
+Show
 Sleep 500ms
 
 Type "ulx run rag.ulx Caption --arg photo=fixtures/sample.jpg --no-cache"
 Enter
-Sleep 8s
+Wait+Line@90s /\$$/
+Sleep 1s
 
 Type "ulx run rag.ulx AnsweredByRAG --arg question='What is the PTO policy?' --no-cache"
 Enter
-Sleep 8s
+Wait+Line@90s /\$$/
+Sleep 3s

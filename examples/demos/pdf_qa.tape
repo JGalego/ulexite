@@ -8,10 +8,17 @@ Set Padding 20
 Set TypingSpeed 40ms
 Set Framerate 24
 
+Hide
 Type "cd examples"
 Enter
+Type "export PS1='$ '"
+Enter
+Type "clear"
+Enter
+Show
 Sleep 500ms
 
 Type "ulx run pdf_qa.ulx PdfQA --arg doc=fixtures/sample.pdf --arg question='Who rescues the grandmother?' --no-cache"
 Enter
-Sleep 8s
+Wait+Line@90s /\$$/
+Sleep 3s
