@@ -70,6 +70,52 @@ async fn did_open_does_not_panic_on_a_broken_file() {
         .await;
 }
 
+/// Regression test for the `ParseCache` wiring in `full_reanalysis`:
+/// `did_open` triggers the first full analysis of `translate.ulx` (a
+/// fresh parse, a miss), and a subsequent `did_save` on the same
+/// unchanged file — the normal edit/save loop a real editor drives —
+/// must hit the cache rather than re-parse it from disk again.
+/// `ulx-sema`'s own tests already prove `ParseCache` itself invalidates
+/// correctly on a real change; this proves `Backend` actually keeps one
+/// alive across requests instead of building a fresh, useless one per
+/// call.
+#[tokio::test]
+async fn parse_cache_is_reused_across_repeated_saves_of_an_unchanged_file() {
+    let (service, _socket) = LspService::new(Backend::new);
+    let backend = service.inner();
+
+    let path = examples_dir().join("translate.ulx");
+    let text = std::fs::read_to_string(&path).expect("fixture exists");
+    let uri = file_url(&path);
+
+    backend.did_open(open_params(uri.clone(), text)).await;
+    let (hits_after_open, misses_after_open) = backend.parse_cache_stats().await;
+    assert_eq!(
+        hits_after_open, 0,
+        "the very first analysis of a file has nothing cached yet to hit"
+    );
+    assert!(
+        misses_after_open >= 1,
+        "translate.ulx itself must have been freshly parsed at least once"
+    );
+
+    backend
+        .did_save(DidSaveTextDocumentParams {
+            text_document: TextDocumentIdentifier { uri },
+            text: None,
+        })
+        .await;
+    let (hits_after_save, misses_after_save) = backend.parse_cache_stats().await;
+    assert_eq!(
+        misses_after_save, misses_after_open,
+        "the file didn't change on disk between saves, so no new misses"
+    );
+    assert!(
+        hits_after_save > hits_after_open,
+        "re-saving an unchanged file should hit the cache instead of re-parsing, got {hits_after_open} -> {hits_after_save}"
+    );
+}
+
 #[tokio::test]
 async fn hover_on_a_judge_reference_shows_its_signature() {
     let (service, _socket) = LspService::new(Backend::new);

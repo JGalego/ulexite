@@ -28,6 +28,11 @@ use crate::line_index::LineIndex;
 pub struct Backend {
     client: Client,
     docs: Mutex<HashMap<Url, LineIndex>>,
+    /// One cache for the server's whole lifetime, shared across every
+    /// `full_reanalysis` call — see `ulx_sema::ParseCache`'s docs. A fresh,
+    /// empty cache per call (what a one-shot `ulx check` does) would never
+    /// see a repeat request to actually hit against.
+    parse_cache: Mutex<ulx_sema::ParseCache>,
 }
 
 /// A name resolved to its declaring file — `path`/`text` are the *target*
@@ -45,6 +50,7 @@ impl Backend {
         Backend {
             client,
             docs: Mutex::new(HashMap::new()),
+            parse_cache: Mutex::new(ulx_sema::ParseCache::new()),
         }
     }
 
@@ -65,12 +71,25 @@ impl Backend {
         let Ok(path) = uri.to_file_path() else {
             return;
         };
-        let Some(results) = analysis::analyze_workspace(&path) else {
+        let mut cache = self.parse_cache.lock().await;
+        let Some(results) = analysis::analyze_workspace(&path, &mut cache) else {
             return;
         };
+        drop(cache);
         for (url, diags) in results {
             self.client.publish_diagnostics(url, diags, None).await;
         }
+    }
+
+    /// Test-only window into the shared cache's hit/miss counters — real
+    /// callers (the LSP client) have no use for this. `tests/lsp.rs` uses
+    /// it to prove the cache is actually reused across repeated `did_save`
+    /// calls on the same `Backend`, not just that `ParseCache`'s own
+    /// mechanism works in isolation (already covered by `ulx-sema`'s own
+    /// tests).
+    pub async fn parse_cache_stats(&self) -> (usize, usize) {
+        let cache = self.parse_cache.lock().await;
+        (cache.hits, cache.misses)
     }
 
     /// Resolves `name` to its declaring file: first against `index`'s own

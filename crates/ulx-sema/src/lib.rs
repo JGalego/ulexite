@@ -20,8 +20,8 @@ mod typecheck;
 pub use capability::{stdlib_capabilities, CapabilitySpec};
 pub use diagnostic::{Diagnostic, Severity};
 pub use resolve::{
-    load_and_analyze, load_and_analyze_with_deps, AnalyzedModule, DependencyPaths, Workspace,
-    STDLIB_MODULES,
+    load_and_analyze, load_and_analyze_with_deps, load_and_analyze_with_deps_cached,
+    AnalyzedModule, DependencyPaths, ParseCache, Workspace, STDLIB_MODULES,
 };
 
 use std::collections::HashSet;
@@ -63,4 +63,17 @@ pub fn analyze_file_with_deps(
     deps: &DependencyPaths,
 ) -> Result<Workspace, String> {
     load_and_analyze_with_deps(entry, known_manifest_providers, deps)
+}
+
+/// Same as `analyze_file_with_deps`, but reusing a caller-held `ParseCache`
+/// across calls — see `ParseCache`'s docs. `ulx-lsp`'s `Backend` is the
+/// intended caller: a one-shot CLI invocation has no long-lived cache to
+/// reuse, so `analyze_file`/`analyze_file_with_deps` stay as they are.
+pub fn analyze_file_with_deps_cached(
+    entry: &Path,
+    known_manifest_providers: Option<&HashSet<String>>,
+    deps: &DependencyPaths,
+    cache: &mut ParseCache,
+) -> Result<Workspace, String> {
+    load_and_analyze_with_deps_cached(entry, known_manifest_providers, deps, cache)
 }

@@ -42,6 +42,43 @@ pub struct AnalyzedModule {
     pub diagnostics: Vec<Diagnostic>,
 }
 
+/// A per-session cache of parsed files, keyed by absolute path plus the
+/// file's modification time last seen for it (a cheap `stat()`, not a full
+/// read, is enough to detect staleness — no need to read a file's content
+/// just to find out it hasn't changed) — reused across repeated
+/// `load_and_analyze_with_deps_cached` calls so a file whose mtime hasn't
+/// advanced since the last call is neither re-read from disk nor
+/// re-parsed, only re-checked (semantic analysis itself, §9's
+/// per-declaration/per-statement passes, still reruns over the reused
+/// `Program` every call — this is real, useful re-*parse* avoidance, not
+/// §13.7's full envisioned subtree-level incremental re-*analysis*, which
+/// would need a content-hash node-identity scheme this v0.1 doesn't have).
+///
+/// A one-shot CLI invocation (`ulx-cli`'s `pipeline.rs`) never lives long
+/// enough for this to help — `load_and_analyze`/`load_and_analyze_with_deps`
+/// stay as thin wrappers constructing a throwaway, empty cache per call, so
+/// their behavior is exactly what it always was. `ulx-lsp`'s `Backend`
+/// holds one of these across requests instead, which is the whole point:
+/// editing one file in a multi-file workspace and saving no longer forces
+/// every *other*, unchanged, transitively-imported file to be re-read and
+/// re-parsed off disk on every single save.
+#[derive(Default)]
+pub struct ParseCache {
+    entries: HashMap<PathBuf, (std::time::SystemTime, Program)>,
+    /// How many `load_recursive` calls reused a cached parse vs. actually
+    /// read+parsed the file — exposed so a caller (and this crate's own
+    /// tests) can confirm the cache is genuinely doing something, not just
+    /// trust that it compiles.
+    pub hits: usize,
+    pub misses: usize,
+}
+
+impl ParseCache {
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
 pub struct Workspace {
     pub entry: PathBuf,
     pub modules: HashMap<PathBuf, AnalyzedModule>,
@@ -164,13 +201,33 @@ pub fn load_and_analyze_with_deps(
     known_manifest_providers: Option<&HashSet<String>>,
     deps: &DependencyPaths,
 ) -> Result<Workspace, String> {
+    load_and_analyze_with_deps_cached(
+        entry,
+        known_manifest_providers,
+        deps,
+        &mut ParseCache::default(),
+    )
+}
+
+/// Same as `load_and_analyze_with_deps`, but given a `ParseCache` the
+/// caller keeps alive across repeated calls (`ulx-lsp`'s `Backend`) — see
+/// `ParseCache`'s own docs for what this buys and doesn't. Semantic
+/// analysis itself still reruns over every module every call; only the
+/// read-from-disk-and-parse step is skipped for a file whose content
+/// matches what's already cached.
+pub fn load_and_analyze_with_deps_cached(
+    entry: &Path,
+    known_manifest_providers: Option<&HashSet<String>>,
+    deps: &DependencyPaths,
+    cache: &mut ParseCache,
+) -> Result<Workspace, String> {
     let entry = entry
         .canonicalize()
         .map_err(|e| format!("could not read {}: {e}", entry.display()))?;
 
     let mut modules: HashMap<PathBuf, Program> = HashMap::new();
     let mut loading: HashSet<PathBuf> = HashSet::new();
-    load_recursive(&entry, &mut modules, &mut loading, deps)?;
+    load_recursive(&entry, &mut modules, &mut loading, deps, cache)?;
 
     let caps = stdlib_capabilities();
     let mut analyzed: HashMap<PathBuf, AnalyzedModule> = HashMap::new();
@@ -313,6 +370,7 @@ fn load_recursive(
     modules: &mut HashMap<PathBuf, Program>,
     loading: &mut HashSet<PathBuf>,
     deps: &DependencyPaths,
+    cache: &mut ParseCache,
 ) -> Result<(), String> {
     if modules.contains_key(path) {
         return Ok(());
@@ -321,15 +379,33 @@ fn load_recursive(
         return Err(format!("import cycle detected at {}", path.display()));
     }
 
-    let src = std::fs::read_to_string(path)
+    let mtime = std::fs::metadata(path)
+        .and_then(|m| m.modified())
         .map_err(|e| format!("could not read {}: {e}", path.display()))?;
-    let program = ulx_syntax::parse_source(&src)
-        .map_err(|errs| format!("{} failed to parse: {errs:?}", path.display()))?;
+    let program = match cache.entries.get(path) {
+        // The file's mtime hasn't advanced since it was last cached — skip
+        // reading its content entirely, not just re-parsing it.
+        Some((cached_mtime, cached_program)) if *cached_mtime == mtime => {
+            cache.hits += 1;
+            cached_program.clone()
+        }
+        _ => {
+            cache.misses += 1;
+            let src = std::fs::read_to_string(path)
+                .map_err(|e| format!("could not read {}: {e}", path.display()))?;
+            let program = ulx_syntax::parse_source(&src)
+                .map_err(|errs| format!("{} failed to parse: {errs:?}", path.display()))?;
+            cache
+                .entries
+                .insert(path.to_path_buf(), (mtime, program.clone()));
+            program
+        }
+    };
 
     for (import, _) in &program.imports {
         if let Import::Named { from, .. } = import {
             let target = resolve_import_path(path, from, deps)?;
-            load_recursive(&target, modules, loading, deps)?;
+            load_recursive(&target, modules, loading, deps, cache)?;
         }
     }
 

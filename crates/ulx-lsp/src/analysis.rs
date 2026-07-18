@@ -3,12 +3,18 @@
 //! buffer-only pass on every keystroke, and a full cross-file pass
 //! (reading imports from disk, mirroring `ulx check`) on open/save.
 //!
-//! There is no incremental recompilation pipeline yet (`ulx-sema`/
-//! `ulx-syntax` re-parse and re-check the whole file every time — see
-//! `docs/spec/13-compiler-architecture.md` §13.7 for the not-yet-built
-//! incremental design) — acceptable for the small scripts this language
+//! There is no incremental *re-analysis* pipeline yet (every module in the
+//! workspace still gets a full semantic pass on every `didOpen`/`didSave`
+//! — see `docs/spec/13-compiler-architecture.md` §13.7 for the not-yet-built
+//! subtree-level design) — acceptable for the small scripts this language
 //! targets, but worth naming as a known simplification rather than
-//! pretending sub-tree incrementality exists.
+//! pretending sub-tree incrementality exists. `analyze_workspace` does
+//! avoid the *re-parse* half via the caller-held `ulx_sema::ParseCache`
+//! (see its docs): a transitively-imported file whose mtime hasn't moved
+//! since the last save is reused rather than read+parsed again. This
+//! function still re-reads every module's source once more itself, to
+//! build the `LineIndex` each diagnostic's span is rendered against —
+//! that's a separate, smaller cost this cache doesn't cover.
 
 use std::collections::HashSet;
 use std::path::Path;
@@ -114,9 +120,27 @@ fn known_manifest_providers(file: &Path) -> Option<HashSet<String>> {
 /// transitively imports), so an error introduced in an imported file shows
 /// up there too, not just at the entry point. `None` if the file can't be
 /// read/parsed at all (a hard I/O error, not a normal diagnostic).
-pub fn analyze_workspace(entry: &Path) -> Option<Vec<(Url, Vec<Diagnostic>)>> {
+///
+/// `cache` is `Backend`'s single long-lived `ParseCache`, reused across
+/// every call for the lifetime of the server — the whole point being that
+/// editing and saving one file in a multi-file workspace no longer forces
+/// every *other*, unchanged, transitively-imported file to be re-read and
+/// re-parsed off disk on every single save. No `[dependencies]` resolution
+/// (`DependencyPaths::default()`) — matches what `analyze_file` (the
+/// non-cached call this replaced) already did; the LSP doesn't resolve
+/// cross-package deps for `from "..."` imports today regardless of caching.
+pub fn analyze_workspace(
+    entry: &Path,
+    cache: &mut ulx_sema::ParseCache,
+) -> Option<Vec<(Url, Vec<Diagnostic>)>> {
     let known_providers = known_manifest_providers(entry);
-    let workspace = ulx_sema::analyze_file(entry, known_providers.as_ref()).ok()?;
+    let workspace = ulx_sema::analyze_file_with_deps_cached(
+        entry,
+        known_providers.as_ref(),
+        &ulx_sema::DependencyPaths::default(),
+        cache,
+    )
+    .ok()?;
 
     let mut result = Vec::new();
     for module in workspace.modules.values() {
