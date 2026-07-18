@@ -173,34 +173,36 @@ function PlaygroundInner(): ReactNode {
           />
         </div>
       </div>
-      <div className={styles.diagnosticsPane}>
-        <h3>Diagnostics</h3>
-        {status === 'loading' && <p>Loading the Ulexite compiler (WASM)…</p>}
-        {status === 'error' && (
-          <p className={styles.errorText}>Failed to load the compiler: {loadError}</p>
-        )}
-        {status === 'ready' && diagnostics !== null && diagnostics.length === 0 && (
-          <p className={styles.okText}>No errors.</p>
-        )}
-        {status === 'ready' && diagnostics !== null && diagnostics.length > 0 && (
-          <ul className={styles.diagnosticList}>
-            {diagnostics.map((d, i) => (
-              <li
-                key={`${d.start_line}-${d.start_col}-${i}`}
-                className={d.severity === 'error' ? styles.error : styles.warning}>
-                <span className={styles.location}>
-                  {d.start_line + 1}:{d.start_col + 1}
-                </span>{' '}
-                <span className={styles.severityTag}>{d.severity}</span> {d.message}
-              </li>
-            ))}
-          </ul>
-        )}
-        <p className={styles.hint}>
-          This runs the real parser and single-file semantic analyzer, compiled
-          to WebAssembly — the same checks <code>ulx check</code> and{' '}
-          <code>ulx-lsp</code> run.
-        </p>
+      <div className={styles.rightColumn}>
+        <div className={styles.diagnosticsPane}>
+          <h3>Diagnostics</h3>
+          {status === 'loading' && <p>Loading the Ulexite compiler (WASM)…</p>}
+          {status === 'error' && (
+            <p className={styles.errorText}>Failed to load the compiler: {loadError}</p>
+          )}
+          {status === 'ready' && diagnostics !== null && diagnostics.length === 0 && (
+            <p className={styles.okText}>No errors.</p>
+          )}
+          {status === 'ready' && diagnostics !== null && diagnostics.length > 0 && (
+            <ul className={styles.diagnosticList}>
+              {diagnostics.map((d, i) => (
+                <li
+                  key={`${d.start_line}-${d.start_col}-${i}`}
+                  className={d.severity === 'error' ? styles.error : styles.warning}>
+                  <span className={styles.location}>
+                    {d.start_line + 1}:{d.start_col + 1}
+                  </span>{' '}
+                  <span className={styles.severityTag}>{d.severity}</span> {d.message}
+                </li>
+              ))}
+            </ul>
+          )}
+          <p className={styles.hint}>
+            This runs the real parser and single-file semantic analyzer, compiled
+            to WebAssembly — the same checks <code>ulx check</code> and{' '}
+            <code>ulx-lsp</code> run.
+          </p>
+        </div>
         {status === 'ready' && wasmRef.current && (
           <RunPanel
             wasm={wasmRef.current}

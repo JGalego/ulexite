@@ -1,5 +1,5 @@
 import type {ReactNode} from 'react';
-import {useEffect, useState} from 'react';
+import {useEffect, useRef, useState} from 'react';
 import useBaseUrl from '@docusaurus/useBaseUrl';
 
 import {chatComplete, loadModel, modelChoices, type ModelChoice, type LoadProgress} from './wllama';
@@ -31,6 +31,23 @@ type RunPhase =
   | {kind: 'unsupported'; message: string}
   | {kind: 'error'; message: string}
   | {kind: 'done'; value: unknown};
+
+// A model this size, run on a phone's much smaller memory budget and much
+// slower single-thread CPU path, is a real failure mode worth naming up
+// front rather than letting it surface as a confusing hang or crash.
+const LIKELY_LOW_MEMORY_DEVICE =
+  typeof navigator !== 'undefined' &&
+  (/Mobi|Android|iPhone|iPad/i.test(navigator.userAgent) ||
+    ('deviceMemory' in navigator && (navigator as {deviceMemory?: number}).deviceMemory! < 4));
+
+function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<T>((_, reject) => {
+      setTimeout(() => reject(new Error(message)), ms);
+    }),
+  ]);
+}
 
 /** `Value`'s serde shape is `{kind, value}` (`#[serde(tag = "kind", content
  * = "value")]` in `ulx-runtime`'s `value.rs`) — a `Verdict` nested inside
@@ -72,6 +89,8 @@ export default function RunPanel({
   const [model, setModel] = useState<ModelChoice>('qwen2.5-0.5b');
   const [phase, setPhase] = useState<RunPhase>({kind: 'idle'});
   const [transcript, setTranscript] = useState<Message[]>([]);
+  const [showValidation, setShowValidation] = useState(false);
+  const outputRef = useRef<HTMLDivElement | null>(null);
 
   // Re-derive the conversation/param list whenever the source changes (or
   // stops type-checking cleanly) — best-effort, so a mid-edit parse error
@@ -106,6 +125,35 @@ export default function RunPanel({
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [source, conversation]);
+
+  const busy = phase.kind === 'downloading' || phase.kind === 'running';
+
+  // Belt-and-suspenders: anything that throws or rejects without being
+  // caught by one of the try/catches below (e.g. an error surfacing from
+  // wllama's internal worker, which doesn't always reject a promise this
+  // code is awaiting) still lands on a visible error message instead of
+  // leaving the UI stuck on "Running…" forever with no feedback — which is
+  // indistinguishable, from a visitor's perspective, from "broken." Scoped
+  // to `busy` so an unrelated page error elsewhere doesn't hijack this UI.
+  useEffect(() => {
+    if (!busy) return;
+    const onError = (e: ErrorEvent) => {
+      setPhase({kind: 'error', message: e.message || 'an unexpected error occurred'});
+    };
+    const onRejection = (e: PromiseRejectionEvent) => {
+      const reason = e.reason;
+      setPhase({
+        kind: 'error',
+        message: reason instanceof Error ? reason.message : String(reason),
+      });
+    };
+    window.addEventListener('error', onError);
+    window.addEventListener('unhandledrejection', onRejection);
+    return () => {
+      window.removeEventListener('error', onError);
+      window.removeEventListener('unhandledrejection', onRejection);
+    };
+  }, [busy]);
 
   const runLoop = async () => {
     setTranscript([]);
@@ -149,7 +197,14 @@ export default function RunPanel({
       setTranscript((prev) => [...prev, ...result.messages]);
       let reply: string;
       try {
-        reply = await chatComplete(result.messages);
+        // A phone's CPU can be an order of magnitude slower than a
+        // desktop's for this — generous, but not unbounded, so a genuinely
+        // stuck call surfaces a clear message instead of hanging forever.
+        reply = await withTimeout(
+          chatComplete(result.messages),
+          3 * 60 * 1000,
+          'the model took too long to respond (over 3 minutes) — this often means the device doesn\'t have enough memory for the selected model; try the smaller model or a desktop browser',
+        );
       } catch (err) {
         setPhase({kind: 'error', message: err instanceof Error ? err.message : String(err)});
         return;
@@ -160,16 +215,27 @@ export default function RunPanel({
     setPhase({kind: 'error', message: 'gave up after 50 steps without completing'});
   };
 
+  const missingRequired = params.some((name) => !(args[name] ?? '').trim());
+
   const onRunClick = () => {
+    if (missingRequired) {
+      setShowValidation(true);
+      return;
+    }
     if (phase.kind === 'idle' || phase.kind === 'done' || phase.kind === 'error' || phase.kind === 'unsupported') {
       setPhase({kind: 'confirm'});
     }
   };
 
   const onConfirmDownload = async () => {
+    outputRef.current?.scrollIntoView({behavior: 'smooth', block: 'nearest'});
     setPhase({kind: 'downloading', progress: null});
     try {
-      await loadModel(model, wllamaWasmUrl, (progress) => setPhase({kind: 'downloading', progress}));
+      await withTimeout(
+        loadModel(model, wllamaWasmUrl, (progress) => setPhase({kind: 'downloading', progress})),
+        10 * 60 * 1000,
+        'the model download/load took too long (over 10 minutes) — check your connection, or this device may not have enough memory for the selected model',
+      );
     } catch (err) {
       setPhase({kind: 'error', message: err instanceof Error ? err.message : String(err)});
       return;
@@ -177,94 +243,125 @@ export default function RunPanel({
     await runLoop();
   };
 
-  const busy = phase.kind === 'downloading' || phase.kind === 'running';
-
   return (
-    <div className={styles.runPanel}>
-      <h3>Run</h3>
-      {!canRun && <p className={styles.hint}>Fix the diagnostics above to enable Run.</p>}
-      {canRun && (
-        <>
-          {conversations.length > 1 && (
+    <>
+      <div className={styles.runCard}>
+        <h3>Run</h3>
+        {!canRun && <p className={styles.hint}>Fix the diagnostics above to enable Run.</p>}
+        {canRun && (
+          <>
+            {conversations.length > 1 && (
+              <label className={styles.runField}>
+                Conversation
+                <select
+                  value={conversation}
+                  onChange={(e) => setConversation(e.target.value)}
+                  disabled={busy}>
+                  {conversations.map((name) => (
+                    <option key={name} value={name}>
+                      {name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
+            {params.map((name) => {
+              const empty = !(args[name] ?? '').trim();
+              return (
+                <label key={name} className={styles.runField}>
+                  {name}
+                  {showValidation && empty && <span className={styles.requiredMark}> (required)</span>}
+                  <input
+                    type="text"
+                    value={args[name] ?? ''}
+                    disabled={busy}
+                    className={showValidation && empty ? styles.fieldError : undefined}
+                    onChange={(e) => setArgs((prev) => ({...prev, [name]: e.target.value}))}
+                  />
+                </label>
+              );
+            })}
             <label className={styles.runField}>
-              Conversation
-              <select value={conversation} onChange={(e) => setConversation(e.target.value)} disabled={busy}>
-                {conversations.map((name) => (
-                  <option key={name} value={name}>
-                    {name}
+              Model
+              <select
+                value={model}
+                onChange={(e) => setModel(e.target.value as ModelChoice)}
+                disabled={busy}>
+                {modelChoices().map((m) => (
+                  <option key={m.id} value={m.id}>
+                    {m.label}
                   </option>
                 ))}
               </select>
             </label>
-          )}
-          {params.map((name) => (
-            <label key={name} className={styles.runField}>
-              {name}
-              <input
-                type="text"
-                value={args[name] ?? ''}
-                disabled={busy}
-                onChange={(e) => setArgs((prev) => ({...prev, [name]: e.target.value}))}
-              />
-            </label>
-          ))}
-          <label className={styles.runField}>
-            Model
-            <select value={model} onChange={(e) => setModel(e.target.value as ModelChoice)} disabled={busy}>
-              {modelChoices().map((m) => (
-                <option key={m.id} value={m.id}>
-                  {m.label}
-                </option>
-              ))}
-            </select>
-          </label>
 
-          <button
-            className={styles.runButton}
-            disabled={!conversation || busy}
-            onClick={onRunClick}>
-            {busy ? 'Running…' : 'Run'}
-          </button>
-
-          {phase.kind === 'confirm' && (
-            <div className={styles.runConfirm}>
-              <p>
-                Running downloads the selected model (a few hundred MB to ~1&nbsp;GB) once, from
-                Hugging Face's public CDN, then caches it in your browser for next time. The model
-                runs and answers entirely on your machine — nothing about your program or its
-                output is sent anywhere.
-              </p>
-              <button onClick={onConfirmDownload}>Download &amp; run</button>{' '}
-              <button onClick={() => setPhase({kind: 'idle'})}>Cancel</button>
+            <div className={styles.runActions}>
+              <button
+                type="button"
+                className={styles.runButton}
+                disabled={!conversation || busy}
+                onClick={onRunClick}>
+                {busy ? 'Running…' : 'Run'}
+              </button>
+              {showValidation && missingRequired && (
+                <span className={styles.errorText}>Fill in every field above to run.</span>
+              )}
             </div>
-          )}
 
-          {phase.kind === 'downloading' && (
-            <p className={styles.hint}>
-              Loading the model…
-              {phase.progress && phase.progress.total > 0
-                ? ` ${Math.round((phase.progress.loaded / phase.progress.total) * 100)}%`
-                : ''}
-            </p>
-          )}
+            {phase.kind === 'confirm' && (
+              <div className={styles.runConfirm}>
+                <p>
+                  Running downloads the selected model (a few hundred MB to ~1&nbsp;GB) once, from
+                  Hugging Face's public CDN, then caches it in your browser for next time. The
+                  model runs and answers entirely on your machine — nothing about your program or
+                  its output is sent anywhere.
+                </p>
+                {LIKELY_LOW_MEMORY_DEVICE && (
+                  <p className={styles.errorText}>
+                    This looks like a phone or a memory-limited device — a local model needs
+                    significant memory and CPU, and may run very slowly, stall, or crash the tab
+                    here. The smaller model and a desktop browser are both more likely to work.
+                  </p>
+                )}
+                <button type="button" onClick={onConfirmDownload}>
+                  Download &amp; run
+                </button>{' '}
+                <button type="button" onClick={() => setPhase({kind: 'idle'})}>
+                  Cancel
+                </button>
+              </div>
+            )}
 
-          {transcript.length > 0 && (
-            <ul className={styles.transcript}>
-              {transcript.map((m, i) => (
-                <li key={i}>
-                  <span className={styles.severityTag}>{m.role}</span> {m.text}
-                </li>
-              ))}
-            </ul>
-          )}
+            {phase.kind === 'downloading' && (
+              <p className={styles.hint}>
+                Loading the model…
+                {phase.progress && phase.progress.total > 0
+                  ? ` ${Math.round((phase.progress.loaded / phase.progress.total) * 100)}%`
+                  : ''}
+              </p>
+            )}
+          </>
+        )}
+      </div>
 
-          {phase.kind === 'done' && (
-            <p className={styles.okText}>Result: {renderValue(phase.value)}</p>
-          )}
-          {phase.kind === 'unsupported' && <p className={styles.hint}>{phase.message}</p>}
-          {phase.kind === 'error' && <p className={styles.errorText}>Error: {phase.message}</p>}
-        </>
-      )}
-    </div>
+      <div className={styles.outputCard} ref={outputRef}>
+        <h3>Output</h3>
+        {transcript.length === 0 && phase.kind === 'idle' && (
+          <p className={styles.hint}>Nothing run yet — hit Run above to see the dialogue here.</p>
+        )}
+        {transcript.length > 0 && (
+          <ul className={styles.transcript}>
+            {transcript.map((m, i) => (
+              <li key={i}>
+                <span className={styles.severityTag}>{m.role}</span> {m.text}
+              </li>
+            ))}
+          </ul>
+        )}
+        {phase.kind === 'done' && <p className={styles.okText}>Result: {renderValue(phase.value)}</p>}
+        {phase.kind === 'unsupported' && <p className={styles.hint}>{phase.message}</p>}
+        {phase.kind === 'error' && <p className={styles.errorText}>Error: {phase.message}</p>}
+      </div>
+    </>
   );
 }
