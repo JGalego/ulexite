@@ -16,20 +16,50 @@
   flex-direction: column;
 }
 
-.editor {
+.editorStack {
+  position: relative;
   flex: 1;
   min-height: 480px;
-  width: 100%;
+  border: 1px solid var(--ifm-color-emphasis-300);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+/* Shared font metrics so the textarea's caret/selection line up exactly
+   with the highlighted text underneath. */
+.editor,
+.highlight {
+  margin: 0;
+  padding: 1rem;
   font-family: var(--ifm-font-family-monospace);
   font-size: 0.9rem;
   line-height: 1.5;
-  padding: 1rem;
-  border: 1px solid var(--ifm-color-emphasis-300);
-  border-radius: 8px;
-  background: var(--ifm-code-background);
-  color: var(--ifm-font-color-base);
-  resize: vertical;
   tab-size: 2;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+}
+
+.highlight {
+  position: absolute;
+  inset: 0;
+  overflow: auto;
+  pointer-events: none;
+}
+
+.editor {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  resize: none;
+  border: none;
+  background: transparent;
+  color: transparent;
+  caret-color: var(--ifm-font-color-base);
+}
+
+.editor::selection {
+  background: var(--ifm-color-emphasis-300);
 }
 
 .editor:disabled {

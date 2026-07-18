@@ -1,9 +1,19 @@
-import type {ReactNode} from 'react';
+import type {ReactNode, UIEvent} from 'react';
 import {useCallback, useEffect, useRef, useState} from 'react';
 import useBaseUrl from '@docusaurus/useBaseUrl';
 import BrowserOnly from '@docusaurus/BrowserOnly';
+import {useColorMode} from '@docusaurus/theme-common';
+import {Highlight, Prism, themes} from 'prism-react-renderer';
+
+import registerUlexite from '@site/src/prism-ulexite';
 
 import styles from './styles.module.css';
+
+// Same grammar the docs' fenced ```ulx code blocks use (registered for
+// Docusaurus/Prism globally in src/theme/prism-include-languages.ts) —
+// registered again here because prism-react-renderer's <Highlight> takes
+// its own `prism` instance rather than reading the swizzled global one.
+registerUlexite(Prism);
 
 // The playground runs `ulx-syntax`/`ulx-sema` compiled to WASM, right in
 // the browser — the same single-file parse + semantic-analysis fast path
@@ -58,6 +68,19 @@ function PlaygroundInner(): ReactNode {
   const [loadError, setLoadError] = useState<string | null>(null);
   const checkRef = useRef<CheckFn | null>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const highlightRef = useRef<HTMLPreElement | null>(null);
+  const {colorMode} = useColorMode();
+  const prismTheme = colorMode === 'dark' ? themes.dracula : themes.github;
+
+  // The textarea stays transparent and sits on top of a Prism-highlighted
+  // <pre> with identical font metrics; typing edits the (invisible) text,
+  // and the colored layer underneath is what's actually visible. Scroll
+  // position has to be mirrored by hand since they're two separate elements.
+  const onScroll = useCallback((e: UIEvent<HTMLTextAreaElement>) => {
+    if (!highlightRef.current) return;
+    highlightRef.current.scrollTop = e.currentTarget.scrollTop;
+    highlightRef.current.scrollLeft = e.currentTarget.scrollLeft;
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -114,14 +137,30 @@ function PlaygroundInner(): ReactNode {
   return (
     <div className={styles.playground}>
       <div className={styles.editorPane}>
-        <textarea
-          className={styles.editor}
-          value={source}
-          onChange={(e) => onChange(e.target.value)}
-          spellCheck={false}
-          disabled={status !== 'ready'}
-          aria-label="Ulexite source code"
-        />
+        <div className={styles.editorStack}>
+          <Highlight prism={Prism} language="ulexite" code={source} theme={prismTheme}>
+            {({className, style, tokens, getLineProps, getTokenProps}) => (
+              <pre ref={highlightRef} aria-hidden="true" className={`${styles.highlight} ${className}`} style={style}>
+                {tokens.map((line, i) => (
+                  <div key={i} {...getLineProps({line})}>
+                    {line.map((token, j) => (
+                      <span key={j} {...getTokenProps({token})} />
+                    ))}
+                  </div>
+                ))}
+              </pre>
+            )}
+          </Highlight>
+          <textarea
+            className={styles.editor}
+            value={source}
+            onChange={(e) => onChange(e.target.value)}
+            onScroll={onScroll}
+            spellCheck={false}
+            disabled={status !== 'ready'}
+            aria-label="Ulexite source code"
+          />
+        </div>
       </div>
       <div className={styles.diagnosticsPane}>
         <h3>Diagnostics</h3>
