@@ -43,14 +43,25 @@
   margin-bottom: 1.5rem;
 }
 
-.sample {
+.showcase {
   padding: 2rem 0 3rem;
   background: var(--ifm-color-emphasis-100);
+  text-align: center;
 }
 
-.demo {
-  padding: 2rem 0 3rem;
-  text-align: center;
+.showcaseGrid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 3rem;
+  align-items: start;
+  text-align: left;
+}
+
+@media screen and (max-width: 996px) {
+  .showcaseGrid {
+    grid-template-columns: 1fr;
+    gap: 2.5rem;
+  }
 }
 
 .sectionTitle {

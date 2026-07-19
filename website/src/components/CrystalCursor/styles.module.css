@@ -1,0 +1,30 @@
+/* Hides the real pointer only while it's actually over a target zone's
+   rendered content — set imperatively on `document.body` (see index.tsx),
+   not via a blanket CSS rule on the target selector, since that would
+   hide the cursor across a whole target element's box (e.g. a centered
+   `<h1>`'s wide, mostly-empty box) even where there's no crystal to
+   replace it. */
+
+.lens {
+  position: fixed;
+  z-index: 9999;
+  width: 108px;
+  height: 68px;
+  overflow: hidden;
+  pointer-events: none;
+  /* An irregular, slightly rounded pebble — the same rounded-shard look
+     as the logo/mineral itself, not a plain rectangle. */
+  border-radius: 42% 58% 55% 45% / 48% 42% 58% 52%;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.55);
+  box-shadow:
+    0 8px 20px rgba(0, 0, 0, 0.3),
+    inset 0 1px 3px rgba(255, 255, 255, 0.55),
+    inset 0 -3px 8px rgba(0, 0, 0, 0.15);
+  /* A mild glow on top of the real, magnified content cloned in — the
+     heavier lift used to be all backdrop-filter (brighten/sharpen with no
+     actual zoom); now the clone inside does the magnification and this
+     just adds the "lit from within" sheen. */
+  backdrop-filter: brightness(1.15) contrast(1.05);
+  -webkit-backdrop-filter: brightness(1.15) contrast(1.05);
+}

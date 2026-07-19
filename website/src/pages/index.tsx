@@ -6,6 +6,7 @@ import Heading from '@theme/Heading';
 import CodeBlock from '@theme/CodeBlock';
 import MockConsole, {type ConsoleBlock, type ConsoleLine} from '@site/src/components/MockConsole';
 import CrystalMesh from '@site/src/components/CrystalMesh';
+import CrystalCursor from '@site/src/components/CrystalCursor';
 
 import styles from './index.module.css';
 
@@ -14,7 +15,7 @@ function HomepageHeader() {
     <header className={clsx('hero hero--primary', styles.heroBanner)}>
       <CrystalMesh />
       <div className={clsx('container', styles.heroContent)}>
-        <Heading as="h1" className="hero__title">
+        <Heading as="h1" className="hero__title" data-crystal-target>
           Ulexite
         </Heading>
         <p className="hero__subtitle">
@@ -127,31 +128,6 @@ conversation Translate(source: text, target_lang: text) -> text {
   }
 }`;
 
-function WhatItLooksLike() {
-  return (
-    <section className={styles.sample}>
-      <div className="container">
-        <Heading as="h2" className={styles.sectionTitle}>
-          👀 What it looks like
-        </Heading>
-        <p className={styles.sectionSubtitle}>
-          A complete, runnable conversation: translate, have a judge check
-          fluency, retry once on failure, escalate to a human if the judge
-          can't decide.
-        </p>
-        <CodeBlock language="ulexite" title="translate.ulx">
-          {SAMPLE}
-        </CodeBlock>
-        <p className={styles.sectionSubtitle}>
-          Try it yourself in the{' '}
-          <Link to="/playground">live playground</Link> — no install needed —
-          or see the full{' '}
-          <Link to="/docs/examples">examples gallery</Link> for eleven more.
-        </p>
-      </div>
-    </section>
-  );
-}
 
 const RUN_ID = '7f2c9a1e4b0d6f83';
 
@@ -201,20 +177,47 @@ const DEMO_BLOCKS: ConsoleBlock[] = [
   },
 ];
 
-function DemoSection() {
+function ShowcaseSection() {
   return (
-    <section className={styles.demo}>
+    <section className={styles.showcase}>
       <div className="container">
-        <Heading as="h2" className={styles.sectionTitle}>
-          🎬 See it run
-        </Heading>
-        <p className={styles.sectionSubtitle}>
-          <code>ulx run translate.ulx Translate --provider anthropic</code> —
-          the judge can't decide, so it escalates to a human instead of
-          guessing. It suspends, a reviewer runs <code>ulx approve</code>,
-          and the same run resumes to completion.
-        </p>
-        <MockConsole blocks={DEMO_BLOCKS} />
+        <div className={styles.showcaseGrid}>
+          <div>
+            <Heading as="h2" className={styles.sectionTitle}>
+              👀 What it looks like
+            </Heading>
+            <p className={styles.sectionSubtitle}>
+              A complete, runnable conversation: translate, have a judge
+              check fluency, retry once on failure, escalate to a human if
+              the judge can't decide.
+            </p>
+            <CodeBlock language="ulexite" title="translate.ulx">
+              {SAMPLE}
+            </CodeBlock>
+            <p className={styles.sectionSubtitle}>
+              Try it yourself in the{' '}
+              <Link to="/playground">live playground</Link> — no install
+              needed — or see the full{' '}
+              <Link to="/docs/examples">examples gallery</Link> for eleven
+              more.
+            </p>
+          </div>
+          <div>
+            <Heading as="h2" className={styles.sectionTitle}>
+              🎬 See it run
+            </Heading>
+            <p className={styles.sectionSubtitle}>
+              <code>ulx run translate.ulx Translate --provider anthropic</code>{' '}
+              — the judge can't decide, so it escalates to a human instead
+              of guessing. It suspends, a reviewer runs{' '}
+              <code>ulx approve</code>, and the same run resumes to
+              completion.
+            </p>
+            <div data-crystal-target>
+              <MockConsole blocks={DEMO_BLOCKS} />
+            </div>
+          </div>
+        </div>
       </div>
     </section>
   );
@@ -274,11 +277,11 @@ export default function Home(): ReactNode {
     <Layout
       title="Ulexite — the conversation-first language for LLM interactions"
       description="A programming language whose primary abstraction is the conversation: typed multimodal artifacts, built-in judges, reproducible traces, and deterministic execution where it counts.">
+      <CrystalCursor targetSelector="[data-crystal-target]" />
       <HomepageHeader />
       <main>
         <FeatureGrid />
-        <WhatItLooksLike />
-        <DemoSection />
+        <ShowcaseSection />
         <WhyUlexite />
         <ComparisonTeaser />
       </main>
