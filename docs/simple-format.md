@@ -1,6 +1,6 @@
 # The simple format: Markdown → `.ulx`
 
-`.ulx` is a real programming language, and reading §7-10 of [the spec](spec/00-index.md) is worth it once you're hooked. But the first file you ever write shouldn't require reading a grammar. `ulx from-md` compiles a small, deliberately restricted Markdown dialect into `.ulx` source — no braces, no keywords, no type annotations, unless you actually want to use them.
+`.ulx` is a real programming language, and reading §7-10 of [the spec](spec/00-index.md) is worth it once you're hooked. But the first file you ever write shouldn't require reading a grammar. This is a small, deliberately restricted Markdown dialect that every `.ulx`-consuming command — `run`, `check`, `bench`, `plan`, `fmt`, `replay`, `approve`/`deny` — accepts in place of `.ulx` source, no braces, no keywords, no type annotations, unless you actually want to use them.
 
 The smallest possible version is a title and a paragraph:
 
@@ -11,11 +11,16 @@ Say hello to {name} and ask how their day is going.
 ```
 
 ```sh
-ulx from-md greet.md -o greet.ulx
-ulx run greet.ulx Greet --arg name=world --mock
+ulx run greet.md Greet --arg name=world --mock
 ```
 
-`{name}` is automatically picked up as a parameter — you never declare it. That's it; that's a whole working `.ulx` program.
+`{name}` is automatically picked up as a parameter — you never declare it. That's it; that's a whole working conversation, no separate compile step required.
+
+Want the generated `.ulx` itself — to read it, commit it, or hand-edit it from there — `ulx from-md` still compiles it to a file instead of running it:
+
+```sh
+ulx from-md greet.md -o greet.ulx
+```
 
 ## Sections
 
@@ -76,4 +81,4 @@ Be careful with `returns`/`type` beyond `text`, though: this generator only ever
 
 This is a prototype covering one conversation per file, one `ask` + optional `judge`, nothing else — no imports, `provider` blocks, datasets, benchmarks, multi-step tool calls, or nested conversations. For any of that, drop into real `.ulx` — see [`docs/spec/07-recommended-syntax.md`](spec/07-recommended-syntax.md) and [`examples/`](../examples/). Literal `{`/`}` or `"""` in your prose will confuse the compiler; there's no escaping for them yet.
 
-`ulx from-md` always re-parses what it generates before printing it, so a bug here fails loudly as an "internal error" rather than handing you `.ulx` that silently doesn't compile.
+Whether you run a `.md` file directly or go through `ulx from-md`, the generated `.ulx` is always re-parsed before it's used, so a bug here fails loudly as an "internal error" rather than handing you `.ulx` that silently doesn't compile.

@@ -43,7 +43,7 @@ conversation Greet(name: text) -> text {
 
 **[▶ Run this in the Playground](https://ulexite.dev/playground)** — no install, no API key, no account. It compiles and runs entirely in your browser against a small local model.
 
-Don't want to write `.ulx` syntax by hand yet? `ulx from-md` compiles a title and a paragraph of plain Markdown straight into it:
+Don't want to write `.ulx` syntax by hand yet? Write a title and a paragraph of plain Markdown, and `ulx run` executes it directly — no separate compile step:
 
 ```markdown
 # Greet
@@ -52,10 +52,10 @@ Say hello to {name} and ask how their day is going.
 ```
 
 ```sh
-ulx from-md greet.md -o greet.ulx
+ulx run greet.md Greet --arg name=Ana
 ```
 
-`{name}` becomes a parameter automatically — see [`docs/simple-format.md`](docs/simple-format.md) for adding a system prompt or a judge the same way.
+`{name}` becomes a parameter automatically — see [`docs/simple-format.md`](docs/simple-format.md) for adding a system prompt or a judge the same way. Want to see (or commit) the generated `.ulx` instead? `ulx from-md greet.md -o greet.ulx` still compiles it to a file rather than running it.
 
 ## Install
 

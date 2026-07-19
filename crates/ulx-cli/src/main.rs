@@ -35,7 +35,13 @@
 //!
 //! Also implemented, outside the spec's own command list: `from-md` —
 //! compiles the simplified Markdown authoring format `docs/simple-format.md`
-//! describes (see `md.rs`) into `.ulx` source.
+//! describes (see `md.rs`) into `.ulx` source. Every other command that
+//! takes a `.ulx` file (`run`, `check`, `bench`, `plan`, `fmt`, `replay`,
+//! `approve`/`deny`) also accepts a `.md` source directly — see
+//! `pipeline::resolve_entry` — compiling it to a generated `.ulx` under
+//! `.ulexite/generated/` on the fly, so `from-md` is only needed when you
+//! actually want the compiled `.ulx` file itself (to read, commit, or
+//! hand-edit from there).
 //!
 //! Not implemented: `doc`/`repl` (§20), `ulx fork`, `ulx attach`. See
 //! `docs/spec/25-future-directions.md`.

@@ -60,6 +60,13 @@ pub fn traces_dir() -> PathBuf {
     state_dir().join("traces")
 }
 
+/// Where `pipeline::resolve_entry` writes the `.ulx` a Markdown source
+/// (`ulx-cli::md`) compiles to, so `ulx run`/`check`/etc. can run it
+/// directly instead of requiring a separate `ulx from-md` step first.
+pub fn generated_dir() -> PathBuf {
+    state_dir().join("generated")
+}
+
 fn runs_dir() -> PathBuf {
     state_dir().join("runs")
 }

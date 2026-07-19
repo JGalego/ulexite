@@ -2,7 +2,7 @@
 //! runtime-facing CLI command (§13.3's stages, glued together for the CLI).
 
 use std::collections::HashSet;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use ulx_ast::{Program, TopDecl};
 
@@ -102,6 +102,51 @@ fn collect_provider_decls(ws: &ulx_sema::Workspace) -> Result<Vec<ulx_ast::Provi
     Ok(decls)
 }
 
+/// If `file` is a Markdown source (the dialect `md.rs` documents), compiles
+/// it to `.ulx` and returns the path of the freshly generated file for
+/// `load`/`check` to actually parse — every other part of the pipeline
+/// (provider/dependency discovery, `base_dir_of`, `RunManifest.file`) keeps
+/// using `file` itself, so a project's `ulexite.toml`/relative paths resolve
+/// exactly as if `file` had been `.ulx` all along; only the source that
+/// `ulx-sema` reads for `file`'s own entry module is swapped. Regenerated on
+/// every call — nothing here is a cache the source and its compiled output
+/// could ever drift out of sync on. Files that aren't Markdown pass through
+/// unchanged (no copy, no `.ulexite/generated` write).
+fn resolve_entry(file: &Path) -> Result<PathBuf, String> {
+    let is_markdown = file
+        .extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| e.eq_ignore_ascii_case("md") || e.eq_ignore_ascii_case("markdown"));
+    if !is_markdown {
+        return Ok(file.to_path_buf());
+    }
+
+    let src = std::fs::read_to_string(file)
+        .map_err(|e| format!("could not read {}: {e}", file.display()))?;
+    let conv = crate::md::parse_md(&src).map_err(|e| format!("{}: {e}", file.display()))?;
+    let ulx = crate::md::render_ulx(&conv);
+    if let Err(errors) = ulx_syntax::parse_source(&ulx) {
+        let mut msg = format!(
+            "internal error: the .ulx generated from {} does not parse:\n",
+            file.display()
+        );
+        for e in &errors {
+            msg.push_str(&format!("  {e:?}\n"));
+        }
+        return Err(msg);
+    }
+
+    let dir = crate::manifest::generated_dir();
+    std::fs::create_dir_all(&dir)
+        .map_err(|e| format!("could not create {}: {e}", dir.display()))?;
+    let stem = file.file_stem().and_then(|s| s.to_str()).unwrap_or("md");
+    let hash = ulx_runtime::value::hash_bytes(file.display().to_string().as_bytes());
+    let generated = dir.join(format!("{stem}-{}.ulx", &hash[..12]));
+    std::fs::write(&generated, &ulx)
+        .map_err(|e| format!("could not write {}: {e}", generated.display()))?;
+    Ok(generated)
+}
+
 /// Parse + semantic analysis only (no lowering) — what `ulx check` reports.
 /// Returns `true` iff there were no errors (warnings are printed but don't
 /// fail the check).
@@ -120,7 +165,14 @@ pub fn check(file: &Path) -> bool {
             return false;
         }
     };
-    let ws = match ulx_sema::analyze_file_with_deps(file, known_providers.as_ref(), &deps) {
+    let entry = match resolve_entry(file) {
+        Ok(e) => e,
+        Err(e) => {
+            eprintln!("error: {e}");
+            return false;
+        }
+    };
+    let ws = match ulx_sema::analyze_file_with_deps(&entry, known_providers.as_ref(), &deps) {
         Ok(ws) => ws,
         Err(e) => {
             eprintln!("error: {e}");
@@ -168,7 +220,14 @@ pub fn load(file: &Path) -> Option<Loaded> {
             return None;
         }
     };
-    let ws = match ulx_sema::analyze_file_with_deps(file, known_providers.as_ref(), &deps) {
+    let entry = match resolve_entry(file) {
+        Ok(e) => e,
+        Err(e) => {
+            eprintln!("error: {e}");
+            return None;
+        }
+    };
+    let ws = match ulx_sema::analyze_file_with_deps(&entry, known_providers.as_ref(), &deps) {
         Ok(ws) => ws,
         Err(e) => {
             eprintln!("error: {e}");
