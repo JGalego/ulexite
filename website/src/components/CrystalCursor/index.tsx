@@ -30,6 +30,45 @@ function pointInRects(x: number, y: number, rects: DOMRect[]): boolean {
   return rects.some((r) => x >= r.left && x <= r.right && y >= r.top && y <= r.bottom);
 }
 
+function isRealColor(color: string): boolean {
+  return !!color && color !== 'transparent' && color !== 'rgba(0, 0, 0, 0)';
+}
+
+/**
+ * The actual (non-transparent) background color behind `el` — the lens
+ * needs this as an opaque backing (see `styles.module.css`'s comment on
+ * `background-image`): without it, either the real page peeks through
+ * around the clone (a "double exposure" ghost of the unmagnified
+ * original) or — if the backing were just a flat color instead — it
+ * fights the content's own text color (e.g. white-on-white).
+ *
+ * Checks two different places, since either can hold it depending on the
+ * target: `el` and its ancestors (the hero's `<h1>` is transparent all
+ * the way up to `.hero--primary`, which is where the teal actually is),
+ * *or* `el`'s own descendants (the mock console's `data-crystal-target`
+ * wrapper is transparent, but its one real child — the terminal card —
+ * carries the actual near-black background a few levels down, not up).
+ */
+function effectiveBackgroundColor(el: Element): string {
+  const own = getComputedStyle(el).backgroundColor;
+  if (isRealColor(own)) {
+    return own;
+  }
+  const descendant = Array.from(el.querySelectorAll('*')).find((n) => isRealColor(getComputedStyle(n).backgroundColor));
+  if (descendant) {
+    return getComputedStyle(descendant).backgroundColor;
+  }
+  let node = el.parentElement;
+  while (node) {
+    const bg = getComputedStyle(node).backgroundColor;
+    if (isRealColor(bg)) {
+      return bg;
+    }
+    node = node.parentElement;
+  }
+  return '#ffffff';
+}
+
 /**
  * Replaces the mouse pointer with a small translucent "crystal" that
  * magnifies whatever's directly behind it — the mineral's own trick,
@@ -98,6 +137,7 @@ export default function CrystalCursor({targetSelector}: Props): ReactNode {
         lens.style.display = '';
         lens.style.left = `${lensLeft}px`;
         lens.style.top = `${lensTop}px`;
+        lens.style.backgroundColor = effectiveBackgroundColor(hit);
 
         lens.replaceChildren();
         const clone = hit.cloneNode(true) as HTMLElement;
