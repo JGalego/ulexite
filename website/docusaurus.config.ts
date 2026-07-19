@@ -108,7 +108,11 @@ const config: Config = {
     prism: {
       theme: prismThemes.github,
       darkTheme: prismThemes.dracula,
-      additionalLanguages: ['rust', 'toml'],
+      // `bash` covers every `ulx ...`/shell command block across the
+      // docs (~50 of them) — Prism's default bundle doesn't include it
+      // (nor `toml`/`rust` above), so without this they silently render
+      // as unstyled plain text despite the ` ```bash ` tag being correct.
+      additionalLanguages: ['rust', 'toml', 'bash', 'lua'],
     },
   } satisfies Preset.ThemeConfig,
 };

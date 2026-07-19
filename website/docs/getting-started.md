@@ -7,26 +7,26 @@ description: Install the ulx CLI and language server, then run your first conver
 
 ## Install
 
-**Prebuilt binaries** — detects your OS/architecture automatically and installs both `ulx` (the CLI) and `ulx-lsp` (the language server, so an editor extension works immediately with no separate step):
+**📦 Prebuilt binaries** — detects your OS/architecture automatically and installs both `ulx` (the CLI) and `ulx-lsp` (the language server, so an editor extension works immediately with no separate step):
 
 ```bash
-# Linux / macOS (x86_64 or arm64)
+# 🐧 Linux / 🍎 macOS (x86_64 or arm64)
 curl -fsSL https://raw.githubusercontent.com/JGalego/ulexite/main/scripts/install.sh | sh
 ```
 
 ```bash
-# Windows (x86_64), in PowerShell
+# 🪟 Windows (x86_64), in PowerShell
 irm https://raw.githubusercontent.com/JGalego/ulexite/main/scripts/install.ps1 | iex
 ```
 
-**From source** (needs Rust):
+**🦀 From source** (needs Rust):
 
 ```bash
 cargo install --git https://github.com/JGalego/ulexite ulx-cli --locked
 cargo install --git https://github.com/JGalego/ulexite ulx-lsp --locked   # only needed for editor support
 ```
 
-**Editor extension** (VS Code / VSCodium / Cursor / Windsurf) — syntax highlighting plus hover, go-to-definition, document symbols, and completion via `ulx-lsp`:
+**🧩 Editor extension** (VS Code / VSCodium / Cursor / Windsurf) — syntax highlighting plus hover, go-to-definition, document symbols, and completion via `ulx-lsp`:
 
 - Search the Marketplace/Open VSX for **"Ulexite"** and install, or
 - Grab the `.vsix` from the [latest release](https://github.com/JGalego/ulexite/releases/latest) and run `code --install-extension ulexite-*.vsix` (substitute `code` for `cursor`/`windsurf`/`codium` as needed).

@@ -110,23 +110,7 @@
   border-radius: 4px;
 }
 
-.compare {
-  padding: 1rem 0 4rem;
-}
-
-.compareGrid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 2rem;
-  max-width: 900px;
-  margin: 0 auto;
-}
-
 @media screen and (max-width: 768px) {
-  .compareGrid {
-    grid-template-columns: 1fr;
-  }
-
   .buttons {
     flex-direction: column;
   }

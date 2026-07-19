@@ -236,34 +236,6 @@ function WhyUlexite() {
   );
 }
 
-function ComparisonTeaser() {
-  return (
-    <section className={styles.compare}>
-      <div className="container">
-        <Heading as="h2" className={styles.sectionTitle}>
-          🔍 How it compares
-        </Heading>
-        <div className={styles.compareGrid}>
-          <p>
-            Conversation-first, provider-independent by construction, typed
-            artifacts checked at compile time, native traces and replay,
-            testing (<code>expect</code>/<code>assert</code>/<code>snapshot</code>)
-            as grammar rather than a bolted-on config-file test runner.
-          </p>
-          <p>
-            It's also new — low production track record compared to
-            LangGraph's, and the interpreter has a real performance ceiling
-            compared to compiled orchestration code. See the full{' '}
-            <Link to="/docs/comparison">comparison</Link> and{' '}
-            <Link to="/docs/limitations">known limitations</Link> for the
-            honest tradeoffs, not just the pitch.
-          </p>
-        </div>
-      </div>
-    </section>
-  );
-}
-
 export default function Home(): ReactNode {
   return (
     <Layout
@@ -275,7 +247,6 @@ export default function Home(): ReactNode {
         <FeatureGrid />
         <ShowcaseSection />
         <WhyUlexite />
-        <ComparisonTeaser />
       </main>
     </Layout>
   );
