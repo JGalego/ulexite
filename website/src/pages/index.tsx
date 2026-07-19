@@ -1,17 +1,19 @@
 import type {ReactNode} from 'react';
 import clsx from 'clsx';
 import Link from '@docusaurus/Link';
-import useBaseUrl from '@docusaurus/useBaseUrl';
 import Layout from '@theme/Layout';
 import Heading from '@theme/Heading';
 import CodeBlock from '@theme/CodeBlock';
+import MockConsole, {type ConsoleBlock, type ConsoleLine} from '@site/src/components/MockConsole';
+import CrystalMesh from '@site/src/components/CrystalMesh';
 
 import styles from './index.module.css';
 
 function HomepageHeader() {
   return (
     <header className={clsx('hero hero--primary', styles.heroBanner)}>
-      <div className="container">
+      <CrystalMesh />
+      <div className={clsx('container', styles.heroContent)}>
         <Heading as="h1" className="hero__title">
           Ulexite
         </Heading>
@@ -26,10 +28,10 @@ function HomepageHeader() {
         </p>
         <div className={styles.buttons}>
           <Link className="button button--secondary button--lg" to="/docs/getting-started">
-            Get Started
+            🚀 Get Started
           </Link>
           <Link className="button button--outline button--secondary button--lg" to="/playground">
-            Try the Playground
+            🧪 Try the Playground
           </Link>
         </div>
       </div>
@@ -44,7 +46,7 @@ type Feature = {
 
 const FEATURES: Feature[] = [
   {
-    title: 'Conversation-first',
+    title: '💬 Conversation-first',
     description: (
       <>
         History is automatic and structural — every message, in order,
@@ -54,7 +56,7 @@ const FEATURES: Feature[] = [
     ),
   },
   {
-    title: 'Typed multimodal artifacts',
+    title: '🧩 Typed multimodal artifacts',
     description: (
       <>
         <code>text</code>, <code>image</code>, <code>pdf</code>,{' '}
@@ -65,7 +67,7 @@ const FEATURES: Feature[] = [
     ),
   },
   {
-    title: 'Judges as a language construct',
+    title: '⚖️ Judges as a language construct',
     description: (
       <>
         <code>judge</code> returns a typed, exhaustively-matched{' '}
@@ -76,7 +78,7 @@ const FEATURES: Feature[] = [
     ),
   },
   {
-    title: 'Reproducible traces & replay',
+    title: '🔁 Reproducible traces & replay',
     description: (
       <>
         Every run produces a complete, content-addressed, replayable trace by
@@ -130,7 +132,7 @@ function WhatItLooksLike() {
     <section className={styles.sample}>
       <div className="container">
         <Heading as="h2" className={styles.sectionTitle}>
-          What it looks like
+          👀 What it looks like
         </Heading>
         <p className={styles.sectionSubtitle}>
           A complete, runnable conversation: translate, have a judge check
@@ -151,19 +153,68 @@ function WhatItLooksLike() {
   );
 }
 
+const RUN_ID = '7f2c9a1e4b0d6f83';
+
+const DEMO_BLOCKS: ConsoleBlock[] = [
+  {
+    command: 'ulx run translate.ulx Translate --arg source=hello --arg target_lang=fr --provider anthropic',
+    lines: [
+      {kind: 'turn', emoji: '🧭', role: 'system', tone: 'system', text: 'You are a professional translator.', delayMs: 350},
+      {kind: 'turn', emoji: '🧑', role: 'user', tone: 'user', text: 'Translate to fr: hello', delayMs: 400},
+      // Longer holds on the two calls that actually go out to a model —
+      // `chat` then `judge` — so the reveal reads like real call latency
+      // rather than a uniform typewriter tick.
+      {kind: 'turn', emoji: '🤖', role: 'assistant', tone: 'assistant', text: 'Bonjour', delayMs: 1100},
+      {kind: 'turn', emoji: '⚖️', role: 'judge Fluency', tone: 'judge', text: 'Escalate', delayMs: 900},
+      {kind: 'turn', emoji: '🙋', role: 'escalate human_approval', tone: 'escalate', text: 'judge could not decide (suspended)', delayMs: 500},
+      {kind: 'note', text: 'suspended: waiting on `human_approval` — judge could not decide', delayMs: 350},
+      {kind: 'rule', delayMs: 250},
+      {
+        kind: 'summary',
+        delayMs: 300,
+        rows: [
+          ['run id', RUN_ID],
+          ['status', 'suspended'],
+          ['capabilities', 'chat, judge, escalate'],
+          ['provider', 'anthropic — chat (claude-haiku-4-5), judge (claude-sonnet-4-5)'],
+        ],
+      },
+      {kind: 'note', text: `resume with: ulx approve ${RUN_ID} --value <text>   (or: ulx deny ${RUN_ID})`},
+    ],
+  },
+  {
+    command: `ulx approve ${RUN_ID} --value "Bonjour"`,
+    lines: [
+      {kind: 'turn', emoji: '🙋', role: 'escalate human_approval', tone: 'escalateResolved', text: 'judge could not decide => Bonjour', delayMs: 500},
+      {kind: 'note', text: 'Bonjour', delayMs: 400},
+      {kind: 'rule', delayMs: 250},
+      {
+        kind: 'summary',
+        rows: [
+          ['run id', RUN_ID],
+          ['status', 'ok'],
+          ['capabilities', 'chat, judge, escalate'],
+          ['provider', 'anthropic — chat (claude-haiku-4-5), judge (claude-sonnet-4-5)'],
+        ],
+      },
+    ],
+  },
+];
+
 function DemoSection() {
-  const gif = useBaseUrl('img/demos/translate.gif');
   return (
     <section className={styles.demo}>
       <div className="container">
         <Heading as="h2" className={styles.sectionTitle}>
-          See it run
+          🎬 See it run
         </Heading>
         <p className={styles.sectionSubtitle}>
-          <code>ulx run translate.ulx Translate</code>, recorded against a
-          real provider — not staged.
+          <code>ulx run translate.ulx Translate --provider anthropic</code> —
+          the judge can't decide, so it escalates to a human instead of
+          guessing. It suspends, a reviewer runs <code>ulx approve</code>,
+          and the same run resumes to completion.
         </p>
-        <img src={gif} alt="Terminal recording of ulx run translate.ulx" className={styles.demoGif} />
+        <MockConsole blocks={DEMO_BLOCKS} />
       </div>
     </section>
   );
@@ -175,7 +226,7 @@ function WhyUlexite() {
       <div className="container">
         <div className={styles.whyBox}>
           <Heading as="h2" className={styles.sectionTitle}>
-            Why &ldquo;Ulexite&rdquo;?
+            💎 Why &ldquo;Ulexite&rdquo;?
           </Heading>
           <p>
             Ulexite is a real mineral, nicknamed the &ldquo;TV rock&rdquo; — it
@@ -195,7 +246,7 @@ function ComparisonTeaser() {
     <section className={styles.compare}>
       <div className="container">
         <Heading as="h2" className={styles.sectionTitle}>
-          How it compares
+          🔍 How it compares
         </Heading>
         <div className={styles.compareGrid}>
           <p>

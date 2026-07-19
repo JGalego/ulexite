@@ -1,0 +1,157 @@
+/* A Dracula-ish palette on purpose — matches the `Set Theme "Dracula"`
+   the real `vhs` recordings (examples/demos/*.tape) already use, so this
+   sits next to them without looking like a different product. */
+
+.console {
+  max-width: 760px;
+  margin: 0 auto;
+  border-radius: 10px;
+  overflow: hidden;
+  background: #282a36;
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.25);
+  text-align: left;
+}
+
+.titlebar {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.55rem 0.9rem;
+  background: #1e1f29;
+}
+
+.dot {
+  width: 0.7rem;
+  height: 0.7rem;
+  border-radius: 50%;
+}
+
+.dotRed {
+  background: #ff5555;
+}
+
+.dotYellow {
+  background: #f1fa8c;
+}
+
+.dotGreen {
+  background: #50fa7b;
+}
+
+.titlebarLabel {
+  margin-left: 0.4rem;
+  color: #6272a4;
+  font-size: 0.75rem;
+  font-family: var(--ifm-font-family-monospace);
+}
+
+.body {
+  padding: 1rem 1.25rem 1.1rem;
+  font-family: var(--ifm-font-family-monospace);
+  font-size: 0.82rem;
+  line-height: 1.65;
+  color: #f8f8f2;
+  overflow-x: auto;
+}
+
+.line {
+  white-space: pre-wrap;
+  word-break: break-word;
+  margin-bottom: 0.65rem;
+}
+
+.note {
+  color: #f8f8f2;
+}
+
+.prompt {
+  color: #50fa7b;
+  font-weight: bold;
+}
+
+.command {
+  color: #f8f8f2;
+}
+
+.role {
+  font-weight: bold;
+}
+
+.system {
+  color: #6272a4;
+}
+
+.user {
+  color: #8be9fd;
+}
+
+.assistant {
+  color: #50fa7b;
+}
+
+.judge {
+  color: #ff79c6;
+}
+
+/* Pending (still suspended) vs resolved (approved/denied) — matches
+   `ulx-cli::output::role_style`'s own yellow-vs-green split for an
+   `escalate` turn. */
+.escalate {
+  color: #f1fa8c;
+}
+
+.escalateResolved {
+  color: #50fa7b;
+}
+
+.turnText {
+  color: #f8f8f2;
+}
+
+.rule {
+  border-top: 1px solid #44475a;
+  margin: 0.4rem 0 0.9rem;
+}
+
+.summary {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  margin-bottom: 0.65rem;
+}
+
+.summaryRow {
+  display: grid;
+  grid-template-columns: 8.5rem 1fr;
+}
+
+.summaryLabel {
+  color: #6272a4;
+}
+
+.cursor {
+  display: inline-block;
+  width: 0.5rem;
+  height: 1rem;
+  background: #f8f8f2;
+  vertical-align: text-bottom;
+  animation: blink 1s step-start infinite;
+}
+
+/* Steady, not blinking — used while a line is actively being "typed" so the
+   cursor doesn't flicker mid-keystroke the way an idle one should. */
+.cursorSolid {
+  animation: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cursor {
+    animation: none;
+  }
+}
+
+@keyframes blink {
+  50% {
+    opacity: 0;
+  }
+}

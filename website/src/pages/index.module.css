@@ -10,6 +10,11 @@
   overflow: hidden;
 }
 
+.heroContent {
+  position: relative;
+  z-index: 1;
+}
+
 @media screen and (max-width: 996px) {
   .heroBanner {
     padding: 2rem;
@@ -46,12 +51,6 @@
 .demo {
   padding: 2rem 0 3rem;
   text-align: center;
-}
-
-.demoGif {
-  max-width: 100%;
-  border-radius: 8px;
-  border: 1px solid var(--ifm-color-emphasis-300);
 }
 
 .sectionTitle {
