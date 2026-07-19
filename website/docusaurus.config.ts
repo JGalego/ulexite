@@ -38,6 +38,25 @@ const config: Config = {
   },
   themes: ['@docusaurus/theme-mermaid'],
 
+  // Serves /llms.txt (a linked table of contents) and /llms-full.txt (every
+  // doc's content concatenated) per the https://llmstxt.org convention, so
+  // an LLM/agent can fetch a curated, markdown-native version of the docs
+  // instead of crawling and stripping rendered HTML. Regenerated from
+  // website/docs on every build — never hand-maintained, so it can't drift
+  // out of sync with the actual doc set the way a static file would.
+  plugins: [
+    [
+      'docusaurus-plugin-llms',
+      {
+        title: 'Ulexite',
+        description:
+          'A programming language whose primary abstraction is the conversation: typed multimodal artifacts, built-in judges, reproducible traces, and deterministic execution where it counts.',
+        excludeImports: true,
+        removeDuplicateHeadings: true,
+      },
+    ],
+  ],
+
   presets: [
     [
       'classic',

@@ -97,19 +97,6 @@
   opacity: 0.85;
 }
 
-.why {
-  padding: 1rem 0 3rem;
-}
-
-.whyBox {
-  max-width: 720px;
-  margin: 0 auto;
-  padding: 1.5rem 2rem;
-  border-left: 4px solid var(--ifm-color-primary);
-  background: var(--ifm-color-emphasis-100);
-  border-radius: 4px;
-}
-
 @media screen and (max-width: 768px) {
   .buttons {
     flex-direction: column;

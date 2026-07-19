@@ -215,27 +215,6 @@ function ShowcaseSection() {
   );
 }
 
-function WhyUlexite() {
-  return (
-    <section className={styles.why}>
-      <div className="container">
-        <div className={styles.whyBox}>
-          <Heading as="h2" className={styles.sectionTitle}>
-            💎 Why &ldquo;Ulexite&rdquo;?
-          </Heading>
-          <p>
-            Ulexite is a real mineral, nicknamed the &ldquo;TV rock&rdquo; — it
-            grows as a bundle of parallel fibers that pipe an image
-            undistorted from one face of the stone to the other. Fitting for
-            a language whose job is carrying a conversation faithfully from
-            one end to the other.
-          </p>
-        </div>
-      </div>
-    </section>
-  );
-}
-
 export default function Home(): ReactNode {
   return (
     <Layout
@@ -246,7 +225,6 @@ export default function Home(): ReactNode {
       <main>
         <FeatureGrid />
         <ShowcaseSection />
-        <WhyUlexite />
       </main>
     </Layout>
   );

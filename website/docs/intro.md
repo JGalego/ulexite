@@ -10,11 +10,29 @@ import MockConsole from '@site/src/components/MockConsole';
 
 Ulexite is a programming language whose central abstraction is the **conversation** — not the prompt, not the model, not the agent. It compiles conversations involving humans, LLMs, tools, judges, datasets, and multimodal artifacts to a deterministic execution graph, with reproducible traces and first-class testing built into the grammar rather than bolted on as a library.
 
+:::info[💎 Why "Ulexite"?]
+Ulexite is a real mineral, nicknamed the "TV rock" — it grows as a bundle of parallel fibers that pipe an image undistorted from one face of the stone to the other. Fitting for a language whose job is carrying a conversation faithfully from one end to the other.
+:::
+
 ## The claim
 
-Every mature computing domain eventually gets a language, not just a library. Relational data got SQL. Infrastructure got Terraform/HCL. Browser automation got Playwright's test runner. Build graphs got Bazel/Starlark. Concurrent, fault-tolerant systems got Erlang/Elixir. In each case, the shift from "a library in a general-purpose language" to "a language with its own grammar, type system, and runtime" happened because the domain had a recurring shape that libraries could approximate but not enforce — and because it needed guarantees (determinism, reproducibility, static checking, a canonical execution model) that a library bolted onto a host language's control flow could never fully deliver.
+Every mature computing domain eventually gets a language, not just a library:
 
-LLM-driven conversational AI has reached that point. It has a recurring shape: a sequence of turns between typed participants (humans, models, tools, judges), producing typed multimodal artifacts, threaded through automatic history, subject to retries and non-determinism, and increasingly required to be testable, reproducible, and auditable in production. Today that shape gets approximated by a dozen incompatible Python/TypeScript libraries, each reinventing conversation state, retries, tracing, and evaluation as ad hoc application code — because none of them is a language. None has a grammar that can statically reject an unhandled judge verdict. None has a compiler that can prove a multimodal artifact is being routed to a model that actually accepts it. None has a runtime whose replay guarantee is a language-level contract rather than a best-effort SDK feature.
+- relational data got SQL
+
+- infrastructure got Terraform/HCL
+
+- browser automation got Playwright's test runner
+
+- build graphs got Bazel/Starlark
+
+- concurrent, fault-tolerant systems got Erlang/Elixir.
+
+In each case, the shift from "a library in a general-purpose language" to "a language with its own grammar, type system, and runtime" happened because the domain had a recurring shape that libraries could approximate but not enforce — and because it needed guarantees (determinism, reproducibility, static checking, a canonical execution model) that a library bolted onto a host language's control flow could never fully deliver.
+
+LLM-driven conversational AI has reached that point. It has a recurring shape: a sequence of turns between typed participants (humans, models, tools, judges), producing typed multimodal artifacts, threaded through automatic history, subject to retries and non-determinism, and increasingly required to be testable, reproducible, and auditable in production.
+
+Today that shape gets approximated by a dozen incompatible Python/TypeScript libraries, each reinventing conversation state, retries, tracing, and evaluation as ad hoc application code — because none of them is a language. None has a grammar that can statically reject an unhandled judge verdict. None has a compiler that can prove a multimodal artifact is being routed to a model that actually accepts it. None has a runtime whose replay guarantee is a language-level contract rather than a best-effort SDK feature.
 
 ```mermaid
 flowchart TB
