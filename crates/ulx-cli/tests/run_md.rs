@@ -97,8 +97,10 @@ fn check_reports_a_clear_error_for_invalid_markdown() {
         "`ulx check` should fail for Markdown missing a title heading\nstdout:\n{stdout}\nstderr:\n{stderr}"
     );
     assert!(
-        stdout.contains("Title") || stderr.contains("Title") ||
-        stdout.contains("heading") || stderr.contains("heading"),
+        stdout.contains("Title")
+            || stderr.contains("Title")
+            || stdout.contains("heading")
+            || stderr.contains("heading"),
         "expected a clear missing-title diagnostic, got:\nstdout:\n{stdout}\nstderr:\n{stderr}"
     );
 }
