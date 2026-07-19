@@ -104,6 +104,19 @@ export default function CrystalCursor({targetSelector}: Props): ReactNode {
         clone.removeAttribute('data-crystal-target');
         clone.querySelectorAll('[data-crystal-target]').forEach((n) => n.removeAttribute('data-crystal-target'));
         clone.querySelectorAll('[id]').forEach((n) => n.removeAttribute('id'));
+        // `hit`'s own layout (e.g. a centered <h1>'s `text-align: center`)
+        // can come from an *ancestor* rule rather than its own class —
+        // moving the clone under `lens` (outside that ancestor) drops any
+        // such inherited value back to its default, shifting the content
+        // inside its own box even though the box itself is still sized
+        // and placed identically. Pinning the handful of properties that
+        // commonly work this way keeps the clone's content exactly where
+        // it visually was.
+        const computed = getComputedStyle(hit);
+        clone.style.textAlign = computed.textAlign;
+        clone.style.color = computed.color;
+        clone.style.font = computed.font;
+        clone.style.lineHeight = computed.lineHeight;
         Object.assign(clone.style, {
           position: 'absolute',
           margin: '0',
