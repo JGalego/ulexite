@@ -1,7 +1,9 @@
 ---
 title: Examples
-description: Twelve complete, runnable Ulexite programs, one concept at a time, with recorded terminal demos.
+description: Twelve complete, runnable Ulexite programs, one concept at a time, with interactive terminal demos.
 ---
+
+import MockConsole from '@site/src/components/MockConsole';
 
 # Examples
 
@@ -9,7 +11,7 @@ Every program below ships in [`examples/`](https://github.com/JGalego/ulexite/tr
 
 Several examples declare their own `provider { ... }` blocks directly in source and pin capabilities to specific vendors — no `ulexite.toml` needed for those, just the env var(s) named in each section. The rest resolve providers from `ulexite.toml`; if more than one configured vendor serves the same capability, pass `--provider <name>` to disambiguate.
 
-The demos below were recorded with [VHS](https://github.com/charmbracelet/vhs) against real vendors — genuine output, not staged. Two recordings now predate a real fix and haven't been re-recorded yet: `pdf_qa.ulx`'s predates `pdf.extract_text` becoming real (it was a canned placeholder when recorded), and `eval_translate.ulx`'s predates `ulx bench` learning to suspend gracefully on a mid-run escalation instead of aborting the whole run. The source below is current for both; only the GIFs are stale.
+The consoles below are hand-authored stand-ins for a real `ulx run`/`ulx bench` session — same role emojis and coloring the CLI's own `--output text` transcript uses (see `ulx-cli::output::role_style`) — illustrating one representative run per example rather than a literal recorded terminal session. `pdf_qa.ulx`'s demo takes the text-layer path, since `pdf.extract_text` is real (pure-Rust PDF text extraction) and the shipped `fixtures/sample.pdf` has a text layer, so the `vision` fallback is never reached. `eval_translate.ulx`'s demo shows `ulx bench` suspending one row gracefully on a mid-run judge escalation instead of aborting the whole benchmark.
 
 ## `translate.ulx` — judge-checked retry with human escalation
 
@@ -42,7 +44,23 @@ cd examples
 ulx run translate.ulx Translate --arg source=hello --arg target_lang=fr --provider anthropic
 ```
 
-![translate.ulx demo](/img/demos/translate.gif)
+<MockConsole blocks={[{
+  command: 'ulx run translate.ulx Translate --arg source=hello --arg target_lang=fr --provider anthropic',
+  lines: [
+    {kind: 'turn', emoji: '🧭', role: 'system', tone: 'system', text: 'You are a professional translator.', delayMs: 350},
+    {kind: 'turn', emoji: '🧑', role: 'user', tone: 'user', text: 'Translate to fr: hello', delayMs: 400},
+    {kind: 'turn', emoji: '🤖', role: 'assistant', tone: 'assistant', text: 'Bonjour', delayMs: 1100},
+    {kind: 'turn', emoji: '⚖️', role: 'judge Fluency', tone: 'judge', text: 'Pass', delayMs: 900},
+    {kind: 'note', text: 'Bonjour', delayMs: 400},
+    {kind: 'rule', delayMs: 250},
+    {kind: 'summary', rows: [
+      ['run id', '3e9a7c1d5f2b8064'],
+      ['status', 'ok'],
+      ['capabilities', 'chat, judge'],
+      ['provider', 'anthropic — chat (claude-haiku-4-5), judge (claude-sonnet-4-5)'],
+    ]},
+  ],
+}]} />
 
 ## `summarize.ulx` — parallel independent extraction with `with`
 
@@ -68,7 +86,22 @@ export ANTHROPIC_API_KEY=sk-ant-... GROQ_API_KEY=gsk_...
 ulx run summarize.ulx Summarize --arg doc=fixtures/sample.pdf
 ```
 
-![summarize.ulx demo](/img/demos/summarize.gif)
+<MockConsole blocks={[{
+  command: 'ulx run summarize.ulx Summarize --arg doc=fixtures/sample.pdf',
+  lines: [
+    {kind: 'turn', emoji: '👁️', role: 'vision (outline)', tone: 'assistant', text: '1. Introduction  2. Methodology  3. Results  4. Conclusion', delayMs: 1000},
+    {kind: 'turn', emoji: '👁️', role: 'vision (keyfacts)', tone: 'assistant', text: 'Revenue +12%, churn down to 4%, NPS 61, two new markets launched, 92% renewal rate.', delayMs: 1000},
+    {kind: 'turn', emoji: '🤖', role: 'chat', tone: 'assistant', text: 'A one-page summary combining the outline and key facts above.', delayMs: 1200},
+    {kind: 'note', text: 'A one-page summary combining the outline and key facts above.', delayMs: 400},
+    {kind: 'rule', delayMs: 250},
+    {kind: 'summary', rows: [
+      ['run id', '9d2f6a1b7c4e0358'],
+      ['status', 'ok'],
+      ['capabilities', 'vision, chat'],
+      ['provider', 'anthropic — vision (claude-haiku-4-5), groq — chat (llama-3.3-70b-versatile)'],
+    ]},
+  ],
+}]} />
 
 ## `pdf_qa.ulx` — OCR fallback for PDF question-answering
 
@@ -99,7 +132,23 @@ cd examples
 ulx run pdf_qa.ulx PdfQA --arg doc=fixtures/sample.pdf --arg question="What is this about?" --provider anthropic
 ```
 
-![pdf_qa.ulx demo](/img/demos/pdf_qa.gif)
+<MockConsole blocks={[{
+  command: 'ulx run pdf_qa.ulx PdfQA --arg doc=fixtures/sample.pdf --arg question="What is this about?" --provider anthropic',
+  lines: [
+    {kind: 'note', text: 'pdf.extract_text(doc) → 1,842 chars (text layer found; vision fallback skipped)', delayMs: 500},
+    {kind: 'turn', emoji: '🧭', role: 'system', tone: 'system', text: 'Answer strictly using the provided document text.', delayMs: 300},
+    {kind: 'turn', emoji: '🧑', role: 'user', tone: 'user', text: 'Document:\n(1,842 chars)…\n\nQuestion: What is this about?', delayMs: 400},
+    {kind: 'turn', emoji: '🤖', role: 'assistant', tone: 'assistant', text: "It's a quarterly business review covering revenue, churn, and market expansion.", delayMs: 1100},
+    {kind: 'note', text: "It's a quarterly business review covering revenue, churn, and market expansion.", delayMs: 400},
+    {kind: 'rule', delayMs: 250},
+    {kind: 'summary', rows: [
+      ['run id', 'b6081ce4a72f9d53'],
+      ['status', 'ok'],
+      ['capabilities', 'chat'],
+      ['provider', 'anthropic — chat (claude-haiku-4-5)'],
+    ]},
+  ],
+}]} />
 
 ## `rag.ulx` — image captioning + retrieval-augmented generation
 
@@ -136,7 +185,40 @@ ulx run rag.ulx Caption --arg photo=fixtures/sample.jpg
 ulx run rag.ulx AnsweredByRAG --arg question="What is the PTO policy?"
 ```
 
-![rag.ulx demo](/img/demos/rag.gif)
+<MockConsole blocks={[
+  {
+    command: 'ulx run rag.ulx Caption --arg photo=fixtures/sample.jpg',
+    lines: [
+      {kind: 'turn', emoji: '👁️', role: 'vision', tone: 'assistant', text: 'A lighthouse standing on a rocky coastline at sunset.', delayMs: 1000},
+      {kind: 'note', text: 'A lighthouse standing on a rocky coastline at sunset.', delayMs: 400},
+      {kind: 'rule', delayMs: 250},
+      {kind: 'summary', rows: [
+        ['run id', '4a8e1f2c9b036d75'],
+        ['status', 'ok'],
+        ['capabilities', 'vision'],
+        ['provider', 'anthropic — vision (claude-haiku-4-5)'],
+      ]},
+    ],
+  },
+  {
+    command: 'ulx run rag.ulx AnsweredByRAG --arg question="What is the PTO policy?"',
+    lines: [
+      {kind: 'note', text: 'embedding.of(question) → 1536-d vector', delayMs: 500},
+      {kind: 'note', text: 'vector.nearest(KnowledgeBase, k=5) → 5 chunks', delayMs: 500},
+      {kind: 'turn', emoji: '🧭', role: 'system', tone: 'system', text: "Answer only from the provided context; say 'I don't know' if the context is insufficient.", delayMs: 300},
+      {kind: 'turn', emoji: '🧑', role: 'user', tone: 'user', text: 'Context:\n(5 chunks)…\n\nQuestion: What is the PTO policy?', delayMs: 400},
+      {kind: 'turn', emoji: '🤖', role: 'assistant', tone: 'assistant', text: 'Employees accrue 15 PTO days per year, with unused days carrying over up to a five-day cap.', delayMs: 1100},
+      {kind: 'note', text: 'Employees accrue 15 PTO days per year, with unused days carrying over up to a five-day cap.', delayMs: 400},
+      {kind: 'rule', delayMs: 250},
+      {kind: 'summary', rows: [
+        ['run id', '77c0a3d6e19f4b82'],
+        ['status', 'ok'],
+        ['capabilities', 'embed, chat'],
+        ['provider', 'openai — embed (text-embedding-3-small), groq — chat (llama-3.3-70b-versatile)'],
+      ]},
+    ],
+  },
+]} />
 
 ## `multi_agent.ulx` — nested conversations with handoff
 
@@ -178,7 +260,22 @@ cd examples
 ulx run multi_agent.ulx ResearchReport --arg topic="the history of lighthouses" --provider anthropic
 ```
 
-![multi_agent.ulx demo](/img/demos/multi_agent.gif)
+<MockConsole blocks={[{
+  command: 'ulx run multi_agent.ulx ResearchReport --arg topic="the history of lighthouses" --provider anthropic',
+  lines: [
+    {kind: 'turn', emoji: '🤖', role: 'ResearchAgent', tone: 'assistant', text: 'The Pharos of Alexandria (3rd century BC) is the earliest known lighthouse; the Eddystone and Fastnet lights pioneered modern wave-swept construction.', delayMs: 1200},
+    {kind: 'turn', emoji: '🤖', role: 'WriteAgent', tone: 'assistant', text: 'Lighthouses trace back to the Pharos of Alexandria... (two-paragraph report)', delayMs: 1300},
+    {kind: 'turn', emoji: '⚖️', role: 'judge Quality (ReviewAgent)', tone: 'judge', text: 'Pass', delayMs: 900},
+    {kind: 'note', text: 'Lighthouses trace back to the Pharos of Alexandria... (two-paragraph report)', delayMs: 400},
+    {kind: 'rule', delayMs: 250},
+    {kind: 'summary', rows: [
+      ['run id', 'e02b7f4d183a6c9e'],
+      ['status', 'ok'],
+      ['capabilities', 'chat, judge'],
+      ['provider', 'anthropic — chat (claude-haiku-4-5), judge (claude-sonnet-4-5)'],
+    ]},
+  ],
+}]} />
 
 ## `batch.ulx` — sequential loop over a dataset
 
@@ -208,7 +305,22 @@ cd examples
 ulx run batch.ulx TriageBacklog --provider anthropic
 ```
 
-![batch.ulx demo](/img/demos/batch.gif)
+<MockConsole blocks={[{
+  command: 'ulx run batch.ulx TriageBacklog --provider anthropic',
+  lines: [
+    {kind: 'turn', emoji: '🤖', role: 'Triage (1/3)', tone: 'assistant', text: "'App crashes on login' → high", delayMs: 800},
+    {kind: 'turn', emoji: '🤖', role: 'Triage (2/3)', tone: 'assistant', text: "'Dashboard chart colors look off' → low", delayMs: 800},
+    {kind: 'turn', emoji: '🤖', role: 'Triage (3/3)', tone: 'assistant', text: "'Export stalls above 10k rows' → medium", delayMs: 800},
+    {kind: 'note', text: '[high, low, medium]', delayMs: 400},
+    {kind: 'rule', delayMs: 250},
+    {kind: 'summary', rows: [
+      ['run id', 'c5d90a2f7e461b38'],
+      ['status', 'ok'],
+      ['capabilities', 'chat'],
+      ['provider', 'anthropic — chat (claude-haiku-4-5)'],
+    ]},
+  ],
+}]} />
 
 ## `eval_translate.ulx` — benchmark with dataset, judge, and snapshot
 
@@ -236,7 +348,21 @@ cd examples
 ulx bench eval_translate.ulx TranslateQuality --provider anthropic
 ```
 
-![eval_translate.ulx demo](/img/demos/eval_translate.gif)
+<MockConsole blocks={[{
+  command: 'ulx bench eval_translate.ulx TranslateQuality --provider anthropic',
+  lines: [
+    {kind: 'note', text: 'row 1/3  en→fr   hello → Bonjour            judge Fluency: Pass (0.96)   snapshot: recorded', delayMs: 900},
+    {kind: 'note', text: 'row 2/3  en→es   good morning → Buenos días  judge Fluency: Pass (0.91)   snapshot: recorded', delayMs: 900},
+    {kind: 'note', text: 'row 3/3  en→de   thank you → …               judge Fluency: Escalate      suspended (row r3)', delayMs: 900},
+    {kind: 'rule', delayMs: 250},
+    {kind: 'summary', rows: [
+      ['run id', 'f1a4d086c2937be5'],
+      ['status', '2 passed, 1 suspended'],
+      ['threshold', '0.8'],
+      ['resume with', 'ulx bench --run-id f1a4d086c2937be5, then ulx approve r3 / ulx deny r3'],
+    ]},
+  ],
+}]} />
 
 ## `approval.ulx` — suspend/resume as a human-approval checkpoint
 
@@ -257,7 +383,37 @@ ulx run approval.ulx RefundRequest --arg order_id=X123 --arg amount=42.50 --prov
 ulx approve <run_id> --value "approved"   # or: ulx deny <run_id> --note "..."
 ```
 
-![approval.ulx demo](/img/demos/approval.gif)
+<MockConsole blocks={[
+  {
+    command: 'ulx run approval.ulx RefundRequest --arg order_id=X123 --arg amount=42.50 --provider anthropic',
+    lines: [
+      {kind: 'turn', emoji: '🤖', role: 'chat', tone: 'assistant', text: 'Order X123: refund request for $42.50, reason unspecified — appears routine.', delayMs: 1000},
+      {kind: 'turn', emoji: '🙋', role: 'escalate human_approval', tone: 'escalate', text: 'Order X123: refund request for $42.50, reason unspecified — appears routine. (suspended)', delayMs: 700},
+      {kind: 'note', text: 'suspended: waiting on `human_approval`', delayMs: 400},
+      {kind: 'rule', delayMs: 250},
+      {kind: 'summary', rows: [
+        ['run id', 'a17f2c9b3e5d1046'],
+        ['status', 'suspended'],
+        ['capabilities', 'chat, escalate'],
+        ['provider', 'anthropic — chat (claude-haiku-4-5)'],
+      ]},
+    ],
+  },
+  {
+    command: 'ulx approve a17f2c9b3e5d1046 --value "approved"',
+    lines: [
+      {kind: 'turn', emoji: '🙋', role: 'escalate human_approval', tone: 'escalateResolved', text: 'Order X123 refund request => approved', delayMs: 500},
+      {kind: 'note', text: 'approved', delayMs: 400},
+      {kind: 'rule', delayMs: 250},
+      {kind: 'summary', rows: [
+        ['run id', 'a17f2c9b3e5d1046'],
+        ['status', 'ok'],
+        ['capabilities', 'chat, escalate'],
+        ['provider', 'anthropic — chat (claude-haiku-4-5)'],
+      ]},
+    ],
+  },
+]} />
 
 ## `voice_memo.ulx` — transcribe, reply, speak
 
@@ -281,7 +437,24 @@ export GROQ_API_KEY=gsk_... OPENAI_API_KEY=sk-...
 ulx run voice_memo.ulx VoiceMemoReply --arg recording=fixtures/sample.wav
 ```
 
-![voice_memo.ulx demo](/img/demos/voice_memo.gif)
+<MockConsole blocks={[{
+  command: 'ulx run voice_memo.ulx VoiceMemoReply --arg recording=fixtures/sample.wav',
+  lines: [
+    {kind: 'turn', emoji: '🎙️', role: 'transcribe', tone: 'assistant', text: 'Hey, just checking if the quarterly numbers are ready for review.', delayMs: 900},
+    {kind: 'turn', emoji: '🧭', role: 'system', tone: 'system', text: 'You write a one-sentence spoken reply to a voice memo.', delayMs: 300},
+    {kind: 'turn', emoji: '🧑', role: 'user', tone: 'user', text: 'Voice memo transcript:\nHey, just checking if the quarterly numbers are ready for review.', delayMs: 400},
+    {kind: 'turn', emoji: '🤖', role: 'assistant', tone: 'assistant', text: 'Yes, the quarterly numbers are finalized and ready for your review.', delayMs: 900},
+    {kind: 'turn', emoji: '🔊', role: 'speak', tone: 'assistant', text: '[audio: reply.wav, 2.1s]', delayMs: 700},
+    {kind: 'note', text: 'reply_audio → fixtures/out/reply.wav', delayMs: 400},
+    {kind: 'rule', delayMs: 250},
+    {kind: 'summary', rows: [
+      ['run id', '6f3c9d1a08e4b275'],
+      ['status', 'ok'],
+      ['capabilities', 'transcribe, chat, speak'],
+      ['provider', 'groq — transcribe, chat (whisper-large-v3, llama-3.3-70b-versatile), openai — speak (tts-1)'],
+    ]},
+  ],
+}]} />
 
 ## `generate_and_describe.ulx` — generate, then describe what was generated
 
@@ -301,7 +474,21 @@ export OPENAI_API_KEY=sk-... ANTHROPIC_API_KEY=sk-ant-...
 ulx run generate_and_describe.ulx GenerateAndDescribe --arg prompt="a lighthouse at sunset"
 ```
 
-![generate_and_describe.ulx demo](/img/demos/generate_and_describe.gif)
+<MockConsole blocks={[{
+  command: 'ulx run generate_and_describe.ulx GenerateAndDescribe --arg prompt="a lighthouse at sunset"',
+  lines: [
+    {kind: 'turn', emoji: '🖼️', role: 'generate_image', tone: 'assistant', text: '[image: picture.png, 1024x1024]', delayMs: 1400},
+    {kind: 'turn', emoji: '👁️', role: 'vision', tone: 'assistant', text: 'A lighthouse silhouetted against an orange and purple sunset sky, waves breaking at its base.', delayMs: 1100},
+    {kind: 'note', text: 'A lighthouse silhouetted against an orange and purple sunset sky, waves breaking at its base.', delayMs: 400},
+    {kind: 'rule', delayMs: 250},
+    {kind: 'summary', rows: [
+      ['run id', '2b7e5a94f0c3d861'],
+      ['status', 'ok'],
+      ['capabilities', 'generate_image, vision'],
+      ['provider', 'openai — generate_image (gpt-image-1), anthropic — vision (claude-haiku-4-5)'],
+    ]},
+  ],
+}]} />
 
 ## `custom_provider.ulx` — declaring a provider directly in source
 
@@ -326,7 +513,21 @@ cd examples
 ulx run custom_provider.ulx Greet --arg name=world
 ```
 
-![custom_provider.ulx demo](/img/demos/custom_provider.gif)
+<MockConsole blocks={[{
+  command: 'ulx run custom_provider.ulx Greet --arg name=world',
+  lines: [
+    {kind: 'turn', emoji: '🧑', role: 'user', tone: 'user', text: 'Say hello to world.', delayMs: 300},
+    {kind: 'turn', emoji: '🤖', role: 'assistant', tone: 'assistant', text: '[mock:chat] response to -> user: Say hello to world.', delayMs: 600},
+    {kind: 'note', text: '[mock:chat] response to -> user: Say hello to world.', delayMs: 400},
+    {kind: 'rule', delayMs: 250},
+    {kind: 'summary', rows: [
+      ['run id', '0c4b8f21d6a3e957'],
+      ['status', 'ok'],
+      ['capabilities', 'chat'],
+      ['provider', 'LocalAssistant (mock) — chat'],
+    ]},
+  ],
+}]} />
 
 ## `prompt_from_file.ulx` — loading prompt text from disk
 
@@ -346,7 +547,22 @@ cd examples
 ulx run prompt_from_file.ulx Greet --arg name=Ada --arg occasion=birthday --provider anthropic
 ```
 
-![prompt_from_file.ulx demo](/img/demos/prompt_from_file.gif)
+<MockConsole blocks={[{
+  command: 'ulx run prompt_from_file.ulx Greet --arg name=Ada --arg occasion=birthday --provider anthropic',
+  lines: [
+    {kind: 'turn', emoji: '🧭', role: 'system', tone: 'system', text: 'You are a warm, concise greeting writer. Reply with exactly one sentence.', delayMs: 350},
+    {kind: 'turn', emoji: '🧑', role: 'user', tone: 'user', text: 'Write a one-sentence greeting for Ada for the occasion: birthday.', delayMs: 400},
+    {kind: 'turn', emoji: '🤖', role: 'assistant', tone: 'assistant', text: 'Happy birthday, Ada — wishing you a day as wonderful as you are!', delayMs: 900},
+    {kind: 'note', text: 'Happy birthday, Ada — wishing you a day as wonderful as you are!', delayMs: 400},
+    {kind: 'rule', delayMs: 250},
+    {kind: 'summary', rows: [
+      ['run id', '5e9a03c7f184b62d'],
+      ['status', 'ok'],
+      ['capabilities', 'chat'],
+      ['provider', 'anthropic — chat (claude-haiku-4-5)'],
+    ]},
+  ],
+}]} />
 
 ## Supporting data
 
@@ -355,4 +571,4 @@ ulx run prompt_from_file.ulx Greet --arg name=Ada --arg occasion=birthday --prov
 - `tickets/` — `backlog.jsonl`, the dataset `batch.ulx` iterates over.
 - `prompts/` — the on-disk prompt files `prompt_from_file.ulx` loads.
 
-See the [full examples README](https://github.com/JGalego/ulexite/tree/main/examples) in the repo for exact per-example environment variable requirements and the raw `.tape` scripts behind every recording above.
+See the [full examples README](https://github.com/JGalego/ulexite/tree/main/examples) in the repo for exact per-example environment variable requirements and the raw `.tape` scripts behind the recordings this page's mock consoles are modeled on.
