@@ -29,6 +29,15 @@ const config: Config = {
     locales: ['en'],
   },
 
+  // `debugging.md` already had a ```mermaid block before this — it was
+  // silently rendering as a plain, unrendered code block (raw
+  // "sequenceDiagram ..." text) since neither this theme nor
+  // `markdown.mermaid` were ever actually wired up.
+  markdown: {
+    mermaid: true,
+  },
+  themes: ['@docusaurus/theme-mermaid'],
+
   presets: [
     [
       'classic',
