@@ -4,28 +4,65 @@
   z-index: 0;
   width: 100%;
   height: 100%;
-  opacity: 0.14;
-  pointer-events: none;
+  /* No container-level `opacity` — that would cap every descendant's
+     visible alpha at this value, which would make a hovered facet's
+     brightened `fill-opacity` (see `.mesh :global(polygon)` below)
+     invisible no matter how high it goes. Each facet's own resting
+     alpha lives on the facet itself instead.
+     No `pointer-events: none` either, deliberately — facets tile
+     edge-to-edge with no gaps, so there's no empty area within the mesh
+     that would ever need to be click-through, and overriding it back to
+     `auto` per-facet (a "parent none, child auto" pattern) is exactly the
+     kind of setup that's misbehaved for hover in some engines. */
+
+  /* Faded out entirely behind the text column, present only in the side
+     margins — a stronger, more evident mesh (see the higher fill-opacity/
+     stroke below) never has to compete with the hero text for legibility,
+     because it's simply not there behind it. Percentages are of the
+     mesh's own width, roughly matched to where the centered `.container`
+     (and its narrower `.heroBlurb`) actually sit at typical desktop
+     widths — approximate, not pixel-exact, which is fine for a decorative
+     background. */
+  mask-image: linear-gradient(
+    to right,
+    black 0%,
+    black 12%,
+    transparent 26%,
+    transparent 74%,
+    black 88%,
+    black 100%
+  );
+  -webkit-mask-image: linear-gradient(
+    to right,
+    black 0%,
+    black 12%,
+    transparent 26%,
+    transparent 74%,
+    black 88%,
+    black 100%
+  );
 }
 
-.glint {
-  animation-name: glint;
-  animation-timing-function: ease-in-out;
-  animation-iteration-count: infinite;
+/* Plain SVG elements (`<polygon>`), not CSS-modules classes — `:global`
+   opts out of the module's automatic class-name scoping so this actually
+   matches them. */
+.mesh :global(polygon) {
+  fill-opacity: 0.24;
+  stroke: rgba(255, 255, 255, 0.3);
+  stroke-width: 1;
+  transition: fill-opacity 0.2s ease-out;
 }
 
-@keyframes glint {
-  0%,
-  100% {
-    opacity: 0.4;
-  }
-  50% {
-    opacity: 1;
-  }
+.mesh :global(polygon:hover) {
+  fill-opacity: 0.95;
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .glint {
-    animation: none;
+  /* The hover brighten is a direct response to a deliberate user action,
+     not an autoplaying animation, so it stays enabled under reduced
+     motion — only the smooth fade-in/out is dropped in favor of an
+     instant snap. */
+  .mesh :global(polygon) {
+    transition: none;
   }
 }

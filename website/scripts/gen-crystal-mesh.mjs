@@ -85,25 +85,10 @@ for (let r = 0; r < ROWS; r++) {
   }
 }
 
-// A minority of facets "glint" — a slow, staggered opacity pulse evoking
-// light catching different faces of the crystal, instead of any
-// large-scale motion (an earlier drifting-gradient background read as
-// distracting at this same low opacity).
-const glintCount = Math.round(triangles.length * 0.12);
-const glintIdx = new Set();
-while (glintIdx.size < glintCount) {
-  glintIdx.add(Math.floor(rand() * triangles.length));
-}
-
-const data = triangles.map((t, i) => {
+const data = triangles.map((t) => {
   const points = t.pts.map((p) => `${p[0]},${p[1]}`).join(' ');
   const fill = colorAt(t.u, t.v);
-  if (!glintIdx.has(i)) {
-    return [points, fill];
-  }
-  const delay = Math.round(rand() * 1400) / 100;
-  const duration = Math.round((10 + rand() * 8) * 100) / 100;
-  return [points, fill, delay, duration];
+  return [points, fill];
 });
 
 process.stdout.write(JSON.stringify({viewBox: `0 0 ${W} ${H}`, triangles: data}));
