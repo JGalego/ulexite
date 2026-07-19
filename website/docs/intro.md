@@ -36,18 +36,30 @@ Today that shape gets approximated by a dozen incompatible Python/TypeScript lib
 
 ```mermaid
 flowchart TB
-    subgraph today["Today: a library, glued together"]
+    subgraph ulexite["💎 Ulexite: a language"]
+        direction TB
+        u1["💬 conversation"] --> u2["⚖️ judge · retry · escalate"]
+        u2 --> u3["🔁 replayable trace"]
+        u3 --> u4["✅ expect / assert / snapshot"]
+    end
+    subgraph today["😓 Today: a library, glued together"]
         direction TB
         t1["prompt template"] --> t2["retry loop you write"]
-        t2 --> t3["tracing you bolt on"]
-        t3 --> t4["eval script, separate from the app"]
+        t2 --> t3["tracing bolted on"]
+        t3 --> t4["eval script, separate"]
     end
-    subgraph ulexite["Ulexite: a language"]
-        direction TB
-        u1["conversation"] --> u2["judge / retry / escalate"]
-        u2 --> u3["trace: automatic, replayable"]
-        u3 --> u4["expect / assert / snapshot, in the grammar"]
-    end
+
+    style today fill:#f3f4f6,stroke:#d1d5db,color:#374151
+    style t1 fill:#e5e7eb,stroke:#9ca3af,color:#4b5563
+    style t2 fill:#e5e7eb,stroke:#9ca3af,color:#4b5563
+    style t3 fill:#e5e7eb,stroke:#9ca3af,color:#4b5563
+    style t4 fill:#e5e7eb,stroke:#9ca3af,color:#4b5563
+
+    style ulexite fill:#e6fbf8,stroke:#0f7a70,color:#0a544d
+    style u1 fill:#0a544d,stroke:#083a34,color:#ffffff
+    style u2 fill:#0f7a70,stroke:#083a34,color:#ffffff
+    style u3 fill:#15a598,stroke:#083a34,color:#ffffff
+    style u4 fill:#2dd4bf,stroke:#083a34,color:#083a34
 ```
 
 ## What Ulexite is
