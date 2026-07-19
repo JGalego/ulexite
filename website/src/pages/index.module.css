@@ -21,13 +21,6 @@
   }
 }
 
-.heroBlurb {
-  max-width: 640px;
-  margin: 0 auto 1.5rem;
-  font-size: 1.1rem;
-  opacity: 0.9;
-}
-
 .buttons {
   display: flex;
   gap: 1rem;
@@ -43,6 +36,25 @@
   margin-bottom: 1.5rem;
 }
 
+/* Infima's `.col--3` is a flat 25% width at every viewport size — it has
+   no responsive breakpoint of its own, unlike Bootstrap's size-prefixed
+   column classes. Left alone, that's 4 columns even on a phone, each
+   barely wider than a word. Overriding the same `--ifm-col-width` custom
+   property `.col--3` itself sets is the narrowest possible fix — no need
+   to fight `.col--3`'s own flex/max-width rules, just feed them a
+   different width per breakpoint. */
+@media screen and (max-width: 996px) {
+  .featureCol {
+    --ifm-col-width: 50%;
+  }
+}
+
+@media screen and (max-width: 640px) {
+  .featureCol {
+    --ifm-col-width: 100%;
+  }
+}
+
 .showcase {
   padding: 2rem 0 3rem;
   background: var(--ifm-color-emphasis-100);
@@ -54,6 +66,16 @@
   grid-template-columns: 1fr 1fr;
   gap: 3rem;
   align-items: start;
+}
+
+/* A grid item's default `min-width` is `auto`, not `0` — meaning it won't
+   shrink below its content's own intrinsic minimum width. The code block
+   and terminal each have long single lines with no natural break point,
+   so without this, that min-content width forces the grid track (and the
+   whole page along with it) wider than the viewport on narrow screens,
+   instead of the code/terminal's own `overflow-x: auto` doing its job. */
+.showcaseGrid > * {
+  min-width: 0;
   text-align: left;
 }
 

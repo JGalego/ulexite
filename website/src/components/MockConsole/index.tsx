@@ -52,7 +52,7 @@ const useIsomorphicLayoutEffect = typeof window !== 'undefined' ? useLayoutEffec
  * A hand-authored stand-in for a `vhs`-recorded terminal GIF: same role
  * emoji/coloring `ulx run`'s real `--output text` transcript uses (see
  * `ulx-cli::output::role_style`), sized to its actual content instead of a
- * fixed recording-canvas height, and replayed as typed commands + streamed
+ * fixed recording-canvas height, and replayed as a typed command + streamed
  * turns instead of an opaque autoplaying video file. `blocks` plays back as
  * one continuous terminal session — e.g. a `run` that suspends, followed by
  * the `approve` that resumes it — with earlier blocks left in scrollback
@@ -62,6 +62,12 @@ const useIsomorphicLayoutEffect = typeof window !== 'undefined' ? useLayoutEffec
  * there's real text for no-JS/SEO, and no SSR/hydration mismatch), then
  * resets and plays the reveal once mounted — skipped entirely for
  * `prefers-reduced-motion: reduce`, which just leaves everything shown.
+ *
+ * The body's height is locked to that initial fully-revealed measurement
+ * (see `minHeight`) before the reset kicks in, so the replay plays out
+ * inside a card that's already at its final size from the very first
+ * frame — no visible growth as blocks stream in, and no "the demo looks
+ * emptier than it will be" gap while it's mid-animation.
  */
 export default function MockConsole({
   blocks,
@@ -72,9 +78,15 @@ export default function MockConsole({
   const [blockIndex, setBlockIndex] = useState(lastBlock);
   const [typedChars, setTypedChars] = useState(blocks[lastBlock].command.length);
   const [visible, setVisible] = useState(blocks[lastBlock].lines.length);
+  const [minHeight, setMinHeight] = useState<number | undefined>(undefined);
+  const bodyRef = useRef<HTMLDivElement>(null);
   const timerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
 
   useIsomorphicLayoutEffect(() => {
+    if (bodyRef.current) {
+      setMinHeight(bodyRef.current.offsetHeight);
+    }
+
     if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
       return;
     }
@@ -138,7 +150,7 @@ export default function MockConsole({
         <span className={clsx(styles.dot, styles.dotGreen)} />
         <span className={styles.titlebarLabel}>bash</span>
       </div>
-      <div className={styles.body}>
+      <div ref={bodyRef} className={styles.body} style={minHeight ? {minHeight} : undefined}>
         {blocks.slice(0, blockIndex).map((block, b) => (
           <ConsoleBlockView key={b} command={block.command} lines={block.lines} typedChars={block.command.length} visible={block.lines.length} />
         ))}

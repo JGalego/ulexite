@@ -21,12 +21,6 @@ function HomepageHeader() {
         <p className="hero__subtitle">
           Stop scripting prompts. Start writing conversations.
         </p>
-        <p className={styles.heroBlurb}>
-          A language whose primary abstraction is the <strong>conversation</strong> —
-          not the prompt, the model, or the agent. Typed multimodal artifacts,
-          built-in judges, reproducible traces, and deterministic execution
-          where it counts.
-        </p>
         <div className={styles.buttons}>
           <Link className="button button--secondary button--lg" to="/docs/getting-started">
             🚀 Get Started
@@ -57,7 +51,7 @@ const FEATURES: Feature[] = [
     ),
   },
   {
-    title: '🧩 Typed multimodal artifacts',
+    title: '🧩 Multimodal artifacts',
     description: (
       <>
         <code>text</code>, <code>image</code>, <code>pdf</code>,{' '}
@@ -68,7 +62,7 @@ const FEATURES: Feature[] = [
     ),
   },
   {
-    title: '⚖️ Judges as a language construct',
+    title: '⚖️ Built-in judges',
     description: (
       <>
         <code>judge</code> returns a typed, exhaustively-matched{' '}
@@ -79,12 +73,12 @@ const FEATURES: Feature[] = [
     ),
   },
   {
-    title: '🔁 Reproducible traces & replay',
+    title: '🔁 Traces & replay',
     description: (
       <>
-        Every run produces a complete, content-addressed, replayable trace by
-        default — checkpoint a conversation and resume it from any point,
-        with model calls memoized rather than re-invoked.
+        Every run produces a complete, replayable trace — resume a
+        conversation from any point, with model calls memoized instead of
+        re-invoked.
       </>
     ),
   },
@@ -127,8 +121,6 @@ conversation Translate(source: text, target_lang: text) -> text {
     Score(_)     => draft
   }
 }`;
-
-
 const RUN_ID = '7f2c9a1e4b0d6f83';
 
 const DEMO_BLOCKS: ConsoleBlock[] = [
