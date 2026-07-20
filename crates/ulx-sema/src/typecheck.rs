@@ -442,6 +442,72 @@ fn collect_idents(expr: &Expr, out: &mut HashSet<String>, ctx: &mut Ctx) {
     }
 }
 
+/// §8.1: a `retry` body "may fail" — and therefore needs an `else` clause —
+/// if it can reach a model/judge/validator call anywhere along its control
+/// flow (an `assistant -> name` bind, an `ask` statement/expression, or a
+/// `judge`/`validator` call). A body that only does pure computation (no
+/// such call, e.g. a plain string-validator with no model round-trip)
+/// cannot fail and may omit `else`.
+fn block_may_fail(block: &Block) -> bool {
+    block.stmts.iter().any(|(s, _)| stmt_may_fail(s))
+        || block.tail.as_ref().is_some_and(|t| expr_may_fail(&t.0))
+}
+
+fn stmt_may_fail(stmt: &Stmt) -> bool {
+    match stmt {
+        Stmt::AssistantBind { .. } => true,
+        Stmt::Ask { .. } => true,
+        Stmt::Message { text, .. } => expr_may_fail(&text.0),
+        Stmt::With(bindings) => bindings.iter().any(|b| expr_may_fail(&b.value.0)),
+        Stmt::Binding(b) => expr_may_fail(&b.value.0),
+        Stmt::Match(m) => {
+            expr_may_fail(&m.scrutinee.0)
+                || m.arms.iter().any(|a| match &a.body {
+                    MatchArmBody::Expr(e) => expr_may_fail(&e.0),
+                    MatchArmBody::Block(b) => block_may_fail(b),
+                })
+        }
+        Stmt::For { iter, body, .. } => expr_may_fail(&iter.0) || block_may_fail(body),
+        Stmt::While { cond, body } => expr_may_fail(&cond.0) || block_may_fail(body),
+        Stmt::Break(e) => e.as_ref().is_some_and(|e| expr_may_fail(&e.0)),
+        Stmt::Expr(e) => expr_may_fail(&e.0),
+    }
+}
+
+fn expr_may_fail(expr: &Expr) -> bool {
+    match expr {
+        Expr::AskExpr { .. } | Expr::JudgeCall { .. } | Expr::ValidatorCall { .. } => true,
+        Expr::Retry {
+            body, else_expr, ..
+        } => block_may_fail(body) || else_expr.as_ref().is_some_and(|e| expr_may_fail(&e.0)),
+        Expr::If {
+            cond,
+            then_block,
+            else_block,
+        } => expr_may_fail(&cond.0) || block_may_fail(then_block) || block_may_fail(else_block),
+        Expr::Escalate { args, .. } => args.iter().any(|(_, e)| expr_may_fail(&e.0)),
+        Expr::GenericCall { args, .. } => args.iter().any(|a| expr_may_fail(&a.value.0)),
+        Expr::Call { callee, args } => {
+            expr_may_fail(&callee.0) || args.iter().any(|a| expr_may_fail(&a.value.0))
+        }
+        Expr::FieldAccess { base, .. } => expr_may_fail(&base.0),
+        Expr::Index { base, index } => expr_may_fail(&base.0) || expr_may_fail(&index.0),
+        Expr::Unary { expr, .. } => expr_may_fail(&expr.0),
+        Expr::Binary { lhs, rhs, .. } => expr_may_fail(&lhs.0) || expr_may_fail(&rhs.0),
+        Expr::RecordLit(fields) => fields.iter().any(|(_, e)| expr_may_fail(&e.0)),
+        Expr::TextBlock(parts) => parts.iter().any(|p| match p {
+            TextPart::Interp(e) => expr_may_fail(&e.0),
+            TextPart::Literal(_) => false,
+        }),
+        Expr::FileText { .. }
+        | Expr::Int(_)
+        | Expr::Float(_)
+        | Expr::Str(_)
+        | Expr::Ident(_)
+        | Expr::RowRef => false,
+    }
+}
+
 fn check_match(m: &MatchStmt, scope: &mut Scope, ctx: &mut Ctx) {
     check_expr(&m.scrutinee, scope, ctx);
     let is_verdict = matches!(
@@ -649,6 +715,14 @@ fn check_expr(expr: &Spanned<Expr>, scope: &mut Scope, ctx: &mut Ctx) {
             check_block(body, scope, ctx);
             if let Some(e) = else_expr {
                 check_expr(e, scope, ctx);
+            } else if block_may_fail(body) {
+                ctx.diags.push(Diagnostic::error(
+                    "`retry` body may fail (it makes a model/judge/validator call) but has no \
+                     `else` clause (§8.1) — add `else <expr>` or restructure the body so it \
+                     cannot fail"
+                        .to_string(),
+                    span.clone(),
+                ));
             }
         }
         Expr::Escalate { args, .. } => {

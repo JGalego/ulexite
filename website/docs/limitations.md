@@ -70,7 +70,6 @@ A pre-v0.1 review surfaced several compiler-quality issues worth knowing about:
 - Lexer errors report an imprecise span, and an overflowing integer literal is misreported as "unrecognized character" instead of a numeric-overflow diagnostic.
 - Match-arm binding arity isn't validated statically — a missing or extra binding on a `Verdict` arm type-checks cleanly and only fails at runtime.
 - `Verdict` exhaustiveness checking matches the literal type name `"Verdict"`, not a resolved type; general user-declared union exhaustiveness checking isn't implemented at all.
-- `retry`'s rule that a non-total body needs an `else` is unenforced — `retry(3) { ... }` with no `else` type-checks silently instead of being rejected.
 
 ## IDE support is early
 

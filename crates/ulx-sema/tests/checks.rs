@@ -219,6 +219,58 @@ fn exhaustive_verdict_match_with_wildcard_is_accepted() {
 }
 
 #[test]
+fn retry_without_else_over_a_failable_body_is_rejected() {
+    // §8.1: a `retry` body that can fail (it makes a model call via
+    // `assistant -> name`) must have an `else` clause.
+    let src = r#"
+        conversation Draft(topic: text) -> text {
+          retry(2) {
+            assistant -> draft: text
+          }
+        }
+    "#;
+    let d = diags(src);
+    assert!(
+        has_error_containing(&d, "no `else` clause"),
+        "expected a missing-else error, got: {d:?}"
+    );
+}
+
+#[test]
+fn retry_with_else_over_a_failable_body_is_accepted() {
+    let src = r#"
+        conversation Draft(topic: text) -> text {
+          retry(2) {
+            assistant -> draft: text
+          } else "fallback"
+        }
+    "#;
+    let d = diags(src);
+    assert!(
+        !has_error_containing(&d, "no `else` clause"),
+        "did not expect a missing-else error, got: {d:?}"
+    );
+}
+
+#[test]
+fn retry_without_else_over_a_pure_body_is_accepted() {
+    // A body with no model/judge/validator call can't fail, so `else` is
+    // optional per §8.1.
+    let src = r#"
+        conversation Pure(topic: text) -> text {
+          retry(2) {
+            topic
+          }
+        }
+    "#;
+    let d = diags(src);
+    assert!(
+        !has_error_containing(&d, "no `else` clause"),
+        "did not expect a missing-else error, got: {d:?}"
+    );
+}
+
+#[test]
 fn with_block_sibling_reference_is_rejected() {
     let src = r#"
         conversation Summarize(doc: pdf) -> text {

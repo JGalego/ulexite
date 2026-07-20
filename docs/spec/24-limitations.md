@@ -72,7 +72,6 @@ A code review ahead of tagging v0.1.0 surfaced several front-end (`ulx-syntax`/`
 - **Lexer errors report an imprecise 1-byte span**, and an overflowing integer literal (e.g. more digits than fit in an `i64`) is misreported as "unrecognized character" rather than a numeric-overflow-specific diagnostic.
 - **Match-arm binding arity isn't validated statically.** `Fail => ...` (missing the `reason` binding) or extra bindings on a payload-less variant both type-check cleanly; a program referencing an unbound name only fails at runtime as "undefined variable," a case the compiler should catch statically.
 - **`Verdict` exhaustiveness checking matches the literal type name, not a resolved type**, and general user-declared union / `Draft<T>` exhaustiveness checking (§9.3/§9.4) isn't implemented at all — only the specific name `"Verdict"` is special-cased. A user type literally named `Verdict` can defeat or confuse the check; any other union type gets no exhaustiveness checking whatsoever.
-- **`retry`'s spec-mandated `else`-unless-provably-total rule (§8.1) is unenforced** — `retry(3) { ... }` with no `else` and a non-total body type-checks silently instead of being rejected.
 
 ## 24.13 §20's IDE integration is a vision document, not a v0.1 status report
 
