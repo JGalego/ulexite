@@ -314,6 +314,7 @@ fn merge_workspace_program(ws: &ulx_sema::Workspace) -> Program {
     Program {
         imports: Vec::new(),
         decls,
+        doc_comments: std::collections::BTreeMap::new(),
     }
 }
 

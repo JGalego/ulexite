@@ -12,6 +12,12 @@ pub type Spanned<T> = (T, Span);
 pub struct Program {
     pub imports: Vec<Spanned<Import>>,
     pub decls: Vec<Spanned<TopDecl>>,
+    /// `/// ...` doc comments (§8 `doc_comment`), keyed by the byte offset
+    /// of whatever they immediately precede (a top-level decl's first
+    /// token, almost always) — consecutive `///` lines are joined with
+    /// `\n`. §24.12: the lexer used to discard doc comments identically to
+    /// `//`; this is the (currently sole) place they're recoverable from.
+    pub doc_comments: std::collections::BTreeMap<usize, String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]

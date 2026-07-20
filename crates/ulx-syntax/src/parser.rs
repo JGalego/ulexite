@@ -611,6 +611,13 @@ pub fn split_text_block(raw: &str, base_offset: usize) -> Result<Vec<TextPart>, 
             }
             let shifted: Vec<_> = tokens
                 .into_iter()
+                // A `///` doc comment has no meaning inside an
+                // interpolation expression (§8's `doc_comment` production
+                // only ever precedes a top-level decl) — drop it here the
+                // same way a plain `//` comment is dropped by the lexer's
+                // `skip` pattern, rather than feeding a token `expr_p()`
+                // has no rule for.
+                .filter(|(t, _)| !matches!(t, Token::DocComment(_)))
                 .map(|(t, span)| {
                     (
                         t,
@@ -877,6 +884,7 @@ pub fn program_p() -> impl Parser<Token, Program, Error = Err> + Clone {
         let mut program = Program {
             imports: Vec::new(),
             decls: Vec::new(),
+            doc_comments: std::collections::BTreeMap::new(),
         };
         for item in items {
             match item {
@@ -928,9 +936,40 @@ pub fn parse_source(src: &str) -> PResult<Program> {
     if let Some(span) = find_excess_nesting(&tokens) {
         return Err(vec![Simple::custom(span, nesting_error_message())]);
     }
+    let (doc_comments, tokens) = extract_doc_comments(tokens);
     let eoi = src.len()..src.len();
     let stream = chumsky::Stream::from_iter(eoi, tokens.into_iter());
-    program_p().parse(stream)
+    let mut program = program_p().parse(stream)?;
+    program.doc_comments = doc_comments;
+    Ok(program)
+}
+
+/// Pulls `Token::DocComment`s (§8 `doc_comment`) out of a token stream —
+/// chumsky's grammar has no production for them, so they can't be left in
+/// the stream fed to `program_p()` — recording each contiguous run's text
+/// (joined with `\n`) against the byte offset of whatever real token
+/// immediately follows it. §24.12: this is what makes `///` doc comments
+/// recoverable at all, rather than silently discarded like `//`.
+type TokenStream = Vec<(Token, std::ops::Range<usize>)>;
+
+fn extract_doc_comments(
+    tokens: TokenStream,
+) -> (std::collections::BTreeMap<usize, String>, TokenStream) {
+    let mut docs = std::collections::BTreeMap::new();
+    let mut pending: Vec<String> = Vec::new();
+    let mut out = Vec::with_capacity(tokens.len());
+    for (tok, span) in tokens {
+        if let Token::DocComment(text) = tok {
+            pending.push(text);
+        } else {
+            if !pending.is_empty() {
+                docs.insert(span.start, pending.join("\n"));
+                pending.clear();
+            }
+            out.push((tok, span));
+        }
+    }
+    (docs, out)
 }
 
 /// §24.12: chumsky's recursive-descent parser recurses on the native call

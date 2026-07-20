@@ -15,6 +15,15 @@ use logos::Logos;
 #[logos(skip r"//[^\n]*")]
 #[logos(skip r"/\*([^*]|\*[^*/])*\*+/")]
 pub enum Token {
+    /// `/// doc text` (§8 `doc_comment`) — must out-prioritize the bare
+    /// `//` skip pattern above (both match the same span on a `///` line;
+    /// logos breaks the tie by declaration order otherwise, and `#[token]`
+    /// callback-based patterns are checked before `#[logos(skip ...)]`
+    /// ones only when given an explicit higher priority), so it carries a
+    /// `priority` above the default for a pattern this shape.
+    #[regex(r"///[^\n]*", |lex| lex.slice()[3..].trim_start().to_string(), priority = 10)]
+    DocComment(String),
+
     #[regex(r"[0-9]+\.[0-9]+", |lex| lex.slice().parse::<f64>().ok())]
     Float(f64),
 
@@ -112,9 +121,11 @@ impl std::hash::Hash for Token {
         match self {
             Token::Float(f) => f.to_bits().hash(state),
             Token::Int(i) => i.hash(state),
-            Token::Str(s) | Token::TextBlock(s) | Token::Ident(s) | Token::AtPath(s) => {
-                s.hash(state)
-            }
+            Token::Str(s)
+            | Token::TextBlock(s)
+            | Token::Ident(s)
+            | Token::AtPath(s)
+            | Token::DocComment(s) => s.hash(state),
             _ => {}
         }
     }
@@ -123,6 +134,7 @@ impl std::hash::Hash for Token {
 impl std::fmt::Display for Token {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Token::DocComment(s) => write!(f, "///{s}"),
             Token::Float(v) => write!(f, "{v}"),
             Token::Int(v) => write!(f, "{v}"),
             Token::Str(s) => write!(f, "{s:?}"),
@@ -270,5 +282,39 @@ mod tests {
             only_text_block(r#""""Hello {name}\nGoodbye""""#),
             "Hello {name}\nGoodbye"
         );
+    }
+
+    #[test]
+    fn doc_comment_is_retained_as_a_real_token() {
+        let tokens = lex("/// a doc comment\nconversation").expect("must lex");
+        assert_eq!(
+            tokens,
+            vec![
+                (Token::DocComment("a doc comment".to_string()), 0..17),
+                (Token::Ident("conversation".to_string()), 18..30),
+            ]
+        );
+    }
+
+    #[test]
+    fn plain_double_slash_comment_is_still_skipped() {
+        let tokens = lex("// not a doc comment\nconversation").expect("must lex");
+        assert_eq!(
+            tokens,
+            vec![(Token::Ident("conversation".to_string()), 21..33)]
+        );
+    }
+
+    #[test]
+    fn consecutive_doc_comment_lines_lex_as_separate_tokens() {
+        let tokens = lex("/// line one\n/// line two\nFoo").expect("must lex");
+        let docs: Vec<&str> = tokens
+            .iter()
+            .filter_map(|(t, _)| match t {
+                Token::DocComment(s) => Some(s.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(docs, vec!["line one", "line two"]);
     }
 }
