@@ -80,3 +80,22 @@ fn oversized_integer_literal_reports_overflow_not_unrecognized_character() {
         "expected an integer-overflow message, got: {msg}"
     );
 }
+
+#[test]
+fn pathologically_deep_nesting_is_a_clean_parse_error_not_a_crash() {
+    // §24.12: tens of thousands of nested `(` used to exhaust the parser's
+    // stack and crash the process outright. 50_000 levels is well within
+    // the range empirically observed to crash an unguarded parse.
+    let depth = 50_000;
+    let src = format!(
+        "conversation Foo() -> int {{\n  {}1{}\n}}",
+        "(".repeat(depth),
+        ")".repeat(depth)
+    );
+    let err = ulx_syntax::parse_source(&src).expect_err("must be rejected, not crash");
+    let msg = ulx_syntax::format_error(&err[0]);
+    assert!(
+        msg.contains("nesting depth exceeds"),
+        "expected a nesting-depth error, got: {msg}"
+    );
+}

@@ -602,6 +602,13 @@ pub fn split_text_block(raw: &str, base_offset: usize) -> Result<Vec<TextPart>, 
             let tokens = lexer::lex(sub).map_err(|span| {
                 format!("{} at offset {}", lex_error_message(sub, &span), span.start)
             })?;
+            if let Some(span) = find_excess_nesting(&tokens) {
+                return Err(format!(
+                    "{} at offset {}",
+                    nesting_error_message(),
+                    span.start
+                ));
+            }
             let shifted: Vec<_> = tokens
                 .into_iter()
                 .map(|(t, span)| {
@@ -886,13 +893,61 @@ enum Item {
     Decl(Spanned<TopDecl>),
 }
 
+const MAX_NESTING_DEPTH: usize = 1_000;
+
+/// Scans a token stream for `(`/`{`/`[` nesting deeper than
+/// `MAX_NESTING_DEPTH`, returning the span of the offending delimiter if
+/// found. Depth tracks all three delimiter kinds together (rather than each
+/// separately) since any one of them recurses through the same combinators
+/// (`paren`, `block`, array types, ...) and can exhaust the stack.
+fn find_excess_nesting(
+    tokens: &[(Token, std::ops::Range<usize>)],
+) -> Option<std::ops::Range<usize>> {
+    let mut depth: usize = 0;
+    for (tok, span) in tokens {
+        match tok {
+            Token::LParen | Token::LBrace | Token::LBracket => {
+                depth += 1;
+                if depth > MAX_NESTING_DEPTH {
+                    return Some(span.clone());
+                }
+            }
+            Token::RParen | Token::RBrace | Token::RBracket => {
+                depth = depth.saturating_sub(1);
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
 /// Lex + parse a complete `.ulx` source file into a `Program`.
 pub fn parse_source(src: &str) -> PResult<Program> {
     let tokens = lexer::lex(src)
         .map_err(|span| vec![Simple::custom(span.clone(), lex_error_message(src, &span))])?;
+    if let Some(span) = find_excess_nesting(&tokens) {
+        return Err(vec![Simple::custom(span, nesting_error_message())]);
+    }
     let eoi = src.len()..src.len();
     let stream = chumsky::Stream::from_iter(eoi, tokens.into_iter());
     program_p().parse(stream)
+}
+
+/// §24.12: chumsky's recursive-descent parser recurses on the native call
+/// stack (via `stacker`'s growable-stack allocator transitively), which can
+/// exhaust the process's address space on pathological input — empirically,
+/// tens of thousands of nested delimiters (`(`/`{`/`[`) reliably crash the
+/// process with an `mmap`/`mprotect` failure well before any real `.ulx`
+/// program would ever nest this deep. Rather than depend on exactly where
+/// that crashes (which varies by platform/available memory), reject
+/// excessive nesting up front with a normal parse error — `MAX_NESTING_DEPTH`
+/// is a couple of orders of magnitude above any legitimate program and a
+/// couple of orders of magnitude below the observed crash point.
+fn nesting_error_message() -> String {
+    format!(
+        "nesting depth exceeds the {MAX_NESTING_DEPTH}-level limit — this looks like malformed \
+         or adversarial input rather than an intentionally deep program"
+    )
 }
 
 /// A lexer error's span always covers the full text of the token that
