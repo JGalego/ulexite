@@ -524,8 +524,36 @@ fn check_match(m: &MatchStmt, scope: &mut Scope, ctx: &mut Ctx) {
         let mut has_wildcard = false;
         for arm in &m.arms {
             match &arm.pattern {
-                Pattern::Variant { name, .. } => {
+                Pattern::Variant { name, bindings } => {
                     covered.insert(name.as_str());
+                    // §9.4: `Verdict`'s only variant with a payload binding
+                    // is `Fail(reason)`/`Score(value)`; `Pass`/`Escalate`
+                    // carry none. A wrong binding count type-checked
+                    // silently before and only failed at runtime as
+                    // "undefined variable" (missing binding) or was
+                    // silently dropped (extra binding).
+                    let expected: Option<usize> = match name.as_str() {
+                        "Pass" | "Escalate" => Some(0),
+                        "Fail" | "Score" => Some(1),
+                        _ => None,
+                    };
+                    if let Some(expected) = expected {
+                        if bindings.len() != expected {
+                            ctx.diags.push(Diagnostic::error(
+                                format!(
+                                    "`{name}` binds {} value(s) here, but `Verdict::{name}` \
+                                     carries {expected} (§9.4) — {}",
+                                    bindings.len(),
+                                    if bindings.len() < expected {
+                                        format!("add the missing binding, e.g. `{name}(x)`")
+                                    } else {
+                                        format!("remove the extra binding(s), e.g. `{name}()`")
+                                    }
+                                ),
+                                m.scrutinee.1.clone(),
+                            ));
+                        }
+                    }
                 }
                 Pattern::Wildcard => has_wildcard = true,
             }

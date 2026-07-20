@@ -271,6 +271,74 @@ fn retry_without_else_over_a_pure_body_is_accepted() {
 }
 
 #[test]
+fn verdict_fail_arm_missing_its_reason_binding_is_rejected() {
+    // §9.4: `Fail` carries exactly one binding (`reason: text`).
+    let src = r#"
+        judge Fluency(subject: text) -> Verdict {
+          rubric: """is it fluent"""
+        }
+        conversation Translate(source: text) -> text {
+          assistant -> draft: text
+          match judge Fluency(draft) {
+            Pass => draft
+            Fail => draft
+            Score(value) => draft
+            Escalate => draft
+          }
+        }
+    "#;
+    let d = diags(src);
+    assert!(
+        has_error_containing(&d, "carries 1"),
+        "expected an arity error for the payload-less `Fail` arm, got: {d:?}"
+    );
+}
+
+#[test]
+fn verdict_pass_arm_with_extra_binding_is_rejected() {
+    // §9.4: `Pass` carries no binding at all.
+    let src = r#"
+        judge Fluency(subject: text) -> Verdict {
+          rubric: """is it fluent"""
+        }
+        conversation Translate(source: text) -> text {
+          assistant -> draft: text
+          match judge Fluency(draft) {
+            Pass(extra) => draft
+            Fail(reason) => draft
+            Score(value) => draft
+            Escalate => draft
+          }
+        }
+    "#;
+    let d = diags(src);
+    assert!(
+        has_error_containing(&d, "carries 0"),
+        "expected an arity error for the over-bound `Pass` arm, got: {d:?}"
+    );
+}
+
+#[test]
+fn verdict_arms_with_correct_arity_are_accepted() {
+    let src = r#"
+        judge Fluency(subject: text) -> Verdict {
+          rubric: """is it fluent"""
+        }
+        conversation Translate(source: text) -> text {
+          assistant -> draft: text
+          match judge Fluency(draft) {
+            Pass => draft
+            Fail(reason) => draft
+            Score(value) => draft
+            Escalate => draft
+          }
+        }
+    "#;
+    let d = diags(src);
+    assert!(d.is_empty(), "expected no diagnostics, got: {d:?}");
+}
+
+#[test]
 fn with_block_sibling_reference_is_rejected() {
     let src = r#"
         conversation Summarize(doc: pdf) -> text {
