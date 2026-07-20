@@ -201,14 +201,19 @@ fn unescape(s: &str) -> String {
 }
 
 /// Lex `src` into a `(Token, Span)` stream, suitable for feeding to chumsky.
-/// Returns `Err` with the byte offset of the first unrecognized character.
-pub fn lex(src: &str) -> Result<Vec<(Token, std::ops::Range<usize>)>, usize> {
+/// Returns `Err` with the full byte span of the first token that failed to
+/// lex — this covers both a genuinely unrecognized character *and* a
+/// well-formed-looking token whose callback rejected it (e.g. `Token::Int`'s
+/// `parse::<i64>()` failing on an integer literal with too many digits to
+/// fit); callers that want to tell those two cases apart can slice
+/// `&src[span]` themselves (an all-ASCII-digit slice means the latter).
+pub fn lex(src: &str) -> Result<Vec<(Token, std::ops::Range<usize>)>, std::ops::Range<usize>> {
     let mut out = Vec::new();
     let mut lexer = Token::lexer(src);
     while let Some(tok) = lexer.next() {
         match tok {
             Ok(t) => out.push((t, lexer.span())),
-            Err(_) => return Err(lexer.span().start),
+            Err(_) => return Err(lexer.span()),
         }
     }
     Ok(out)

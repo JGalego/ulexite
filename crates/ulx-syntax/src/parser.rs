@@ -599,8 +599,9 @@ pub fn split_text_block(raw: &str, base_offset: usize) -> Result<Vec<TextPart>, 
             }
             let end = end.ok_or_else(|| "unterminated interpolation `{`".to_string())?;
             let sub = &raw[start..end];
-            let tokens = lexer::lex(sub)
-                .map_err(|off| format!("invalid token in interpolation at offset {off}"))?;
+            let tokens = lexer::lex(sub).map_err(|span| {
+                format!("{} at offset {}", lex_error_message(sub, &span), span.start)
+            })?;
             let shifted: Vec<_> = tokens
                 .into_iter()
                 .map(|(t, span)| {
@@ -888,10 +889,25 @@ enum Item {
 /// Lex + parse a complete `.ulx` source file into a `Program`.
 pub fn parse_source(src: &str) -> PResult<Program> {
     let tokens = lexer::lex(src)
-        .map_err(|offset| vec![Simple::custom(offset..offset + 1, "unrecognized character")])?;
+        .map_err(|span| vec![Simple::custom(span.clone(), lex_error_message(src, &span))])?;
     let eoi = src.len()..src.len();
     let stream = chumsky::Stream::from_iter(eoi, tokens.into_iter());
     program_p().parse(stream)
+}
+
+/// A lexer error's span always covers the full text of the token that
+/// failed to lex (see `lexer::lex`'s doc comment). An all-ASCII-digit span
+/// means `Token::Int`'s `parse::<i64>()` callback rejected it — the only
+/// way that regex matches but the callback fails — so it gets a specific
+/// "too large to fit" message instead of the generic "unrecognized
+/// character" one (§24.12).
+fn lex_error_message(src: &str, span: &std::ops::Range<usize>) -> String {
+    let text = &src[span.clone()];
+    if !text.is_empty() && text.bytes().all(|b| b.is_ascii_digit()) {
+        format!("integer literal `{text}` is too large to fit in a 64-bit integer")
+    } else {
+        "unrecognized character".to_string()
+    }
 }
 
 /// Renders a parse error as one human-readable line — "found X but
@@ -902,6 +918,14 @@ pub fn parse_source(src: &str) -> PResult<Program> {
 /// diagnostics, `ulx-wasm`'s browser playground — was independently
 /// re-deriving this exact message, so it lives here once instead.
 pub fn format_error(e: &Err) -> String {
+    if let chumsky::error::SimpleReason::Custom(msg) = e.reason() {
+        // A `Simple::custom(...)` error (lexer failures, artifact-type
+        // errors, §24.12) carries its message here, not in `expected()`/
+        // `found()` — those are empty/`None` for a custom error, so
+        // falling through to the generic rendering below would silently
+        // discard the real message.
+        return msg.clone();
+    }
     let expected: Vec<String> = e
         .expected()
         .map(|tok| match tok {

@@ -67,7 +67,6 @@ A pre-v0.1 review surfaced several compiler-quality issues worth knowing about:
 - Deeply nested input (tens of thousands of nested parens) can exhaust the parser's stack and crash the process outright instead of producing a diagnostic.
 - Text-block interpolation splitting isn't brace/string-aware, so a record or string literal containing `}` inside an interpolation can produce a spurious parse error.
 - `///` doc comments are discarded identically to `//` — there's a grammar production for them, but nothing in the compiler recovers doc text yet.
-- Lexer errors report an imprecise span, and an overflowing integer literal is misreported as "unrecognized character" instead of a numeric-overflow diagnostic.
 - `Verdict` exhaustiveness checking matches the literal type name `"Verdict"`, not a resolved type; general user-declared union exhaustiveness checking isn't implemented at all.
 
 ## IDE support is early

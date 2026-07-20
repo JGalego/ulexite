@@ -67,3 +67,16 @@ fn stray_top_level_token_is_rejected() {
         "garbage top-level input",
     );
 }
+
+#[test]
+fn oversized_integer_literal_reports_overflow_not_unrecognized_character() {
+    // §24.12: an integer literal with more digits than fit in an `i64` used
+    // to be misreported as "unrecognized character" with a 1-byte span.
+    let src = "conversation Foo() -> text {\n  99999999999999999999999\n}";
+    let err = ulx_syntax::parse_source(src).expect_err("must fail to parse");
+    let msg = ulx_syntax::format_error(&err[0]);
+    assert!(
+        msg.contains("too large to fit"),
+        "expected an integer-overflow message, got: {msg}"
+    );
+}
